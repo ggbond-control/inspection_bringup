@@ -59,6 +59,19 @@ def override_or_config(context, name, config, section, key, fallback):
     return str(config_value(config, section, key, fallback))
 
 
+def override_or_config_bool(context, name, config, section, key, fallback):
+    override = LaunchConfiguration(name).perform(context)
+    if override != "":
+        return as_bool(override)
+    return as_bool(config_value(config, section, key, fallback))
+
+
+def override_or_config_typed(context, name, config, section, key, fallback, value_type):
+    override = LaunchConfiguration(name).perform(context)
+    value = override if override != "" else config_value(config, section, key, fallback)
+    return value_type(value)
+
+
 def include_package_launch(package_name, launch_file, condition_name=None, launch_arguments=None):
     condition = None
     if condition_name is not None:
@@ -318,7 +331,7 @@ def launch_setup(context):
             "/validate_route_waypoints",
         ),
         "require_waypoint_validation_success": ParameterValue(
-            override_or_config(
+            override_or_config_bool(
                 context,
                 "require_waypoint_validation_success",
                 config,
@@ -351,19 +364,26 @@ def launch_setup(context):
             context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_horizon"
         ),
         "heartbeat_timeout_seconds": ParameterValue(
-            override_or_config(
-                context, "heartbeat_timeout_seconds", config, "task_hub", "heartbeat_timeout_seconds", 3.0
+            override_or_config_typed(
+                context,
+                "heartbeat_timeout_seconds",
+                config,
+                "task_hub",
+                "heartbeat_timeout_seconds",
+                3.0,
+                float,
             ),
             value_type=float,
         ),
         "trigger_service_timeout_seconds": ParameterValue(
-            override_or_config(
+            override_or_config_typed(
                 context,
                 "trigger_service_timeout_seconds",
                 config,
                 "task_hub",
                 "trigger_service_timeout_seconds",
                 10.0,
+                float,
             ),
             value_type=float,
         ),
@@ -405,7 +425,7 @@ def launch_setup(context):
                     context, "mqtt_host", config, "mqtt", "host", "127.0.0.1"
                 ),
                 "mqtt_port": ParameterValue(
-                    override_or_config(context, "mqtt_port", config, "mqtt", "port", 1883),
+                    override_or_config_typed(context, "mqtt_port", config, "mqtt", "port", 1883, int),
                     value_type=int,
                 ),
             }
@@ -431,22 +451,26 @@ def launch_setup(context):
                 "camera_backend": override_or_config(
                     context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"
                 ),
-                "launch_post_waypoint_home_bridge": override_or_config(
-                    context,
-                    "launch_post_waypoint_home_bridge",
-                    config,
-                    "gimbal",
-                    "launch_post_waypoint_home_bridge",
-                    False,
+                "launch_post_waypoint_home_bridge": as_bool_text(
+                    override_or_config_bool(
+                        context,
+                        "launch_post_waypoint_home_bridge",
+                        config,
+                        "gimbal",
+                        "launch_post_waypoint_home_bridge",
+                        False,
+                    )
                 ),
                 "inspection_route_config_path": task_hub_params["default_route_config_path"],
-                "gimbal_hk_use_http_isapi_absolute_ptz": override_or_config(
-                    context,
-                    "gimbal_hk_use_http_isapi_absolute_ptz",
-                    config,
-                    "gimbal",
-                    "use_http_isapi_absolute_ptz",
-                    True,
+                "gimbal_hk_use_http_isapi_absolute_ptz": as_bool_text(
+                    override_or_config_bool(
+                        context,
+                        "gimbal_hk_use_http_isapi_absolute_ptz",
+                        config,
+                        "gimbal",
+                        "use_http_isapi_absolute_ptz",
+                        True,
+                    )
                 ),
             },
         ),
