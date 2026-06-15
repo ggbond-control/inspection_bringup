@@ -10,6 +10,7 @@ FETCH_ONLY=0
 BUILD_ONLY=0
 RUN_ROSDEP=0
 REPOS_FILE="${DEFAULT_REPOS_FILE}"
+BUILD_JOBS="${BUILD_JOBS:-4}"
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Options:
 Build behavior:
   Uses only: colcon build --packages-up-to <target> --symlink-install
   It never runs a bare global colcon build.
+  Limits build parallelism with BUILD_JOBS, default: 4.
   Missing repositories are cloned from their remote default branch.
   Existing repositories are skipped without branch checks or checkout changes.
 
@@ -155,10 +157,12 @@ if [[ "${RUN_ROSDEP}" -eq 1 ]]; then
 fi
 
 echo "[build] target package: ${TARGET_PACKAGE}"
+echo "[build] parallel jobs: ${BUILD_JOBS}"
 cd "${WORKSPACE_ROOT}"
-if ! colcon build \
+if ! MAKEFLAGS="-j${BUILD_JOBS}" colcon build \
     --packages-up-to "${TARGET_PACKAGE}" \
     --symlink-install \
+    --parallel-workers "${BUILD_JOBS}" \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
