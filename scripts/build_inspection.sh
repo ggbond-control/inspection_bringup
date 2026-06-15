@@ -25,6 +25,8 @@ Options:
 Build behavior:
   Uses only: colcon build --packages-up-to <target> --symlink-install
   It never runs a bare global colcon build.
+  Missing repositories are cloned from their remote default branch.
+  Existing repositories are skipped without branch checks or checkout changes.
 
 Default target_package: inspection_bringup
 EOF
@@ -157,9 +159,12 @@ cd "${WORKSPACE_ROOT}"
 if ! colcon build \
     --packages-up-to "${TARGET_PACKAGE}" \
     --symlink-install \
+    --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
       --no-warn-unused-cli \
+      -DPython3_EXECUTABLE=/usr/bin/python3 \
+      -DPYTHON_EXECUTABLE=/usr/bin/python3 \
       -DGIMBAL_ENABLE_RKNN=AUTO \
       -DGIMBAL_ENABLE_HKNETSDK=AUTO; then
   cat >&2 <<'EOF'

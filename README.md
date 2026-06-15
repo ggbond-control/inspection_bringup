@@ -22,6 +22,10 @@ It does not run a bare global `colcon build`. `nav_bridge` is intentionally not
 listed in the managed dependency file because it is not owned by task hub
 bringup.
 
+Missing repositories are cloned from each remote's default branch, typically
+`main` or `master`. Existing repositories are not pulled, checked out, or
+branch-validated, so local manual branch changes are preserved.
+
 Useful variants:
 
 ```bash
