@@ -1,0 +1,29 @@
+repositories:
+  src/alarm_manager:
+    type: git
+    url: https://github.com/ggbond-control/alarm_manager.git
+    version: main
+  src/gas_monitor:
+    type: git
+    url: https://github.com/ggbond-control/gas_monitor.git
+    version: main
+  src/gimbal_stub_hub:
+    type: git
+    url: https://github.com/ggbond-control/gimbal_stub_hub.git
+    version: dev
+  src/inspection_charge_executor:
+    type: git
+    url: https://github.com/ggbond-control/inspection_charge_executor.git
+    version: main
+  src/inspection_platform_bridge:
+    type: git
+    url: https://github.com/ggbond-control/inspection_platform_bridge.git
+    version: main
+  src/inspection_task_hub:
+    type: git
+    url: https://github.com/ggbond-control/inspection_task_hub.git
+    version: main
+  src/thermal_camera_monitor:
+    type: git
+    url: https://github.com/ggbond-control/thermal_camera_monitor.git
+    version: main

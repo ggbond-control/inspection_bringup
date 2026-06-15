@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BRINGUP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_REPOS_FILE="${BRINGUP_DIR}/config/inspection_deps.repos"
+WORKSPACE_ROOT="$(cd "${BRINGUP_DIR}/../.." && pwd)"
+TARGET_PACKAGE="inspection_bringup"
+FETCH_ONLY=0
+BUILD_ONLY=0
+RUN_ROSDEP=0
+REPOS_FILE="${DEFAULT_REPOS_FILE}"
+
+usage() {
+  cat <<'EOF'
+Usage: build_inspection.sh [options] [target_package]
+
+Options:
+  --fetch-only          Clone missing repositories and exit.
+  --build-only          Skip repository cloning.
+  --rosdep             Run rosdep install before building.
+  --repos-file PATH    Use an alternate .repos file.
+  -h, --help           Show this help.
+
+Build behavior:
+  Uses only: colcon build --packages-up-to <target> --symlink-install
+  It never runs a bare global colcon build.
+
+Default target_package: inspection_bringup
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fetch-only)
+      FETCH_ONLY=1
+      shift
+      ;;
+    --build-only)
+      BUILD_ONLY=1
+      shift
+      ;;
+    --rosdep)
+      RUN_ROSDEP=1
+      shift
+      ;;
+    --repos-file)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --repos-file requires a path" >&2
+        exit 2
+      fi
+      REPOS_FILE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "error: unknown option '$1'" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      TARGET_PACKAGE="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ "${FETCH_ONLY}" -eq 1 && "${BUILD_ONLY}" -eq 1 ]]; then
+  echo "error: --fetch-only and --build-only cannot be used together" >&2
+  exit 2
+fi
+
+if [[ ! -f "${REPOS_FILE}" ]]; then
+  echo "error: repos file not found: ${REPOS_FILE}" >&2
+  exit 2
+fi
+
+if [[ ! -d "${WORKSPACE_ROOT}/src" ]]; then
+  mkdir -p "${WORKSPACE_ROOT}/src"
+fi
+
+fetch_missing_repositories() {
+  python3 - "$WORKSPACE_ROOT" "$REPOS_FILE" <<'PY'
+import os
+import subprocess
+import sys
+
+import yaml
+
+workspace_root = sys.argv[1]
+repos_file = sys.argv[2]
+
+with open(repos_file, "r", encoding="utf-8") as stream:
+    data = yaml.safe_load(stream) or {}
+
+repositories = data.get("repositories", {})
+if not repositories:
+    raise SystemExit(f"no repositories found in {repos_file}")
+
+for rel_path, spec in repositories.items():
+    repo_type = spec.get("type", "git")
+    url = spec.get("url")
+    version = spec.get("version")
+    abs_path = os.path.join(workspace_root, rel_path)
+
+    if repo_type != "git":
+        raise SystemExit(f"unsupported repository type for {rel_path}: {repo_type}")
+    if not url:
+        raise SystemExit(f"missing url for {rel_path}")
+
+    if os.path.exists(abs_path):
+        print(f"[fetch] skip existing {rel_path}")
+        continue
+
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    cmd = ["git", "clone"]
+    if version:
+        cmd += ["--branch", str(version)]
+    cmd += [url, abs_path]
+    print(f"[fetch] clone {url} -> {rel_path}")
+    subprocess.run(cmd, check=True)
+PY
+}
+
+source_if_exists() {
+  local setup_file="$1"
+  if [[ -f "${setup_file}" ]]; then
+    set +u
+    # shellcheck disable=SC1090
+    source "${setup_file}"
+    set -u
+  fi
+}
+
+if [[ "${BUILD_ONLY}" -eq 0 ]]; then
+  fetch_missing_repositories
+fi
+
+if [[ "${FETCH_ONLY}" -eq 1 ]]; then
+  echo "[done] fetch-only complete"
+  exit 0
+fi
+
+source_if_exists /opt/ros/jazzy/setup.bash
+source_if_exists "${WORKSPACE_ROOT}/install/setup.bash"
+
+if [[ "${RUN_ROSDEP}" -eq 1 ]]; then
+  echo "[rosdep] installing external dependencies"
+  rosdep install --from-paths "${WORKSPACE_ROOT}/src" --ignore-src -r -y
+fi
+
+echo "[build] target package: ${TARGET_PACKAGE}"
+cd "${WORKSPACE_ROOT}"
+if ! colcon build \
+    --packages-up-to "${TARGET_PACKAGE}" \
+    --symlink-install \
+    --cmake-args \
+      -Wno-dev \
+      --no-warn-unused-cli \
+      -DGIMBAL_ENABLE_RKNN=AUTO \
+      -DGIMBAL_ENABLE_HKNETSDK=AUTO; then
+  cat >&2 <<'EOF'
+
+[error] build failed.
+
+If the failure mentions:
+  failed to create symbolic link ... because existing path cannot be removed: Is a directory
+
+then the workspace likely contains stale non-symlink build/install artifacts
+from an earlier non --symlink-install build. Clean only the affected package
+artifacts, then rerun this script. Example:
+
+  rm -rf build/<package> install/<package>
+
+EOF
+  exit 1
+fi
+
+echo "[done] built packages up to ${TARGET_PACKAGE}"

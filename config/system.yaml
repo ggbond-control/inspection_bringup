@@ -1,0 +1,36 @@
+modules:
+  task_hub: true
+  gimbal: true
+  charge: true
+  sensors: true
+  alarm: true
+  gas: true
+  thermal: true
+  mqtt: true
+
+mqtt:
+  sn: DEVICE_SN
+  host: 127.0.0.1
+  port: 1883
+
+task_hub:
+  default_route_config_path: ""
+  runtime_log_directory: "~/runtime_logs"
+  stand_service_name: "/nav_bridge_node/stand"
+  lie_service_name: "/nav_bridge_node/lie"
+  navigation_action_name: "multi_map_navigate_to_pose"
+  gimbal_action_name: "follow_joint_trajectory"
+  capture_action_name: "capture_media"
+  navigation_validate_waypoints_service: "/validate_route_waypoints"
+  require_waypoint_validation_success: false
+  navigation_heartbeat_topic: "/inspection_task_hub/heartbeat/navigation"
+  gimbal_heartbeat_topic: "/inspection_task_hub/heartbeat/gimbal"
+  odometry_topic: "/odometry_horizon"
+  heartbeat_timeout_seconds: 3.0
+  trigger_service_timeout_seconds: 10.0
+
+gimbal:
+  params_file: ""
+  camera_backend: "gimbal_hk"
+  launch_post_waypoint_home_bridge: false
+  use_http_isapi_absolute_ptz: true
