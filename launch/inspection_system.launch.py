@@ -174,6 +174,11 @@ def generate_launch_description():
             description="Trigger service name for lie task.",
         ),
         DeclareLaunchArgument(
+            "set_gait_service_name",
+            default_value="",
+            description="SetParameters service name for set_gait task.",
+        ),
+        DeclareLaunchArgument(
             "navigation_action_name",
             default_value="",
             description="Navigation action name.",
@@ -310,6 +315,14 @@ def launch_setup(context):
         ),
         "lie_service_name": override_or_config(
             context, "lie_service_name", config, "task_hub", "lie_service_name", "/nav_bridge_node/lie"
+        ),
+        "set_gait_service_name": override_or_config(
+            context,
+            "set_gait_service_name",
+            config,
+            "task_hub",
+            "set_gait_service_name",
+            "/nav_bridge_node/set_gait",
         ),
         "navigation_action_name": override_or_config(
             context,
