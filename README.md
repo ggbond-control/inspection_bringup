@@ -109,6 +109,34 @@ Start only the platform bridge:
 ros2 launch inspection_bringup platform_bridge.launch.py
 ```
 
+## Debug With Tmux
+
+For field debugging, start enabled modules from the same `config/system.yaml`
+in separate tmux windows:
+
+```bash
+src/inspection_bringup/scripts/start_inspection_tmux.sh
+```
+
+Each enabled module gets its own window, for example `task_hub`, `gimbal`,
+`charge`, `alarm`, `gas`, `thermal`, and `mqtt`. The script reuses the existing
+launch files, so the normal launch-based startup remains unchanged.
+
+Useful options:
+
+```bash
+src/inspection_bringup/scripts/start_inspection_tmux.sh --dry-run
+src/inspection_bringup/scripts/start_inspection_tmux.sh --no-attach
+src/inspection_bringup/scripts/start_inspection_tmux.sh --kill-existing
+src/inspection_bringup/scripts/start_inspection_tmux.sh --session inspection_debug
+```
+
+Attach later with:
+
+```bash
+tmux attach -t inspection
+```
+
 ## Extension Pattern
 
 When a new sensor module is added, add its package dependency to `package.xml`
