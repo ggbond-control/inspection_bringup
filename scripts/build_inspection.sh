@@ -11,6 +11,7 @@ BUILD_ONLY=0
 RUN_ROSDEP=0
 REPOS_FILE="${DEFAULT_REPOS_FILE}"
 BUILD_JOBS="${BUILD_JOBS:-4}"
+CHECK_BRANCHES=1
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,7 @@ Options:
   --build-only          Skip repository cloning.
   --rosdep             Run rosdep install before building.
   --repos-file PATH    Use an alternate .repos file.
+  --no-branch-check    Do not print managed repository branch status.
   -h, --help           Show this help.
 
 Build behavior:
@@ -29,6 +31,7 @@ Build behavior:
   Limits build parallelism with BUILD_JOBS, default: 4.
   Missing repositories are cloned from their remote default branch.
   Existing repositories are skipped without branch checks or checkout changes.
+  Managed repository branches are printed by default without checkout changes.
 
 Default target_package: inspection_bringup
 EOF
@@ -46,6 +49,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --rosdep)
       RUN_ROSDEP=1
+      shift
+      ;;
+    --no-branch-check)
+      CHECK_BRANCHES=0
       shift
       ;;
     --repos-file)
@@ -129,6 +136,56 @@ for rel_path, spec in repositories.items():
 PY
 }
 
+print_repository_branches() {
+  python3 - "$WORKSPACE_ROOT" "$REPOS_FILE" <<'PY'
+import os
+import subprocess
+import sys
+
+import yaml
+
+workspace_root = sys.argv[1]
+repos_file = sys.argv[2]
+
+with open(repos_file, "r", encoding="utf-8") as stream:
+    data = yaml.safe_load(stream) or {}
+
+repositories = data.get("repositories", {})
+if not repositories:
+    raise SystemExit(f"no repositories found in {repos_file}")
+
+
+def git_output(repo_path, args):
+    try:
+        return subprocess.check_output(
+            ["git", "-C", repo_path] + args,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+for rel_path in repositories:
+    abs_path = os.path.join(workspace_root, rel_path)
+
+    if not os.path.exists(abs_path):
+        print(f"[branch] {rel_path}: missing")
+        continue
+    if not os.path.isdir(os.path.join(abs_path, ".git")) and not git_output(abs_path, ["rev-parse", "--git-dir"]):
+        print(f"[branch] {rel_path}: not-git")
+        continue
+
+    branch = git_output(abs_path, ["branch", "--show-current"])
+    if not branch:
+        short_sha = git_output(abs_path, ["rev-parse", "--short", "HEAD"])
+        branch = f"detached@{short_sha}" if short_sha else "unknown"
+
+    dirty = " dirty" if git_output(abs_path, ["status", "--porcelain"]) else ""
+    print(f"[branch] {rel_path}: {branch}{dirty}")
+PY
+}
+
 source_if_exists() {
   local setup_file="$1"
   if [[ -f "${setup_file}" ]]; then
@@ -141,6 +198,10 @@ source_if_exists() {
 
 if [[ "${BUILD_ONLY}" -eq 0 ]]; then
   fetch_missing_repositories
+fi
+
+if [[ "${CHECK_BRANCHES}" -eq 1 ]]; then
+  print_repository_branches
 fi
 
 if [[ "${FETCH_ONLY}" -eq 1 ]]; then

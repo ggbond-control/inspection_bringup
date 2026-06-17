@@ -32,6 +32,18 @@ Missing repositories are cloned from each remote's default branch, typically
 `main` or `master`. Existing repositories are not pulled, checked out, or
 branch-validated, so local manual branch changes are preserved.
 
+Managed repository branches are printed by default before build:
+
+```text
+[branch] src/gas_monitor: main
+```
+
+Disable the branch status output when needed:
+
+```bash
+src/inspection_bringup/scripts/build_inspection.sh --no-branch-check
+```
+
 Useful variants:
 
 ```bash
