@@ -1,0 +1,57 @@
+modules:
+  livox: true
+  slam: true
+  terrain: true
+  local_planner: true
+  global_planner: true
+
+bringup:
+  sequence:
+    - livox
+    - slam
+    - terrain
+    - local_planner
+    - global_planner
+  start_delay_seconds: 1.0
+  wait_for_nodes: true
+  wait_timeout_seconds: 10.0
+
+slam:
+  relocal: true
+  prior_dir: "company2"
+  rviz: false
+  pgo: false
+  odom_imu: true
+  use_sim_time: false
+  wait_nodes:
+    - /laser_mapping
+
+terrain:
+  rviz: false
+  use_gpu: true
+  wait_nodes:
+    - /gridmapper_node
+
+local_planner:
+  use_sim_time: false
+  start_rviz: false
+  wait_nodes:
+    - /localPlanner
+    - /pathFollower
+
+global_planner:
+  initial_map: "company2"
+  map_connections_file: "default"
+  use_fake_cmdvel: true
+  params_file: "new_local"
+  use_sim_time: false
+  bidirectional_connections: true
+  waypoint_dwell_time: 2.0
+  patrol_loops: 1
+  wait_nodes:
+    - /planner_server
+    - /controller_server
+
+livox:
+  wait_nodes:
+    - /livox_lidar_publisher
