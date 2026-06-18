@@ -11,6 +11,9 @@ repositories:
   src/inspection_charge_executor:
     type: git
     url: https://github.com/ggbond-control/inspection_charge_executor.git
+  src/inspection_interfaces:
+    type: git
+    url: https://github.com/ggbond-control/inspection_interfaces.git
   src/inspection_platform_bridge:
     type: git
     url: https://github.com/ggbond-control/inspection_platform_bridge.git
