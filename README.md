@@ -38,6 +38,19 @@ Managed repository branches are printed by default before build:
 [branch] src/gas_monitor: main
 ```
 
+Remote update checks are opt-in because they fetch upstream refs:
+
+```bash
+src/inspection_bringup/scripts/build_inspection.sh --check-updates
+```
+
+Example output:
+
+```text
+[branch] src/gas_monitor: main upstream=origin/main up-to-date
+[branch] src/inspection_task_hub: main dirty upstream=origin/main behind=2
+```
+
 Disable the branch status output when needed:
 
 ```bash
@@ -48,6 +61,7 @@ Useful variants:
 
 ```bash
 src/inspection_bringup/scripts/build_inspection.sh --fetch-only
+src/inspection_bringup/scripts/build_inspection.sh --fetch-only --check-updates
 src/inspection_bringup/scripts/build_inspection.sh --build-only inspection_bringup
 src/inspection_bringup/scripts/build_inspection.sh --rosdep inspection_bringup
 ```
