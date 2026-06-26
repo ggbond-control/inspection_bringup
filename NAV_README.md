@@ -44,11 +44,12 @@ The default `config/navigate.yaml` matches the old `navigate.sh` mode
 
 The launch sequence is:
 
-1. `livox_ros_driver2/msg_multi_MID360_launch.py`
-2. `faster_lio/slam.launch.py`
-3. `gridmapper/local.launch.py`
-4. `local_planner/local_planner.launch.py`
-5. `multi_map_nav/multi_map_nav.launch.py`
+1. `nav_bridge/nav_bridge.launch.py`
+2. `livox_ros_driver2/msg_multi_MID360_launch.py`
+3. `faster_lio/slam.launch.py`
+4. `gridmapper/local.launch.py`
+5. `local_planner/local_planner.launch.py`
+6. `multi_map_nav/multi_map_nav.launch.py`
 
 Default map and prior settings:
 
@@ -70,6 +71,7 @@ global_planner:
 
 ```yaml
 modules:
+  nav_bridge: true
   livox: true
   slam: true
   terrain: true
@@ -78,6 +80,7 @@ modules:
 
 bringup:
   sequence:
+    - nav_bridge
     - livox
     - slam
     - terrain
@@ -85,7 +88,15 @@ bringup:
     - global_planner
   start_delay_seconds: 1.0
   wait_for_nodes: true
+  shutdown_on_readiness_failure: true
   wait_timeout_seconds: 10.0
+
+nav_bridge:
+  wait_topics:
+    - /battery/level
+  stand_service: /nav_bridge_node/stand
+  topic_timeout_seconds: 10.0
+  stand_timeout_seconds: 10.0
 
 livox:
   wait_nodes:
@@ -114,6 +125,7 @@ The module order comes from `bringup.sequence`:
 ```yaml
 bringup:
   sequence:
+    - nav_bridge
     - livox
     - slam
     - terrain
@@ -123,18 +135,37 @@ bringup:
 
 Unknown or duplicate sequence entries are skipped with a console message.
 
-The wait helper is:
+`nav_bridge` uses a custom readiness check before the rest of the stack starts:
+
+1. Wait for one message on every topic in `nav_bridge.wait_topics`.
+2. Call `nav_bridge.stand_service` as `std_srvs/srv/Trigger`.
+3. Continue only when the service response contains `success: true`.
+
+The readiness helper is:
 
 ```bash
-scripts/wait_for_nodes.py
+scripts/wait_for_ready.py
 ```
 
-It checks `ros2 node list` until all expected nodes are present or the timeout
-is reached.
+It has subcommands for the supported readiness checks:
+
+```bash
+python3 scripts/wait_for_ready.py nodes --name livox --timeout 10.0 /livox_lidar_publisher
+python3 scripts/wait_for_ready.py topics --name battery --timeout 10.0 /battery/level
+python3 scripts/wait_for_ready.py nav_bridge --topic /battery/level --stand-service /nav_bridge_node/stand
+```
+
+Use the `topics` subcommand for other modules when node existence is not enough
+and the module must prove that a topic is publishing real data.
 
 Default readiness checks:
 
 ```yaml
+nav_bridge:
+  wait_topics:
+    - /battery/level
+  stand_service: /nav_bridge_node/stand
+
 livox:
   wait_nodes:
     - /livox_lidar_publisher
@@ -158,8 +189,9 @@ global_planner:
     - /controller_server
 ```
 
-If a wait times out, the timeout is printed and the launch sequence continues,
-matching the old `navigate.sh` behavior.
+If a readiness check fails or times out, the timeout is printed. By default,
+`bringup.shutdown_on_readiness_failure` shuts down the launch so partially
+started modules such as `nav_bridge` are not left running alone.
 
 Disable readiness waiting and use only timed startup:
 
@@ -177,6 +209,7 @@ Examples:
 
 ```bash
 ros2 launch inspection_bringup navigation.launch.py \
+  enable_nav_bridge:=true \
   enable_livox:=false \
   slam_prior_dir:=company2 \
   global_initial_map:=company2
@@ -207,6 +240,7 @@ The old `x30-company2` commands map to the new launch like this:
 
 ```text
 livox   -> modules.livox + livox.wait_nodes
+nav_bridge -> modules.nav_bridge + nav_bridge.*
 slam    -> modules.slam + slam.*
 terrain -> modules.terrain + terrain.*
 local   -> modules.local_planner + local_planner.*

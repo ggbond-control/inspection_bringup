@@ -1,4 +1,5 @@
 modules:
+  nav_bridge: true
   livox: true
   slam: true
   terrain: true
@@ -7,6 +8,7 @@ modules:
 
 bringup:
   sequence:
+    - nav_bridge
     - livox
     - slam
     - terrain
@@ -14,7 +16,19 @@ bringup:
     - global_planner
   start_delay_seconds: 1.0
   wait_for_nodes: true
+  shutdown_on_readiness_failure: true
   wait_timeout_seconds: 10.0
+
+nav_bridge:
+  wait_topics:
+    - /battery/level
+  stand_service: /nav_bridge_node/stand
+  topic_timeout_seconds: 10.0
+  stand_timeout_seconds: 30.0
+
+livox:
+  wait_nodes:
+    - /livox_lidar_publisher
 
 slam:
   relocal: true
@@ -51,7 +65,3 @@ global_planner:
   wait_nodes:
     - /planner_server
     - /controller_server
-
-livox:
-  wait_nodes:
-    - /livox_lidar_publisher

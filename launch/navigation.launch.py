@@ -6,6 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
@@ -13,6 +14,7 @@ from launch.actions import (
     SetEnvironmentVariable,
     TimerAction,
 )
+from launch.events import Shutdown
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -25,6 +27,12 @@ def default_navigate_config_path():
         get_package_share_directory("inspection_bringup"),
         "config",
         "navigate.yaml",
+    )
+
+
+def readiness_script_path():
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "scripts", "wait_for_ready.py")
     )
 
 
@@ -74,6 +82,19 @@ def override_or_config_typed(context, name, config, section, key, fallback, valu
     return value_type(value)
 
 
+def split_list_text(value):
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def override_or_config_list(context, name, config, section, key, fallback):
+    override = LaunchConfiguration(name).perform(context)
+    if override != "":
+        return split_list_text(override)
+    return config_list(config, section, key, fallback)
+
+
 def config_list(config, section, key, fallback):
     value = config.get(section, {}).get(key, fallback)
     if value is None or value == "":
@@ -88,7 +109,7 @@ def config_sequence(config):
         config,
         "bringup",
         "sequence",
-        ["livox", "slam", "terrain", "local_planner", "global_planner"],
+        ["nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"],
     )
 
 
@@ -112,9 +133,8 @@ def wait_for_nodes_action(name, nodes, timeout):
     return ExecuteProcess(
         cmd=[
             "python3",
-            PathJoinSubstitution(
-                [FindPackageShare("inspection_bringup"), "scripts", "wait_for_nodes.py"]
-            ),
+            readiness_script_path(),
+            "nodes",
             "--name",
             name,
             "--timeout",
@@ -126,7 +146,37 @@ def wait_for_nodes_action(name, nodes, timeout):
     )
 
 
-def append_navigation_group(actions, previous_wait, launch_action, wait_action, delay_seconds):
+def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout):
+    topic_args = []
+    for topic in topics:
+        topic_args.extend(["--topic", topic])
+
+    return ExecuteProcess(
+        cmd=[
+            "python3",
+            readiness_script_path(),
+            "nav_bridge",
+            "--stand-service",
+            stand_service,
+            "--topic-timeout",
+            str(topic_timeout),
+            "--stand-timeout",
+            str(stand_timeout),
+            *topic_args,
+        ],
+        name="wait_for_nav_bridge_ready",
+        output="screen",
+    )
+
+
+def append_navigation_group(
+    actions,
+    previous_wait,
+    launch_action,
+    wait_action,
+    delay_seconds,
+    shutdown_on_readiness_failure,
+):
     if previous_wait is None:
         actions.extend([launch_action, wait_action])
         return wait_action
@@ -135,11 +185,25 @@ def append_navigation_group(actions, previous_wait, launch_action, wait_action, 
     if delay_seconds > 0.0:
         next_actions = [TimerAction(period=delay_seconds, actions=next_actions)]
 
+    def on_previous_wait_exit(event, _context):
+        if event.returncode != 0:
+            reason = (
+                f"readiness check failed with code {event.returncode}; "
+                "not starting the next module"
+            )
+            print(
+                f"[navigation] {reason}"
+            )
+            if shutdown_on_readiness_failure:
+                return [EmitEvent(event=Shutdown(reason=reason))]
+            return []
+        return next_actions
+
     actions.append(
         RegisterEventHandler(
             OnProcessExit(
                 target_action=previous_wait,
-                on_exit=next_actions,
+                on_exit=on_previous_wait_exit,
             )
         )
     )
@@ -152,6 +216,27 @@ def generate_launch_description():
             "navigate_config_path",
             default_value=default_navigate_config_path(),
             description="Navigation configuration YAML path.",
+        ),
+        DeclareLaunchArgument("enable_nav_bridge", default_value="", description="Start nav_bridge."),
+        DeclareLaunchArgument(
+            "nav_bridge_wait_topics",
+            default_value="",
+            description="Comma-separated topics used to verify nav_bridge readiness.",
+        ),
+        DeclareLaunchArgument(
+            "nav_bridge_stand_service",
+            default_value="",
+            description="Trigger service called after nav_bridge topic data is available.",
+        ),
+        DeclareLaunchArgument(
+            "nav_bridge_topic_timeout_seconds",
+            default_value="",
+            description="Timeout for waiting for nav_bridge topic data.",
+        ),
+        DeclareLaunchArgument(
+            "nav_bridge_stand_timeout_seconds",
+            default_value="",
+            description="Timeout for the nav_bridge stand service call.",
         ),
         DeclareLaunchArgument("enable_livox", default_value="", description="Start MID360 Livox driver."),
         DeclareLaunchArgument("enable_slam", default_value="", description="Start faster_lio localization."),
@@ -241,7 +326,38 @@ def launch_setup(context):
         float,
     )
     should_wait_for_nodes = as_bool(config_value(config, "bringup", "wait_for_nodes", True))
+    shutdown_on_readiness_failure = as_bool(
+        config_value(config, "bringup", "shutdown_on_readiness_failure", True)
+    )
     wait_timeout = float(config_value(config, "bringup", "wait_timeout_seconds", 10.0))
+
+    nav_bridge_launch = include_package_launch(
+        "nav_bridge",
+        "nav_bridge.launch.py",
+        "true",
+    )
+    nav_bridge_enabled = override_or_config_bool(
+        context, "enable_nav_bridge", config, "modules", "nav_bridge", True
+    )
+    nav_bridge_ready = nav_bridge_ready_action(
+        override_or_config_list(
+            context,
+            "nav_bridge_wait_topics",
+            config,
+            "nav_bridge",
+            "wait_topics",
+            ["/battery/level"],
+        ),
+        override_or_config(
+            context, "nav_bridge_stand_service", config, "nav_bridge", "stand_service", "/nav_bridge_node/stand"
+        ),
+        override_or_config_typed(
+            context, "nav_bridge_topic_timeout_seconds", config, "nav_bridge", "topic_timeout_seconds", wait_timeout, float
+        ),
+        override_or_config_typed(
+            context, "nav_bridge_stand_timeout_seconds", config, "nav_bridge", "stand_timeout_seconds", wait_timeout, float
+        ),
+    )
 
     livox_launch = include_package_launch(
         "livox_ros_driver2",
@@ -383,30 +499,55 @@ def launch_setup(context):
     )
 
     navigation_groups = {
+        "nav_bridge": (
+            nav_bridge_enabled,
+            nav_bridge_launch,
+            nav_bridge_ready,
+        ),
         "livox": (
             livox_enabled,
             livox_launch,
-            config_list(config, "livox", "wait_nodes", ["/livox_lidar_publisher"]),
+            wait_for_nodes_action(
+                "livox",
+                config_list(config, "livox", "wait_nodes", ["/livox_lidar_publisher"]),
+                wait_timeout,
+            ),
         ),
         "slam": (
             slam_enabled,
             slam_launch,
-            config_list(config, "slam", "wait_nodes", ["/laser_mapping"]),
+            wait_for_nodes_action(
+                "slam",
+                config_list(config, "slam", "wait_nodes", ["/laser_mapping"]),
+                wait_timeout,
+            ),
         ),
         "terrain": (
             terrain_enabled,
             terrain_launch,
-            config_list(config, "terrain", "wait_nodes", ["/gridmapper_node"]),
+            wait_for_nodes_action(
+                "terrain",
+                config_list(config, "terrain", "wait_nodes", ["/gridmapper_node"]),
+                wait_timeout,
+            ),
         ),
         "local_planner": (
             local_planner_enabled,
             local_planner_launch,
-            config_list(config, "local_planner", "wait_nodes", ["/localPlanner", "/pathFollower"]),
+            wait_for_nodes_action(
+                "local_planner",
+                config_list(config, "local_planner", "wait_nodes", ["/localPlanner", "/pathFollower"]),
+                wait_timeout,
+            ),
         ),
         "global_planner": (
             global_planner_enabled,
             global_planner_launch,
-            config_list(config, "global_planner", "wait_nodes", ["/planner_server", "/controller_server"]),
+            wait_for_nodes_action(
+                "global_planner",
+                config_list(config, "global_planner", "wait_nodes", ["/planner_server", "/controller_server"]),
+                wait_timeout,
+            ),
         ),
     }
 
@@ -423,28 +564,28 @@ def launch_setup(context):
             print(f"[navigation] unknown sequence entry skipped: {name}")
             continue
 
-        enabled, launch_action, nodes = group
-        ordered_navigation_groups.append((enabled, launch_action, name, nodes))
+        enabled, launch_action, ready_action = group
+        ordered_navigation_groups.append((enabled, launch_action, name, ready_action))
 
     if not should_wait_for_nodes:
         actions = []
-        for enabled, launch_action, _name, _nodes in ordered_navigation_groups:
+        for enabled, launch_action, _name, _ready_action in ordered_navigation_groups:
             if enabled:
                 actions.append(delayed_include(delay * len(actions), launch_action))
         return actions
 
     actions = []
     previous_wait = None
-    for enabled, launch_action, name, nodes in ordered_navigation_groups:
+    for enabled, launch_action, _name, ready_action in ordered_navigation_groups:
         if not enabled:
             continue
-        wait_action = wait_for_nodes_action(name, nodes, wait_timeout)
         previous_wait = append_navigation_group(
             actions,
             previous_wait,
             launch_action,
-            wait_action,
+            ready_action,
             delay,
+            shutdown_on_readiness_failure,
         )
 
     return actions
