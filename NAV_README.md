@@ -114,6 +114,9 @@ slam:
     status_topic: /localization_init_status
     timeout_seconds: 0.0
     blocked_is_failure: false
+    release_control_on_blocked: true
+    release_control_service: /nav_bridge_node/release_control
+    release_control_timeout_seconds: 5.0
 ```
 
 `modules` controls whether each module is launched. `bringup.sequence` controls
@@ -159,6 +162,10 @@ that mode, but the required `stand_service` call is not skipped.
 3. If `state == INITIAL_REGISTRATION_BLOCKED`, wait for an external supervisor
    or UI to restart initial alignment. This bringup launch does not directly
    call `/restart_initial_alignment`.
+4. If `release_control_on_blocked` is true, call
+   `/nav_bridge_node/release_control` once when entering blocked state. This
+   explicitly stops the nav_bridge heartbeat and releases control, but does not
+   change the external restart policy.
 
 Set `slam.readiness.timeout_seconds` to `0.0` or a negative value to wait
 without a timeout. This is the default because blocked relocalization may need
@@ -177,7 +184,7 @@ It has subcommands for the supported readiness checks:
 python3 scripts/wait_for_ready.py nodes --name livox --timeout 10.0 /livox_lidar_publisher
 python3 scripts/wait_for_ready.py topics --name battery --timeout 10.0 /battery/level
 python3 scripts/wait_for_ready.py nav_bridge --topic /battery/level --stand-service /nav_bridge_node/stand
-python3 scripts/wait_for_ready.py localization-init --status-topic /localization_init_status --timeout 0.0
+python3 scripts/wait_for_ready.py localization-init --status-topic /localization_init_status --timeout 0.0 --release-control-on-blocked
 ```
 
 Use the `topics` subcommand for other modules when node existence is not enough
@@ -203,6 +210,8 @@ slam:
   readiness:
     type: localization_init
     status_topic: /localization_init_status
+    release_control_on_blocked: true
+    release_control_service: /nav_bridge_node/release_control
 
 terrain:
   readiness:

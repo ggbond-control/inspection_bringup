@@ -47,6 +47,9 @@ slam:
     status_topic: /localization_init_status
     timeout_seconds: 0.0
     blocked_is_failure: false
+    release_control_on_blocked: true
+    release_control_service: /nav_bridge_node/release_control
+    release_control_timeout_seconds: 5.0
 
 terrain:
   rviz: false
@@ -74,7 +77,7 @@ global_planner:
   params_file: "new_local"
   use_sim_time: false
   bidirectional_connections: true
-  waypoint_dwell_time: 2.0
+  waypoint_dwell_time: 1.0
   patrol_loops: 1
   readiness:
     type: nodes

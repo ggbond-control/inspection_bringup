@@ -197,7 +197,14 @@ def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout)
     )
 
 
-def localization_init_ready_action(status_topic, timeout, blocked_is_failure):
+def localization_init_ready_action(
+    status_topic,
+    timeout,
+    blocked_is_failure,
+    release_control_on_blocked,
+    release_control_service,
+    release_control_timeout,
+):
     cmd = [
         "python3",
         readiness_script_path(),
@@ -209,6 +216,16 @@ def localization_init_ready_action(status_topic, timeout, blocked_is_failure):
     ]
     if blocked_is_failure:
         cmd.append("--blocked-is-failure")
+    if release_control_on_blocked:
+        cmd.extend(
+            [
+                "--release-control-on-blocked",
+                "--release-control-service",
+                release_control_service,
+                "--release-control-timeout",
+                str(release_control_timeout),
+            ]
+        )
 
     return ExecuteProcess(
         cmd=cmd,
@@ -286,6 +303,9 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
             str(readiness_value(config, section, "status_topic", "/localization_init_status")),
             float(readiness_value(config, section, "timeout_seconds", 120.0)),
             as_bool(readiness_value(config, section, "blocked_is_failure", False)),
+            as_bool(readiness_value(config, section, "release_control_on_blocked", False)),
+            str(readiness_value(config, section, "release_control_service", "/nav_bridge_node/release_control")),
+            float(readiness_value(config, section, "release_control_timeout_seconds", 5.0)),
         )
 
     print(f"[navigation] unknown readiness type for {section}: {ready_type}; falling back to nodes")

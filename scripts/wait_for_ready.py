@@ -192,7 +192,14 @@ def format_score(score):
         return str(score)
 
 
-def wait_for_localization_init(status_topic, timeout, blocked_is_failure):
+def wait_for_localization_init(
+    status_topic,
+    timeout,
+    blocked_is_failure,
+    release_control_on_blocked,
+    release_control_service,
+    release_control_timeout,
+):
     try:
         import rclpy
         from inspection_interfaces.msg import LocalizationInitStatus
@@ -216,6 +223,7 @@ def wait_for_localization_init(status_topic, timeout, blocked_is_failure):
     deadline = deadline_from_timeout(timeout)
     last_printed = None
     blocked_notice_printed = False
+    release_control_called_for_block = False
 
     print(
         f"[slam] waiting for localization init status {timeout_text(timeout)}: {status_topic}",
@@ -257,12 +265,24 @@ def wait_for_localization_init(status_topic, timeout, blocked_is_failure):
                 if blocked_is_failure:
                     print("[slam] localization blocked; failing readiness", file=sys.stderr, flush=True)
                     return False
+                if release_control_on_blocked and not release_control_called_for_block:
+                    if call_trigger_service(release_control_service, release_control_timeout, "slam"):
+                        print("[slam] release_control succeeded after localization blocked", flush=True)
+                    else:
+                        print(
+                            "[slam] release_control failed after localization blocked; "
+                            "continuing to wait for external restart",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    release_control_called_for_block = True
                 if not blocked_notice_printed:
                     print("[slam] localization blocked; waiting for external restart", flush=True)
                     blocked_notice_printed = True
                 time.sleep(1.0)
             else:
                 blocked_notice_printed = False
+                release_control_called_for_block = False
 
         msg = latest_status["msg"]
         if msg is None:
@@ -292,6 +312,9 @@ def run_localization_init(args):
         args.status_topic,
         args.timeout,
         args.blocked_is_failure,
+        args.release_control_on_blocked,
+        args.release_control_service,
+        args.release_control_timeout,
     )
 
 
@@ -361,6 +384,22 @@ def main():
         help="Timeout in seconds. Use 0 or a negative value to wait forever.",
     )
     localization_parser.add_argument("--blocked-is-failure", action="store_true")
+    localization_parser.add_argument(
+        "--release-control-on-blocked",
+        action="store_true",
+        help="Call nav_bridge release_control once when localization enters BLOCKED.",
+    )
+    localization_parser.add_argument(
+        "--release-control-service",
+        default="/nav_bridge_node/release_control",
+        help="std_srvs/srv/Trigger service used to release nav_bridge control.",
+    )
+    localization_parser.add_argument(
+        "--release-control-timeout",
+        type=float,
+        default=5.0,
+        help="release_control timeout in seconds. Use 0 or a negative value to wait forever.",
+    )
     localization_parser.set_defaults(func=run_localization_init)
 
     args = parser.parse_args()
