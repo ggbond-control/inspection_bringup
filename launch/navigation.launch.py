@@ -113,6 +113,28 @@ def config_sequence(config):
     )
 
 
+def module_config(config, section):
+    value = config.get(section, {})
+    return value if isinstance(value, dict) else {}
+
+
+def readiness_config(config, section):
+    value = module_config(config, section).get("readiness", {})
+    return value if isinstance(value, dict) else {}
+
+
+def readiness_value(config, section, key, fallback):
+    value = readiness_config(config, section).get(key, fallback)
+    if value is None or value == "":
+        return fallback
+    return value
+
+
+def readiness_list(config, section, key, fallback):
+    value = readiness_value(config, section, key, fallback)
+    return split_list_text(value)
+
+
 def include_package_launch(package_name, launch_file, enabled, launch_arguments=None):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -127,6 +149,12 @@ def delayed_include(delay_seconds, action):
     if delay_seconds <= 0.0:
         return action
     return TimerAction(period=delay_seconds, actions=[action])
+
+
+def delayed_actions(delay_seconds, actions):
+    if delay_seconds <= 0.0:
+        return actions
+    return [TimerAction(period=delay_seconds, actions=actions)]
 
 
 def wait_for_nodes_action(name, nodes, timeout):
@@ -167,6 +195,105 @@ def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout)
         name="wait_for_nav_bridge_ready",
         output="screen",
     )
+
+
+def localization_init_ready_action(status_topic, timeout, blocked_is_failure):
+    cmd = [
+        "python3",
+        readiness_script_path(),
+        "localization-init",
+        "--status-topic",
+        status_topic,
+        "--timeout",
+        str(timeout),
+    ]
+    if blocked_is_failure:
+        cmd.append("--blocked-is-failure")
+
+    return ExecuteProcess(
+        cmd=cmd,
+        name="wait_for_slam_localization_init",
+        output="screen",
+    )
+
+
+def module_readiness_action(context, config, section, fallback_nodes, fallback_timeout):
+    ready_type = str(readiness_value(config, section, "type", "nodes"))
+
+    if ready_type == "nodes":
+        return wait_for_nodes_action(
+            section,
+            readiness_list(config, section, "nodes", fallback_nodes),
+            float(readiness_value(config, section, "timeout_seconds", fallback_timeout)),
+        )
+
+    if ready_type == "topics":
+        return ExecuteProcess(
+            cmd=[
+                "python3",
+                readiness_script_path(),
+                "topics",
+                "--name",
+                section,
+                "--timeout",
+                str(float(readiness_value(config, section, "timeout_seconds", fallback_timeout))),
+                *readiness_list(config, section, "topics", []),
+            ],
+            name=f"wait_for_{section}_topics",
+            output="screen",
+        )
+
+    if ready_type == "nav_bridge":
+        return nav_bridge_ready_action(
+            override_or_config_list(
+                context,
+                "nav_bridge_wait_topics",
+                {"nav_bridge": readiness_config(config, "nav_bridge")},
+                "nav_bridge",
+                "topics",
+                readiness_list(config, section, "topics", ["/battery/level"]),
+            ),
+            override_or_config(
+                context,
+                "nav_bridge_stand_service",
+                {"nav_bridge": readiness_config(config, "nav_bridge")},
+                "nav_bridge",
+                "stand_service",
+                "/nav_bridge_node/stand",
+            ),
+            override_or_config_typed(
+                context,
+                "nav_bridge_topic_timeout_seconds",
+                {"nav_bridge": readiness_config(config, "nav_bridge")},
+                "nav_bridge",
+                "topic_timeout_seconds",
+                fallback_timeout,
+                float,
+            ),
+            override_or_config_typed(
+                context,
+                "nav_bridge_stand_timeout_seconds",
+                {"nav_bridge": readiness_config(config, "nav_bridge")},
+                "nav_bridge",
+                "stand_timeout_seconds",
+                fallback_timeout,
+                float,
+            ),
+        )
+
+    if ready_type == "localization_init":
+        return localization_init_ready_action(
+            str(readiness_value(config, section, "status_topic", "/localization_init_status")),
+            float(readiness_value(config, section, "timeout_seconds", 120.0)),
+            as_bool(readiness_value(config, section, "blocked_is_failure", False)),
+        )
+
+    print(f"[navigation] unknown readiness type for {section}: {ready_type}; falling back to nodes")
+    return wait_for_nodes_action(section, fallback_nodes, fallback_timeout)
+
+
+def module_readiness_type(config, section):
+    return str(readiness_value(config, section, "type", "nodes"))
 
 
 def append_navigation_group(
@@ -325,7 +452,14 @@ def launch_setup(context):
         1.0,
         float,
     )
-    should_wait_for_nodes = as_bool(config_value(config, "bringup", "wait_for_nodes", True))
+    should_wait_for_readiness = as_bool(
+        config_value(
+            config,
+            "bringup",
+            "wait_for_readiness",
+            config_value(config, "bringup", "wait_for_nodes", True),
+        )
+    )
     shutdown_on_readiness_failure = as_bool(
         config_value(config, "bringup", "shutdown_on_readiness_failure", True)
     )
@@ -338,25 +472,6 @@ def launch_setup(context):
     )
     nav_bridge_enabled = override_or_config_bool(
         context, "enable_nav_bridge", config, "modules", "nav_bridge", True
-    )
-    nav_bridge_ready = nav_bridge_ready_action(
-        override_or_config_list(
-            context,
-            "nav_bridge_wait_topics",
-            config,
-            "nav_bridge",
-            "wait_topics",
-            ["/battery/level"],
-        ),
-        override_or_config(
-            context, "nav_bridge_stand_service", config, "nav_bridge", "stand_service", "/nav_bridge_node/stand"
-        ),
-        override_or_config_typed(
-            context, "nav_bridge_topic_timeout_seconds", config, "nav_bridge", "topic_timeout_seconds", wait_timeout, float
-        ),
-        override_or_config_typed(
-            context, "nav_bridge_stand_timeout_seconds", config, "nav_bridge", "stand_timeout_seconds", wait_timeout, float
-        ),
     )
 
     livox_launch = include_package_launch(
@@ -502,50 +617,42 @@ def launch_setup(context):
         "nav_bridge": (
             nav_bridge_enabled,
             nav_bridge_launch,
-            nav_bridge_ready,
+            module_readiness_action(context, config, "nav_bridge", [], wait_timeout),
         ),
         "livox": (
             livox_enabled,
             livox_launch,
-            wait_for_nodes_action(
-                "livox",
-                config_list(config, "livox", "wait_nodes", ["/livox_lidar_publisher"]),
-                wait_timeout,
-            ),
+            module_readiness_action(context, config, "livox", ["/livox_lidar_publisher"], wait_timeout),
         ),
         "slam": (
             slam_enabled,
             slam_launch,
-            wait_for_nodes_action(
-                "slam",
-                config_list(config, "slam", "wait_nodes", ["/laser_mapping"]),
-                wait_timeout,
-            ),
+            module_readiness_action(context, config, "slam", ["/laser_mapping"], wait_timeout),
         ),
         "terrain": (
             terrain_enabled,
             terrain_launch,
-            wait_for_nodes_action(
-                "terrain",
-                config_list(config, "terrain", "wait_nodes", ["/gridmapper_node"]),
-                wait_timeout,
-            ),
+            module_readiness_action(context, config, "terrain", ["/gridmapper_node"], wait_timeout),
         ),
         "local_planner": (
             local_planner_enabled,
             local_planner_launch,
-            wait_for_nodes_action(
+            module_readiness_action(
+                context,
+                config,
                 "local_planner",
-                config_list(config, "local_planner", "wait_nodes", ["/localPlanner", "/pathFollower"]),
+                ["/localPlanner", "/pathFollower"],
                 wait_timeout,
             ),
         ),
         "global_planner": (
             global_planner_enabled,
             global_planner_launch,
-            wait_for_nodes_action(
+            module_readiness_action(
+                context,
+                config,
                 "global_planner",
-                config_list(config, "global_planner", "wait_nodes", ["/planner_server", "/controller_server"]),
+                ["/planner_server", "/controller_server"],
                 wait_timeout,
             ),
         ),
@@ -567,11 +674,17 @@ def launch_setup(context):
         enabled, launch_action, ready_action = group
         ordered_navigation_groups.append((enabled, launch_action, name, ready_action))
 
-    if not should_wait_for_nodes:
+    if not should_wait_for_readiness:
         actions = []
-        for enabled, launch_action, _name, _ready_action in ordered_navigation_groups:
+        launch_index = 0
+        for enabled, launch_action, name, ready_action in ordered_navigation_groups:
             if enabled:
-                actions.append(delayed_include(delay * len(actions), launch_action))
+                start_delay = delay * launch_index
+                if name == "nav_bridge" and module_readiness_type(config, name) == "nav_bridge":
+                    actions.extend(delayed_actions(start_delay, [launch_action, ready_action]))
+                else:
+                    actions.append(delayed_include(start_delay, launch_action))
+                launch_index += 1
         return actions
 
     actions = []

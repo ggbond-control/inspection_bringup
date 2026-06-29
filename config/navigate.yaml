@@ -15,20 +15,25 @@ bringup:
     - local_planner
     - global_planner
   start_delay_seconds: 1.0
-  wait_for_nodes: true
+  wait_for_readiness: true
   shutdown_on_readiness_failure: true
   wait_timeout_seconds: 10.0
 
 nav_bridge:
-  wait_topics:
-    - /battery/level
-  stand_service: /nav_bridge_node/stand
-  topic_timeout_seconds: 10.0
-  stand_timeout_seconds: 30.0
+  readiness:
+    type: nav_bridge
+    topics:
+      - /battery/level
+    stand_service: /nav_bridge_node/stand
+    topic_timeout_seconds: 10.0
+    stand_timeout_seconds: 30.0
 
 livox:
-  wait_nodes:
-    - /livox_lidar_publisher
+  readiness:
+    type: nodes
+    nodes:
+      - /livox_lidar_publisher
+    timeout_seconds: 10.0
 
 slam:
   relocal: true
@@ -37,21 +42,30 @@ slam:
   pgo: false
   odom_imu: true
   use_sim_time: false
-  wait_nodes:
-    - /laser_mapping
+  readiness:
+    type: localization_init
+    status_topic: /localization_init_status
+    timeout_seconds: 0.0
+    blocked_is_failure: false
 
 terrain:
   rviz: false
   use_gpu: true
-  wait_nodes:
-    - /gridmapper_node
+  readiness:
+    type: nodes
+    nodes:
+      - /gridmapper_node
+    timeout_seconds: 10.0
 
 local_planner:
   use_sim_time: false
   start_rviz: false
-  wait_nodes:
-    - /localPlanner
-    - /pathFollower
+  readiness:
+    type: nodes
+    nodes:
+      - /localPlanner
+      - /pathFollower
+    timeout_seconds: 10.0
 
 global_planner:
   initial_map: "company2"
@@ -62,6 +76,9 @@ global_planner:
   bidirectional_connections: true
   waypoint_dwell_time: 2.0
   patrol_loops: 1
-  wait_nodes:
-    - /planner_server
-    - /controller_server
+  readiness:
+    type: nodes
+    nodes:
+      - /planner_server
+      - /controller_server
+    timeout_seconds: 10.0

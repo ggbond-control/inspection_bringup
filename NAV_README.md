@@ -87,26 +87,33 @@ bringup:
     - local_planner
     - global_planner
   start_delay_seconds: 1.0
-  wait_for_nodes: true
+  wait_for_readiness: true
   shutdown_on_readiness_failure: true
   wait_timeout_seconds: 10.0
 
 nav_bridge:
-  wait_topics:
-    - /battery/level
-  stand_service: /nav_bridge_node/stand
-  topic_timeout_seconds: 10.0
-  stand_timeout_seconds: 10.0
+  readiness:
+    type: nav_bridge
+    topics:
+      - /battery/level
+    stand_service: /nav_bridge_node/stand
+    topic_timeout_seconds: 10.0
+    stand_timeout_seconds: 30.0
 
 livox:
-  wait_nodes:
-    - /livox_lidar_publisher
+  readiness:
+    type: nodes
+    nodes:
+      - /livox_lidar_publisher
 
 slam:
   relocal: true
   prior_dir: "company2"
-  wait_nodes:
-    - /laser_mapping
+  readiness:
+    type: localization_init
+    status_topic: /localization_init_status
+    timeout_seconds: 0.0
+    blocked_is_failure: false
 ```
 
 `modules` controls whether each module is launched. `bringup.sequence` controls
@@ -114,11 +121,11 @@ the launch order. `bringup` also controls the launch timing and readiness wait
 behavior. Each module section contains only that module's launch arguments and
 readiness checks.
 
-## Node Readiness Wait
+## Readiness Wait
 
-When `bringup.wait_for_nodes` is true, the launch file starts one module, waits
-for that module's configured `wait_nodes`, then starts the next module after
-`bringup.start_delay_seconds`.
+When `bringup.wait_for_readiness` is true, the launch file starts one module,
+waits for that module's configured `readiness`, then starts the next module
+after `bringup.start_delay_seconds`.
 
 The module order comes from `bringup.sequence`:
 
@@ -137,9 +144,26 @@ Unknown or duplicate sequence entries are skipped with a console message.
 
 `nav_bridge` uses a custom readiness check before the rest of the stack starts:
 
-1. Wait for one message on every topic in `nav_bridge.wait_topics`.
-2. Call `nav_bridge.stand_service` as `std_srvs/srv/Trigger`.
+1. Wait for one message on every topic in `nav_bridge.readiness.topics`.
+2. Call `nav_bridge.readiness.stand_service` as `std_srvs/srv/Trigger`.
 3. Continue only when the service response contains `success: true`.
+
+When `bringup.wait_for_readiness` is false, `nav_bridge` still runs this
+activation step after its launch. The step no longer gates the later modules in
+that mode, but the required `stand_service` call is not skipped.
+
+`slam` uses the faster_lio localization status interface:
+
+1. Subscribe to `/localization_init_status` with transient local + reliable QoS.
+2. Continue only when `state == TRACKING`.
+3. If `state == INITIAL_REGISTRATION_BLOCKED`, wait for an external supervisor
+   or UI to restart initial alignment. This bringup launch does not directly
+   call `/restart_initial_alignment`.
+
+Set `slam.readiness.timeout_seconds` to `0.0` or a negative value to wait
+without a timeout. This is the default because blocked relocalization may need
+manual or external-service intervention before faster_lio can return to
+`TRACKING`.
 
 The readiness helper is:
 
@@ -153,6 +177,7 @@ It has subcommands for the supported readiness checks:
 python3 scripts/wait_for_ready.py nodes --name livox --timeout 10.0 /livox_lidar_publisher
 python3 scripts/wait_for_ready.py topics --name battery --timeout 10.0 /battery/level
 python3 scripts/wait_for_ready.py nav_bridge --topic /battery/level --stand-service /nav_bridge_node/stand
+python3 scripts/wait_for_ready.py localization-init --status-topic /localization_init_status --timeout 0.0
 ```
 
 Use the `topics` subcommand for other modules when node existence is not enough
@@ -162,42 +187,56 @@ Default readiness checks:
 
 ```yaml
 nav_bridge:
-  wait_topics:
-    - /battery/level
-  stand_service: /nav_bridge_node/stand
+  readiness:
+    type: nav_bridge
+    topics:
+      - /battery/level
+    stand_service: /nav_bridge_node/stand
 
 livox:
-  wait_nodes:
-    - /livox_lidar_publisher
+  readiness:
+    type: nodes
+    nodes:
+      - /livox_lidar_publisher
 
 slam:
-  wait_nodes:
-    - /laser_mapping
+  readiness:
+    type: localization_init
+    status_topic: /localization_init_status
 
 terrain:
-  wait_nodes:
-    - /gridmapper_node
+  readiness:
+    type: nodes
+    nodes:
+      - /gridmapper_node
 
 local_planner:
-  wait_nodes:
-    - /localPlanner
-    - /pathFollower
+  readiness:
+    type: nodes
+    nodes:
+      - /localPlanner
+      - /pathFollower
 
 global_planner:
-  wait_nodes:
-    - /planner_server
-    - /controller_server
+  readiness:
+    type: nodes
+    nodes:
+      - /planner_server
+      - /controller_server
 ```
 
 If a readiness check fails or times out, the timeout is printed. By default,
 `bringup.shutdown_on_readiness_failure` shuts down the launch so partially
 started modules such as `nav_bridge` are not left running alone.
 
+For topic readiness, the timeout applies to each topic individually. For
+localization readiness, `timeout_seconds <= 0` means wait indefinitely.
+
 Disable readiness waiting and use only timed startup:
 
 ```yaml
 bringup:
-  wait_for_nodes: false
+  wait_for_readiness: false
   start_delay_seconds: 1.0
 ```
 
@@ -239,8 +278,8 @@ ros2 launch inspection_bringup navigation.launch.py \
 The old `x30-company2` commands map to the new launch like this:
 
 ```text
-livox   -> modules.livox + livox.wait_nodes
-nav_bridge -> modules.nav_bridge + nav_bridge.*
+livox   -> modules.livox + livox.readiness
+nav_bridge -> modules.nav_bridge + nav_bridge.readiness
 slam    -> modules.slam + slam.*
 terrain -> modules.terrain + terrain.*
 local   -> modules.local_planner + local_planner.*
