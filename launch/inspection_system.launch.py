@@ -42,6 +42,13 @@ def config_value(config, section, key, fallback):
     return value
 
 
+def nested_config_value(config, section, subsection, key, fallback):
+    value = config.get(section, {}).get(subsection, {}).get(key, fallback)
+    if value is None or value == "":
+        return fallback
+    return value
+
+
 def as_bool(value):
     if isinstance(value, bool):
         return value
@@ -89,6 +96,50 @@ def include_package_launch(package_name, launch_file, condition_name=None, launc
 def append_if_enabled(actions, enabled, action):
     if as_bool(enabled):
         actions.append(action)
+
+
+def mqtt_base_prefix(config):
+    vendor_prefix = str(config_value(config, "mqtt", "topic_vendor_prefix", "fh")).strip("/")
+    topic_root = str(config_value(config, "mqtt", "topic_root", "device")).strip("/")
+    return f"{vendor_prefix}/{topic_root}"
+
+
+def live_stream_params(config):
+    return {
+        "live_stream_config_path": str(config_value(config, "live_stream", "config_path", "")),
+        "live_stream_request_on_startup": ParameterValue(
+            as_bool(config_value(config, "live_stream", "request_on_startup", True)),
+            value_type=bool,
+        ),
+        "live_stream_enable_push": ParameterValue(
+            as_bool(config_value(config, "live_stream", "enable_push", True)),
+            value_type=bool,
+        ),
+        "live_stream_ffmpeg_bin": str(config_value(config, "live_stream", "ffmpeg_bin", "ffmpeg")),
+        "live_stream_restart_interval_sec": ParameterValue(
+            config_value(config, "live_stream", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
+        "live_stream_ffmpeg_loglevel": str(
+            nested_config_value(config, "live_stream", "ffmpeg", "loglevel", "warning")
+        ),
+        "live_stream_ffmpeg_realtime_input": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "ffmpeg", "realtime_input", True)),
+            value_type=bool,
+        ),
+        "live_stream_ffmpeg_rtsp_transport": str(
+            nested_config_value(config, "live_stream", "ffmpeg", "rtsp_transport", "tcp")
+        ),
+        "live_stream_ffmpeg_video_codec": str(
+            nested_config_value(config, "live_stream", "ffmpeg", "video_codec", "copy")
+        ),
+        "live_stream_ffmpeg_audio_codec": str(
+            nested_config_value(config, "live_stream", "ffmpeg", "audio_codec", "copy")
+        ),
+        "live_stream_ffmpeg_output_format": str(
+            nested_config_value(config, "live_stream", "ffmpeg", "output_format", "flv")
+        ),
+    }
 
 
 def generate_launch_description():
@@ -423,6 +474,19 @@ def launch_setup(context):
         parameters=[task_hub_params],
     )
 
+    platform_params = {
+        "sn": override_or_config(context, "sn", config, "mqtt", "sn", "x30"),
+        "mqtt_host": override_or_config(
+            context, "mqtt_host", config, "mqtt", "host", "127.0.0.1"
+        ),
+        "mqtt_port": ParameterValue(
+            override_or_config_typed(context, "mqtt_port", config, "mqtt", "port", 1883, int),
+            value_type=int,
+        ),
+        "mqtt_base_prefix": mqtt_base_prefix(config),
+    }
+    platform_params.update(live_stream_params(config))
+
     platform_mqtt_bridge = Node(
         package="inspection_platform_bridge",
         executable="platform_mqtt_bridge_node",
@@ -431,18 +495,7 @@ def launch_setup(context):
         emulate_tty=True,
         prefix=["stdbuf -o L -e L"],
         condition=IfCondition(enable_mqtt),
-        parameters=[
-            {
-                "sn": override_or_config(context, "sn", config, "mqtt", "sn", "DEVICE_SN"),
-                "mqtt_host": override_or_config(
-                    context, "mqtt_host", config, "mqtt", "host", "127.0.0.1"
-                ),
-                "mqtt_port": ParameterValue(
-                    override_or_config_typed(context, "mqtt_port", config, "mqtt", "port", 1883, int),
-                    value_type=int,
-                ),
-            }
-        ],
+        parameters=[platform_params],
     )
 
     gimbal_params_file = os.path.expanduser(

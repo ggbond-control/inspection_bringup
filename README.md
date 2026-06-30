@@ -79,9 +79,25 @@ modules:
   mqtt: true
 
 mqtt:
-  sn: DEVICE_SN
+  sn: x30
   host: 127.0.0.1
   port: 1883
+  topic_vendor_prefix: fh
+  topic_root: device
+
+live_stream:
+  config_path: ""
+  request_on_startup: true
+  enable_push: true
+  ffmpeg_bin: ffmpeg
+  restart_interval_sec: 5.0
+  ffmpeg:
+    loglevel: warning
+    realtime_input: true
+    rtsp_transport: tcp
+    video_codec: copy
+    audio_codec: copy
+    output_format: flv
 ```
 
 ```bash
