@@ -101,6 +101,7 @@ nav_bridge:
     stand_timeout_seconds: 30.0
 
 livox:
+  model: mid360
   readiness:
     type: nodes
     nodes:
@@ -190,6 +191,14 @@ python3 scripts/wait_for_ready.py localization-init --status-topic /localization
 Use the `topics` subcommand for other modules when node existence is not enough
 and the module must prove that a topic is publishing real data.
 
+`livox.model` is passed to `livox_ros_driver2/msg_multi_MID360_launch.py`:
+
+```yaml
+livox:
+  model: mid360   # multi_MID360_config.json
+  # model: mid360s  # multi_MID360s_config.json
+```
+
 Default readiness checks:
 
 ```yaml
@@ -201,6 +210,7 @@ nav_bridge:
     stand_service: /nav_bridge_node/stand
 
 livox:
+  model: mid360
   readiness:
     type: nodes
     nodes:
@@ -259,6 +269,7 @@ Examples:
 ros2 launch inspection_bringup navigation.launch.py \
   enable_nav_bridge:=true \
   enable_livox:=false \
+  livox_model:=mid360 \
   slam_prior_dir:=company2 \
   global_initial_map:=company2
 ```

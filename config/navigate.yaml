@@ -29,6 +29,7 @@ nav_bridge:
     stand_timeout_seconds: 30.0
 
 livox:
+  model: mid360
   readiness:
     type: nodes
     nodes:

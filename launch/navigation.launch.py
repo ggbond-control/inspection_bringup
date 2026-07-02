@@ -386,6 +386,11 @@ def generate_launch_description():
             description="Timeout for the nav_bridge stand service call.",
         ),
         DeclareLaunchArgument("enable_livox", default_value="", description="Start MID360 Livox driver."),
+        DeclareLaunchArgument(
+            "livox_model",
+            default_value="",
+            description="Livox model passed to msg_multi_MID360_launch.py: mid360 or mid360s.",
+        ),
         DeclareLaunchArgument("enable_slam", default_value="", description="Start faster_lio localization."),
         DeclareLaunchArgument("enable_terrain", default_value="", description="Start gridmapper local terrain."),
         DeclareLaunchArgument("enable_local_planner", default_value="", description="Start local planner."),
@@ -498,6 +503,9 @@ def launch_setup(context):
         "livox_ros_driver2",
         "msg_multi_MID360_launch.py",
         "true",
+        {
+            "model": override_or_config(context, "livox_model", config, "livox", "model", "mid360"),
+        },
     )
     livox_enabled = override_or_config_bool(context, "enable_livox", config, "modules", "livox", True)
     slam_launch = include_package_launch(
