@@ -8,6 +8,114 @@ The navigation stack is intentionally decoupled from
 inspection task modules, and use `navigation.launch.py` for the robot
 navigation stack.
 
+## Deployment
+
+The navigation deployment helper keeps all managed source and third-party build
+artifacts inside user workspaces. It does not run `sudo`, install apt packages,
+write sysctl files, or install libraries into `/usr/local`.
+
+By default, run the helper from a navigation deployment rooted at
+`~/Workspace`. The helper creates missing workspace directories before cloning
+or building:
+
+```text
+~/Workspace/
+  algor_ws/
+  driver_ws/
+  task_ws/
+    src/inspection_bringup
+```
+
+Use `--workspace-root PATH` to place both workspaces under a different root, or
+use `--algor-ws PATH` / `--driver-ws PATH` when the two workspaces should not
+share the same parent.
+
+Install system packages before running the helper. The exact apt source is
+environment-specific, but the navigation stack expects these families to be
+available:
+
+```text
+libgoogle-glog-dev
+libgflags-dev
+libyaml-cpp-dev
+libeigen3-dev
+libpcl-dev
+libopencv-dev
+libtbb-dev
+opencl-headers
+ocl-icd-opencl-dev
+libapr1-dev
+ros-jazzy-navigation2
+ros-jazzy-nav2-bringup
+ros-jazzy-grid-map
+ros-jazzy-rviz-2d-overlay-msgs
+```
+
+`inspection_interfaces` is not managed by the navigation helper. Source an
+existing underlay that provides it when building `algor_ws`:
+
+```bash
+src/inspection_bringup/scripts/build_navigation.sh \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+```
+
+Managed repositories are listed in:
+
+```text
+config/navigation_deps.repos
+```
+
+Missing repositories are cloned with `git clone --depth 1`. Existing
+repositories are skipped; the helper does not pull, checkout, reset, or overwrite
+local changes.
+
+GTSAM and Livox-SDK2 are built locally into:
+
+```text
+driver_ws/third_party/install
+```
+
+The helper passes this prefix to CMake and sets package RPATHs to
+`driver_ws/third_party/install/lib` and
+`driver_ws/third_party/install/lib64`, so installed ROS executables can resolve
+the local shared libraries without `sudo make install`. It also prints an
+`LD_LIBRARY_PATH` fallback for ad-hoc tools or manually built binaries.
+
+Useful commands:
+
+```bash
+# Clone missing repositories, build third-party libraries, driver_ws, and algor_ws.
+src/inspection_bringup/scripts/build_navigation.sh \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+
+# Use a different deployment root.
+src/inspection_bringup/scripts/build_navigation.sh \
+  --workspace-root /workspaces/navigation \
+  --interface-underlay /workspaces/task_ws/install/setup.bash
+
+# Only clone missing repositories.
+src/inspection_bringup/scripts/build_navigation.sh --fetch-only
+
+# Only build local third-party libraries.
+src/inspection_bringup/scripts/build_navigation.sh --third-party-only
+
+# Rebuild from existing sources.
+src/inspection_bringup/scripts/build_navigation.sh \
+  --build-only \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+```
+
+For the merged Livox stream, keep the runtime DDS settings from
+`livox_ros_driver2`:
+
+```bash
+export CYCLONEDDS_URI=file://$HOME/Workspace/driver_ws/src/livox_ros_driver2/config/cyclonedds_large_message.xml
+```
+
+The Linux socket buffer sysctl settings described by `livox_ros_driver2` still
+need to be handled by the deployment environment; the helper intentionally does
+not change system configuration.
+
 ## Start
 
 Build and source the workspace first:

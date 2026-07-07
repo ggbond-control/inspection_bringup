@@ -1,0 +1,42 @@
+repositories:
+  algor_ws/src/nav_bridge:
+    type: git
+    url: https://github.com/ggbond-control/nav_bridge.git
+
+  algor_ws/src/faster-slam:
+    type: git
+    url: https://github.com/ggbond-control/faster_slam.git
+
+  algor_ws/src/gridmapper:
+    type: git
+    url: https://github.com/ggbond-control/gridmapper.git
+
+  algor_ws/src/local_planner:
+    type: git
+    url: https://github.com/ggbond-control/local_planner.git
+
+  algor_ws/src/multi_map_nav_ros2:
+    type: git
+    url: https://github.com/ggbond-control/multi_map_nav_ros2.git
+
+  driver_ws/src/livox_ros_driver2:
+    type: git
+    url: https://github.com/ggbond-control/livox_ros_driver2.git
+
+  driver_ws/src/ndt_omp:
+    type: git
+    url: https://github.com/ggbond-control/ndt_omp.git
+
+  driver_ws/src/control_input_msgs:
+    type: git
+    url: https://github.com/ggbond-control/control_intput_msgs.git
+
+  driver_ws/third_party/src/gtsam:
+    type: git
+    url: https://github.com/borglab/gtsam.git
+    version: 4.2.0
+
+  driver_ws/third_party/src/livox_sdk2:
+    type: git
+    url: https://github.com/ggbond-control/livox_sdk2.git
+    version: jazzy
