@@ -83,6 +83,11 @@ def generate_launch_description():
             default_value="",
             description="Start thermal camera monitor.",
         ),
+        DeclareLaunchArgument(
+            "enable_acoustic",
+            default_value="",
+            description="Start acoustic monitor.",
+        ),
     ]
 
     return LaunchDescription(
@@ -110,6 +115,9 @@ def launch_setup(context):
     enable_thermal = as_bool_text(
         override_or_config(context, "enable_thermal", config, "modules", "thermal", True)
     )
+    enable_acoustic = as_bool_text(
+        override_or_config(context, "enable_acoustic", config, "modules", "acoustic", True)
+    )
 
     return [
         include_package_launch("alarm_manager", "alarm_manager.launch.py", enable_alarm),
@@ -119,4 +127,5 @@ def launch_setup(context):
             "thermal_camera_monitor.launch.py",
             enable_thermal,
         ),
+        include_package_launch("acoustic_monitor", "acoustic_monitor.launch.py", enable_acoustic),
     ]

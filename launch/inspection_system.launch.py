@@ -185,6 +185,11 @@ def generate_launch_description():
             description="Start thermal camera monitor when sensors are enabled.",
         ),
         DeclareLaunchArgument(
+            "enable_acoustic",
+            default_value="",
+            description="Start acoustic monitor when sensors are enabled.",
+        ),
+        DeclareLaunchArgument(
             "enable_mqtt",
             default_value="",
             description="Start ROS 2 <-> MQTT platform bridge.",
@@ -347,6 +352,9 @@ def launch_setup(context):
     enable_gas = as_bool_text(override_or_config(context, "enable_gas", config, "modules", "gas", True))
     enable_thermal = as_bool_text(override_or_config(
         context, "enable_thermal", config, "modules", "thermal", True
+    ))
+    enable_acoustic = as_bool_text(override_or_config(
+        context, "enable_acoustic", config, "modules", "acoustic", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
 
@@ -561,6 +569,7 @@ def launch_setup(context):
                 "enable_alarm": enable_alarm,
                 "enable_gas": enable_gas,
                 "enable_thermal": enable_thermal,
+                "enable_acoustic": enable_acoustic,
             },
         ),
     )

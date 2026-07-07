@@ -6,6 +6,7 @@ modules:
   alarm: true
   gas: true
   thermal: true
+  acoustic: true
   mqtt: true
 
 mqtt:

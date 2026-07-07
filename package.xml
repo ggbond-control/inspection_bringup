@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>alarm_manager</exec_depend>
+  <exec_depend>acoustic_monitor</exec_depend>
   <exec_depend>gas_monitor</exec_depend>
   <exec_depend>gimbal_control_stub</exec_depend>
   <exec_depend>inspection_charge_executor</exec_depend>
