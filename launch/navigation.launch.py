@@ -370,9 +370,49 @@ def module_readiness_type(config, section):
     return str(readiness_value(config, section, "type", "nodes"))
 
 
+def module_readiness_failure_reason(config, section, fallback_nodes, fallback_timeout):
+    ready_type = module_readiness_type(config, section)
+
+    if ready_type == "nav_bridge":
+        topics = readiness_list(config, section, "topics", ["/battery/level"])
+        topic_timeout = float(readiness_value(config, section, "topic_timeout_seconds", fallback_timeout))
+        stand_service = str(readiness_value(config, section, "stand_service", "/nav_bridge_node/stand"))
+        stand_timeout = float(readiness_value(config, section, "stand_timeout_seconds", fallback_timeout))
+        return (
+            f"{section} readiness failed: no message on topics {topics} within "
+            f"{topic_timeout:.1f}s or {stand_service} did not return success within {stand_timeout:.1f}s"
+        )
+
+    if ready_type == "localization_init":
+        status_topic = str(readiness_value(config, section, "status_topic", "/localization_init_status"))
+        timeout = float(readiness_value(config, section, "timeout_seconds", 120.0))
+        blocked_is_failure = as_bool(readiness_value(config, section, "blocked_is_failure", False))
+        blocked_text = "entered INITIAL_REGISTRATION_BLOCKED or " if blocked_is_failure else ""
+        return (
+            f"{section} readiness failed: localization init {blocked_text}"
+            f"did not reach TRACKING on {status_topic} {timeout_text_for_reason(timeout)}"
+        )
+
+    if ready_type == "topics":
+        topics = readiness_list(config, section, "topics", [])
+        timeout = float(readiness_value(config, section, "timeout_seconds", fallback_timeout))
+        return f"{section} readiness failed: no message on topics {topics} {timeout_text_for_reason(timeout)}"
+
+    nodes = readiness_list(config, section, "nodes", fallback_nodes)
+    timeout = float(readiness_value(config, section, "timeout_seconds", fallback_timeout))
+    return f"{section} readiness failed: nodes {nodes} not ready {timeout_text_for_reason(timeout)}"
+
+
+def timeout_text_for_reason(timeout):
+    if timeout <= 0.0:
+        return "before shutdown"
+    return f"within {timeout:.1f}s"
+
+
 def append_navigation_group(
     actions,
     previous_wait,
+    previous_failure_reason,
     launch_action,
     wait_action,
     delay_seconds,
@@ -390,17 +430,14 @@ def append_navigation_group(
 
     def on_previous_wait_exit(event, _context):
         if event.returncode != 0:
-            reason = (
-                f"readiness check failed with code {event.returncode}; "
-                "not starting the next module"
-            )
+            reason = f"{previous_failure_reason}; exit_code={event.returncode}; not starting the next module"
             print(
                 f"[navigation] {reason}"
             )
             failure_actions = []
             if state_dir:
                 failure_actions.append(report_result_action(state_dir, run_id, False, reason))
-            if shutdown_on_readiness_failure:
+            if state_dir or shutdown_on_readiness_failure:
                 failure_actions.append(EmitEvent(event=Shutdown(reason=reason)))
             return failure_actions
         return next_actions
@@ -437,16 +474,26 @@ def report_result_action(state_dir, run_id, success, reason):
     )
 
 
-def append_final_result_handler(actions, previous_wait, state_dir, run_id):
+def append_final_result_handler(
+    actions,
+    previous_wait,
+    previous_failure_reason,
+    state_dir,
+    run_id,
+    shutdown_on_readiness_failure,
+):
     if previous_wait is None:
         actions.append(report_result_action(state_dir, run_id, True, "navigation startup complete"))
         return
 
     def on_final_wait_exit(event, _context):
         if event.returncode != 0:
-            reason = f"final readiness check failed with code {event.returncode}"
+            reason = f"{previous_failure_reason}; exit_code={event.returncode}"
             print(f"[navigation] {reason}")
-            return [report_result_action(state_dir, run_id, False, reason)]
+            failure_actions = [report_result_action(state_dir, run_id, False, reason)]
+            if state_dir or shutdown_on_readiness_failure:
+                failure_actions.append(EmitEvent(event=Shutdown(reason=reason)))
+            return failure_actions
         return [report_result_action(state_dir, run_id, True, "navigation startup complete")]
 
     actions.append(
@@ -887,6 +934,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             module_readiness_action_with_overrides(
                 context, config, "nav_bridge", [], wait_timeout, use_launch_overrides
             ),
+            module_readiness_failure_reason(config, "nav_bridge", [], wait_timeout),
         ),
         "livox": (
             livox_enabled,
@@ -899,6 +947,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 wait_timeout,
                 use_launch_overrides,
             ),
+            module_readiness_failure_reason(config, "livox", ["/livox_lidar_publisher"], wait_timeout),
         ),
         "slam": (
             slam_enabled,
@@ -906,6 +955,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             module_readiness_action_with_overrides(
                 context, config, "slam", ["/laser_mapping"], wait_timeout, use_launch_overrides
             ),
+            module_readiness_failure_reason(config, "slam", ["/laser_mapping"], wait_timeout),
         ),
         "terrain": (
             terrain_enabled,
@@ -918,6 +968,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 wait_timeout,
                 use_launch_overrides,
             ),
+            module_readiness_failure_reason(config, "terrain", ["/gridmapper_node"], wait_timeout),
         ),
         "local_planner": (
             local_planner_enabled,
@@ -930,6 +981,12 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 wait_timeout,
                 use_launch_overrides,
             ),
+            module_readiness_failure_reason(
+                config,
+                "local_planner",
+                ["/localPlanner", "/pathFollower"],
+                wait_timeout,
+            ),
         ),
         "global_planner": (
             global_planner_enabled,
@@ -941,6 +998,12 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 ["/planner_server", "/controller_server"],
                 wait_timeout,
                 use_launch_overrides,
+            ),
+            module_readiness_failure_reason(
+                config,
+                "global_planner",
+                ["/planner_server", "/controller_server"],
+                wait_timeout,
             ),
         ),
     }
@@ -958,13 +1021,13 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             print(f"[navigation] unknown sequence entry skipped: {name}")
             continue
 
-        enabled, launch_action, ready_action = group
-        ordered_navigation_groups.append((enabled, launch_action, name, ready_action))
+        enabled, launch_action, ready_action, failure_reason = group
+        ordered_navigation_groups.append((enabled, launch_action, name, ready_action, failure_reason))
 
     if not should_wait_for_readiness:
         actions = []
         launch_index = 0
-        for enabled, launch_action, name, ready_action in ordered_navigation_groups:
+        for enabled, launch_action, name, ready_action, _failure_reason in ordered_navigation_groups:
             if enabled:
                 start_delay = delay * launch_index
                 if name == "nav_bridge" and module_readiness_type(config, name) == "nav_bridge":
@@ -990,12 +1053,14 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
 
     actions = []
     previous_wait = None
-    for enabled, launch_action, _name, ready_action in ordered_navigation_groups:
+    previous_failure_reason = None
+    for enabled, launch_action, _name, ready_action, failure_reason in ordered_navigation_groups:
         if not enabled:
             continue
         previous_wait = append_navigation_group(
             actions,
             previous_wait,
+            previous_failure_reason,
             launch_action,
             ready_action,
             delay,
@@ -1003,8 +1068,16 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             state_dir=state_dir,
             run_id=run_id,
         )
+        previous_failure_reason = failure_reason
 
     if state_dir:
-        append_final_result_handler(actions, previous_wait, state_dir, run_id)
+        append_final_result_handler(
+            actions,
+            previous_wait,
+            previous_failure_reason,
+            state_dir,
+            run_id,
+            shutdown_on_readiness_failure,
+        )
 
     return actions

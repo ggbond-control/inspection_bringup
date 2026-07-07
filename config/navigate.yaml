@@ -51,7 +51,7 @@ slam:
     type: localization_init
     status_topic: /localization_init_status
     timeout_seconds: 0.0
-    blocked_is_failure: false
+    blocked_is_failure: true
     release_control_on_blocked: true
     release_control_service: /nav_bridge_node/release_control
     release_control_timeout_seconds: 5.0

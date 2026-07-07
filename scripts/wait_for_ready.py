@@ -262,9 +262,6 @@ def wait_for_localization_init(
                 return True
 
             if state == 4:
-                if blocked_is_failure:
-                    print("[slam] localization blocked; failing readiness", file=sys.stderr, flush=True)
-                    return False
                 if release_control_on_blocked and not release_control_called_for_block:
                     if call_trigger_service(release_control_service, release_control_timeout, "slam"):
                         print("[slam] release_control succeeded after localization blocked", flush=True)
@@ -276,6 +273,9 @@ def wait_for_localization_init(
                             flush=True,
                         )
                     release_control_called_for_block = True
+                if blocked_is_failure:
+                    print("[slam] localization blocked; failing readiness", file=sys.stderr, flush=True)
+                    return False
                 if not blocked_notice_printed:
                     print("[slam] localization blocked; waiting for external restart", flush=True)
                     blocked_notice_printed = True
