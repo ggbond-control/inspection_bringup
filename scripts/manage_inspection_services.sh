@@ -193,6 +193,13 @@ service = config.get("service", {})
 user = str(service.get("user", "cat"))
 home_dir = str(service.get("home_dir", f"/home/{user}"))
 workspace_root = str(service.get("workspace_root", f"{home_dir}/task_ws"))
+setup_paths = service.get("setup_paths")
+if not isinstance(setup_paths, list) or not setup_paths:
+    setup_paths = [os.path.join(workspace_root, "install", "setup.bash")]
+setup_paths = [str(path) for path in setup_paths]
+environment = service.get("environment", {})
+if not isinstance(environment, dict):
+    environment = {}
 ros_distro = str(service.get("ros_distro", "jazzy"))
 ros_log_dir = str(service.get("ros_log_dir", f"{home_dir}/inspection_logs"))
 install_dir = str(service.get("install_dir", "/opt/inspection_bringup"))
@@ -230,16 +237,35 @@ def write_executable(path, content):
 
 
 def wrapper_content(kind, launch_file, args):
+    setup_lines = []
+    for setup_path in setup_paths:
+        quoted_path = shlex.quote(setup_path)
+        setup_lines.append(
+            f"""if [[ ! -f {quoted_path} ]]; then
+  echo "error: workspace setup not found: {setup_path}" >&2
+  exit 1
+fi
+source {quoted_path}
+"""
+        )
+    setup_block = "\n".join(setup_lines)
+    environment_lines = []
+    for key, value in environment.items():
+        if not key:
+            continue
+        environment_lines.append(f"export {key}={shlex.quote(str(value))}")
+    environment_block = "\n".join(environment_lines)
+
     return f"""#!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 source /opt/ros/{shlex.quote(ros_distro)}/setup.bash
 
-if [[ ! -f {shlex.quote(workspace_root)}/install/setup.bash ]]; then
-  echo "error: workspace setup not found: {workspace_root}/install/setup.bash" >&2
-  exit 1
-fi
-source {shlex.quote(workspace_root)}/install/setup.bash
+{setup_block}
+
+set -u
+
+{environment_block}
 
 mkdir -p {shlex.quote(ros_log_dir)}
 export ROS_LOG_DIR={shlex.quote(ros_log_dir)}
