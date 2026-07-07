@@ -1,0 +1,18 @@
+[Unit]
+Description=Inspection Navigation Bringup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@WORKSPACE_ROOT@
+Environment=HOME=@HOME_DIR@
+ExecStart=@INSTALL_DIR@/run_navigation.sh
+Restart=@RESTART@
+RestartSec=@RESTART_SEC@
+KillSignal=SIGINT
+TimeoutStopSec=@TIMEOUT_STOP_SEC@
+
+[Install]
+WantedBy=multi-user.target

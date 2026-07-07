@@ -1,0 +1,22 @@
+service:
+  user: cat
+  workspace_root: /home/cat/task_ws
+  ros_distro: jazzy
+  ros_log_dir: /home/cat/inspection_logs
+  install_dir: /opt/inspection_bringup
+  restart: on-failure
+  restart_sec: 5
+  timeout_stop_sec: 30
+  sudo_default_password: cat
+
+navigation:
+  service_name: inspection-navigation.service
+  enabled_on_boot: true
+  launch_args:
+    navigate_config_path: /home/cat/task_ws/src/inspection_bringup/config/navigate.yaml
+
+inspection_system:
+  service_name: inspection-system.service
+  enabled_on_boot: true
+  launch_args:
+    system_config_path: /home/cat/task_ws/src/inspection_bringup/config/system.yaml

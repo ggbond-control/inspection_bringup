@@ -167,6 +167,47 @@ Attach later with:
 tmux attach -t inspection
 ```
 
+## Systemd Services
+
+`inspection_bringup` can install and manage two endpoint system services:
+
+```text
+inspection-navigation.service -> navigation.launch.py
+inspection-system.service     -> inspection_system.launch.py
+```
+
+The default service configuration is `config/services.yaml` and targets the
+endpoint account and workspace:
+
+```yaml
+service:
+  user: cat
+  workspace_root: /home/cat/task_ws
+```
+
+Install the services after the workspace has been built on the endpoint:
+
+```bash
+src/inspection_bringup/scripts/manage_inspection_services.sh install
+src/inspection_bringup/scripts/manage_inspection_services.sh enable
+src/inspection_bringup/scripts/manage_inspection_services.sh start
+```
+
+The management script first tries sudo with the default endpoint password from
+`config/services.yaml`, which is `cat`. If that fails, it falls back to the
+normal sudo password prompt.
+
+Useful commands:
+
+```bash
+src/inspection_bringup/scripts/manage_inspection_services.sh status
+src/inspection_bringup/scripts/manage_inspection_services.sh restart navigation
+src/inspection_bringup/scripts/manage_inspection_services.sh restart system
+src/inspection_bringup/scripts/manage_inspection_services.sh logs navigation
+src/inspection_bringup/scripts/manage_inspection_services.sh logs system
+src/inspection_bringup/scripts/manage_inspection_services.sh uninstall
+```
+
 ## Extension Pattern
 
 When a new sensor module is added, add its package dependency to `package.xml`

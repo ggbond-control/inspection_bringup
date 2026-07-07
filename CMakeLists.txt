@@ -7,6 +7,7 @@ install(DIRECTORY
   config
   launch
   scripts
+  systemd
   DESTINATION share/${PROJECT_NAME}
 )
 
