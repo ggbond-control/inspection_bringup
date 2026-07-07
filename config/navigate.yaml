@@ -7,6 +7,10 @@ modules:
   global_planner: true
 
 bringup:
+  start_mode: service
+  start_service: /navigation_bringup/start
+  start_timeout_seconds: 0.0
+  result_timeout_seconds: 0.0
   sequence:
     - nav_bridge
     - livox

@@ -24,6 +24,36 @@ Start the default navigation stack:
 ros2 launch inspection_bringup navigation.launch.py
 ```
 
+By default, `navigation.launch.py` starts a service-gated supervisor and waits
+for:
+
+```text
+/navigation_bringup/start
+rcl_interfaces/srv/SetParameters
+```
+
+Call the service to apply runtime overrides and start the stack:
+
+```bash
+ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
+"{parameters: [
+  {name: 'livox.model', value: {type: 4, string_value: 'mid360'}},
+  {name: 'slam.prior_dir', value: {type: 4, string_value: 'company2'}},
+  {name: 'global_planner.initial_map', value: {type: 4, string_value: 'company2'}}
+]}"
+```
+
+Use an empty parameter list to start with `config/navigate.yaml` unchanged:
+
+```bash
+ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
+"{parameters: []}"
+```
+
+The service returns after the configured startup sequence and readiness checks
+finish. If a module readiness check fails, the service result contains the
+failure reason.
+
 The default configuration is:
 
 ```bash
@@ -79,6 +109,10 @@ modules:
   global_planner: true
 
 bringup:
+  start_mode: service
+  start_service: /navigation_bringup/start
+  start_timeout_seconds: 0.0
+  result_timeout_seconds: 0.0
   sequence:
     - nav_bridge
     - livox
@@ -127,9 +161,25 @@ readiness checks.
 
 ## Readiness Wait
 
-When `bringup.wait_for_readiness` is true, the launch file starts one module,
-waits for that module's configured `readiness`, then starts the next module
-after `bringup.start_delay_seconds`.
+When `bringup.start_mode` is `service`, `navigation.launch.py` first starts
+`scripts/navigation_supervisor.py` and waits until the supervisor accepts
+`bringup.start_service`. The supervisor applies matching `SetParameters`
+overrides to `config/navigate.yaml` and writes a resolved runtime YAML. The
+launch file then reads that resolved YAML and starts the configured sequence.
+
+The supervisor does not launch navigation modules itself; it only gates startup
+and waits for the final result reported by `navigation.launch.py`.
+
+`bringup.start_timeout_seconds` controls how long launch waits for a start
+request. `bringup.result_timeout_seconds` controls how long the service waits
+for the final launch result. Values `<= 0` mean wait without a timeout.
+
+When `bringup.wait_for_readiness` is true, each module starts, waits for that
+module's configured `readiness`, then starts the next module after
+`bringup.start_delay_seconds`.
+
+Set `bringup.start_mode: immediate` to use the older behavior where launch
+starts the sequence immediately without waiting for the service.
 
 The module order comes from `bringup.sequence`:
 

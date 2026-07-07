@@ -1,4 +1,6 @@
+import hashlib
 import os
+import uuid
 
 import yaml
 
@@ -36,6 +38,19 @@ def readiness_script_path():
     )
 
 
+def supervisor_script_path():
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "scripts", "navigation_supervisor.py")
+    )
+
+
+def navigation_state_dir(config_path):
+    expanded_path = os.path.abspath(os.path.expanduser(os.path.expandvars(config_path)))
+    basename = os.path.splitext(os.path.basename(expanded_path))[0] or "navigate"
+    path_hash = hashlib.sha1(expanded_path.encode("utf-8")).hexdigest()[:12]
+    return os.path.join("/tmp", "inspection_bringup", "navigation", f"{basename}-{path_hash}")
+
+
 def load_config(path):
     expanded_path = os.path.expanduser(os.path.expandvars(path))
     if not expanded_path or not os.path.exists(expanded_path):
@@ -62,21 +77,36 @@ def as_bool_text(value):
     return "true" if as_bool(value) else "false"
 
 
-def override_or_config(context, name, config, section, key, fallback):
+def override_or_config(context, name, config, section, key, fallback, use_launch_overrides=True):
+    if not use_launch_overrides:
+        return str(config_value(config, section, key, fallback))
     override = LaunchConfiguration(name).perform(context)
     if override != "":
         return override
     return str(config_value(config, section, key, fallback))
 
 
-def override_or_config_bool(context, name, config, section, key, fallback):
+def override_or_config_bool(context, name, config, section, key, fallback, use_launch_overrides=True):
+    if not use_launch_overrides:
+        return as_bool(config_value(config, section, key, fallback))
     override = LaunchConfiguration(name).perform(context)
     if override != "":
         return as_bool(override)
     return as_bool(config_value(config, section, key, fallback))
 
 
-def override_or_config_typed(context, name, config, section, key, fallback, value_type):
+def override_or_config_typed(
+    context,
+    name,
+    config,
+    section,
+    key,
+    fallback,
+    value_type,
+    use_launch_overrides=True,
+):
+    if not use_launch_overrides:
+        return value_type(config_value(config, section, key, fallback))
     override = LaunchConfiguration(name).perform(context)
     value = override if override != "" else config_value(config, section, key, fallback)
     return value_type(value)
@@ -88,7 +118,9 @@ def split_list_text(value):
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def override_or_config_list(context, name, config, section, key, fallback):
+def override_or_config_list(context, name, config, section, key, fallback, use_launch_overrides=True):
+    if not use_launch_overrides:
+        return config_list(config, section, key, fallback)
     override = LaunchConfiguration(name).perform(context)
     if override != "":
         return split_list_text(override)
@@ -235,6 +267,24 @@ def localization_init_ready_action(
 
 
 def module_readiness_action(context, config, section, fallback_nodes, fallback_timeout):
+    return module_readiness_action_with_overrides(
+        context,
+        config,
+        section,
+        fallback_nodes,
+        fallback_timeout,
+        True,
+    )
+
+
+def module_readiness_action_with_overrides(
+    context,
+    config,
+    section,
+    fallback_nodes,
+    fallback_timeout,
+    use_launch_overrides,
+):
     ready_type = str(readiness_value(config, section, "type", "nodes"))
 
     if ready_type == "nodes":
@@ -269,6 +319,7 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
                 "nav_bridge",
                 "topics",
                 readiness_list(config, section, "topics", ["/battery/level"]),
+                use_launch_overrides,
             ),
             override_or_config(
                 context,
@@ -277,6 +328,7 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
                 "nav_bridge",
                 "stand_service",
                 "/nav_bridge_node/stand",
+                use_launch_overrides,
             ),
             override_or_config_typed(
                 context,
@@ -286,6 +338,7 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
                 "topic_timeout_seconds",
                 fallback_timeout,
                 float,
+                use_launch_overrides,
             ),
             override_or_config_typed(
                 context,
@@ -295,6 +348,7 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
                 "stand_timeout_seconds",
                 fallback_timeout,
                 float,
+                use_launch_overrides,
             ),
         )
 
@@ -323,6 +377,8 @@ def append_navigation_group(
     wait_action,
     delay_seconds,
     shutdown_on_readiness_failure,
+    state_dir=None,
+    run_id=None,
 ):
     if previous_wait is None:
         actions.extend([launch_action, wait_action])
@@ -341,9 +397,12 @@ def append_navigation_group(
             print(
                 f"[navigation] {reason}"
             )
+            failure_actions = []
+            if state_dir:
+                failure_actions.append(report_result_action(state_dir, run_id, False, reason))
             if shutdown_on_readiness_failure:
-                return [EmitEvent(event=Shutdown(reason=reason))]
-            return []
+                failure_actions.append(EmitEvent(event=Shutdown(reason=reason)))
+            return failure_actions
         return next_actions
 
     actions.append(
@@ -355,6 +414,49 @@ def append_navigation_group(
         )
     )
     return wait_action
+
+
+def report_result_action(state_dir, run_id, success, reason):
+    cmd = [
+        "python3",
+        supervisor_script_path(),
+        "report-result",
+        "--state-dir",
+        state_dir,
+        "--run-id",
+        run_id or "",
+        "--reason",
+        reason,
+    ]
+    if success:
+        cmd.append("--success")
+    return ExecuteProcess(
+        cmd=cmd,
+        name="navigation_report_result",
+        output="screen",
+    )
+
+
+def append_final_result_handler(actions, previous_wait, state_dir, run_id):
+    if previous_wait is None:
+        actions.append(report_result_action(state_dir, run_id, True, "navigation startup complete"))
+        return
+
+    def on_final_wait_exit(event, _context):
+        if event.returncode != 0:
+            reason = f"final readiness check failed with code {event.returncode}"
+            print(f"[navigation] {reason}")
+            return [report_result_action(state_dir, run_id, False, reason)]
+        return [report_result_action(state_dir, run_id, True, "navigation startup complete")]
+
+    actions.append(
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=previous_wait,
+                on_exit=on_final_wait_exit,
+            )
+        )
+    )
 
 
 def generate_launch_description():
@@ -467,7 +569,87 @@ def generate_launch_description():
 
 
 def launch_setup(context):
-    config = load_config(LaunchConfiguration("navigate_config_path").perform(context))
+    navigate_config_path = LaunchConfiguration("navigate_config_path").perform(context)
+    config = load_config(navigate_config_path)
+    start_mode = str(config_value(config, "bringup", "start_mode", "immediate")).strip().lower()
+    if start_mode == "service":
+        state_dir = navigation_state_dir(navigate_config_path)
+        run_id = uuid.uuid4().hex
+        supervisor = ExecuteProcess(
+            cmd=[
+                "python3",
+                supervisor_script_path(),
+                "node",
+                "--config",
+                navigate_config_path,
+                "--service-name",
+                str(config_value(config, "bringup", "start_service", "/navigation_bringup/start")),
+                "--state-dir",
+                state_dir,
+                "--run-id",
+                run_id,
+                "--result-timeout",
+                str(float(config_value(config, "bringup", "result_timeout_seconds", 0.0))),
+            ],
+            name="navigation_supervisor",
+            output="screen",
+        )
+        wait_start = ExecuteProcess(
+            cmd=[
+                "python3",
+                supervisor_script_path(),
+                "wait-start",
+                "--state-dir",
+                state_dir,
+                "--run-id",
+                run_id,
+                "--timeout",
+                str(float(config_value(config, "bringup", "start_timeout_seconds", 0.0))),
+            ],
+            name="wait_for_navigation_start",
+            output="screen",
+        )
+
+        def on_wait_start_exit(event, _context):
+            if event.returncode != 0:
+                reason = f"navigation start wait failed with code {event.returncode}"
+                return [
+                    report_result_action(state_dir, run_id, False, reason),
+                    EmitEvent(event=Shutdown(reason=reason)),
+                ]
+            resolved_config_path = os.path.join(state_dir, "resolved.yaml")
+            try:
+                resolved_config = load_config(resolved_config_path)
+                return build_navigation_actions(
+                    context,
+                    resolved_config,
+                    state_dir=state_dir,
+                    run_id=run_id,
+                    use_launch_overrides=False,
+                )
+            except Exception as exc:
+                reason = f"failed to build navigation actions from resolved config: {exc}"
+                print(f"[navigation] {reason}")
+                return [
+                    report_result_action(state_dir, run_id, False, reason),
+                    EmitEvent(event=Shutdown(reason=reason)),
+                ]
+
+        return [
+            supervisor,
+            wait_start,
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=wait_start,
+                    on_exit=on_wait_start_exit,
+                )
+            ),
+        ]
+
+    return build_navigation_actions(context, config)
+
+
+def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
     delay = override_or_config_typed(
         context,
         "navigation_start_delay_seconds",
@@ -476,6 +658,7 @@ def launch_setup(context):
         "start_delay_seconds",
         1.0,
         float,
+        use_launch_overrides,
     )
     should_wait_for_readiness = as_bool(
         config_value(
@@ -496,7 +679,7 @@ def launch_setup(context):
         "true",
     )
     nav_bridge_enabled = override_or_config_bool(
-        context, "enable_nav_bridge", config, "modules", "nav_bridge", True
+        context, "enable_nav_bridge", config, "modules", "nav_bridge", True, use_launch_overrides
     )
 
     livox_launch = include_package_launch(
@@ -504,52 +687,72 @@ def launch_setup(context):
         "msg_multi_MID360_launch.py",
         "true",
         {
-            "model": override_or_config(context, "livox_model", config, "livox", "model", "mid360"),
+            "model": override_or_config(
+                context, "livox_model", config, "livox", "model", "mid360", use_launch_overrides
+            ),
         },
     )
-    livox_enabled = override_or_config_bool(context, "enable_livox", config, "modules", "livox", True)
+    livox_enabled = override_or_config_bool(
+        context, "enable_livox", config, "modules", "livox", True, use_launch_overrides
+    )
     slam_launch = include_package_launch(
         "faster_lio",
         "slam.launch.py",
         "true",
         {
             "relocal": as_bool_text(
-                override_or_config_bool(context, "slam_relocal", config, "slam", "relocal", True)
+                override_or_config_bool(
+                    context, "slam_relocal", config, "slam", "relocal", True, use_launch_overrides
+                )
             ),
             "prior_dir": override_or_config(
-                context, "slam_prior_dir", config, "slam", "prior_dir", "company2"
+                context, "slam_prior_dir", config, "slam", "prior_dir", "company2", use_launch_overrides
             ),
             "rviz": as_bool_text(
-                override_or_config_bool(context, "slam_rviz", config, "slam", "rviz", False)
+                override_or_config_bool(
+                    context, "slam_rviz", config, "slam", "rviz", False, use_launch_overrides
+                )
             ),
             "pgo": as_bool_text(
-                override_or_config_bool(context, "slam_pgo", config, "slam", "pgo", False)
+                override_or_config_bool(
+                    context, "slam_pgo", config, "slam", "pgo", False, use_launch_overrides
+                )
             ),
             "odom_imu": as_bool_text(
-                override_or_config_bool(context, "slam_odom_imu", config, "slam", "odom_imu", True)
+                override_or_config_bool(
+                    context, "slam_odom_imu", config, "slam", "odom_imu", True, use_launch_overrides
+                )
             ),
             "use_sim_time": as_bool_text(
                 override_or_config_bool(
-                    context, "slam_use_sim_time", config, "slam", "use_sim_time", False
+                    context, "slam_use_sim_time", config, "slam", "use_sim_time", False, use_launch_overrides
                 )
             ),
         },
     )
-    slam_enabled = override_or_config_bool(context, "enable_slam", config, "modules", "slam", True)
+    slam_enabled = override_or_config_bool(
+        context, "enable_slam", config, "modules", "slam", True, use_launch_overrides
+    )
     terrain_launch = include_package_launch(
         "gridmapper",
         "local.launch.py",
         "true",
         {
             "rviz": as_bool_text(
-                override_or_config_bool(context, "terrain_rviz", config, "terrain", "rviz", False)
+                override_or_config_bool(
+                    context, "terrain_rviz", config, "terrain", "rviz", False, use_launch_overrides
+                )
             ),
             "use_gpu": as_bool_text(
-                override_or_config_bool(context, "terrain_use_gpu", config, "terrain", "use_gpu", True)
+                override_or_config_bool(
+                    context, "terrain_use_gpu", config, "terrain", "use_gpu", True, use_launch_overrides
+                )
             ),
         },
     )
-    terrain_enabled = override_or_config_bool(context, "enable_terrain", config, "modules", "terrain", True)
+    terrain_enabled = override_or_config_bool(
+        context, "enable_terrain", config, "modules", "terrain", True, use_launch_overrides
+    )
     local_planner_launch = include_package_launch(
         "local_planner",
         "local_planner.launch.py",
@@ -563,6 +766,7 @@ def launch_setup(context):
                     "local_planner",
                     "use_sim_time",
                     False,
+                    use_launch_overrides,
                 )
             ),
             "start_rviz": as_bool_text(
@@ -573,12 +777,13 @@ def launch_setup(context):
                     "local_planner",
                     "start_rviz",
                     False,
+                    use_launch_overrides,
                 )
             ),
         },
     )
     local_planner_enabled = override_or_config_bool(
-        context, "enable_local_planner", config, "modules", "local_planner", True
+        context, "enable_local_planner", config, "modules", "local_planner", True, use_launch_overrides
     )
     global_planner_launch = include_package_launch(
         "multi_map_nav",
@@ -586,7 +791,13 @@ def launch_setup(context):
         "true",
         {
             "initial_map": override_or_config(
-                context, "global_initial_map", config, "global_planner", "initial_map", "company2"
+                context,
+                "global_initial_map",
+                config,
+                "global_planner",
+                "initial_map",
+                "company2",
+                use_launch_overrides,
             ),
             "map_connections_file": override_or_config(
                 context,
@@ -595,23 +806,49 @@ def launch_setup(context):
                 "global_planner",
                 "map_connections_file",
                 "default",
+                use_launch_overrides,
             ),
             "use_fake_cmdvel": as_bool_text(
                 override_or_config_bool(
-                    context, "global_use_fake_cmdvel", config, "global_planner", "use_fake_cmdvel", True
+                    context,
+                    "global_use_fake_cmdvel",
+                    config,
+                    "global_planner",
+                    "use_fake_cmdvel",
+                    True,
+                    use_launch_overrides,
                 )
             ),
             "params_file": override_or_config(
-                context, "global_params_file", config, "global_planner", "params_file", "new_local"
+                context,
+                "global_params_file",
+                config,
+                "global_planner",
+                "params_file",
+                "new_local",
+                use_launch_overrides,
             ),
             "use_sim_time": as_bool_text(
                 override_or_config_bool(
-                    context, "global_use_sim_time", config, "global_planner", "use_sim_time", False
+                    context,
+                    "global_use_sim_time",
+                    config,
+                    "global_planner",
+                    "use_sim_time",
+                    False,
+                    use_launch_overrides,
                 )
             ),
             "patrol_loops": str(
                 override_or_config_typed(
-                    context, "global_patrol_loops", config, "global_planner", "patrol_loops", 1, int
+                    context,
+                    "global_patrol_loops",
+                    config,
+                    "global_planner",
+                    "patrol_loops",
+                    1,
+                    int,
+                    use_launch_overrides,
                 )
             ),
             "bidirectional_connections": as_bool_text(
@@ -622,6 +859,7 @@ def launch_setup(context):
                     "global_planner",
                     "bidirectional_connections",
                     True,
+                    use_launch_overrides,
                 )
             ),
             "waypoint_dwell_time": str(
@@ -633,55 +871,76 @@ def launch_setup(context):
                     "waypoint_dwell_time",
                     2.0,
                     float,
+                    use_launch_overrides,
                 )
             ),
         },
     )
     global_planner_enabled = override_or_config_bool(
-        context, "enable_global_planner", config, "modules", "global_planner", True
+        context, "enable_global_planner", config, "modules", "global_planner", True, use_launch_overrides
     )
 
     navigation_groups = {
         "nav_bridge": (
             nav_bridge_enabled,
             nav_bridge_launch,
-            module_readiness_action(context, config, "nav_bridge", [], wait_timeout),
+            module_readiness_action_with_overrides(
+                context, config, "nav_bridge", [], wait_timeout, use_launch_overrides
+            ),
         ),
         "livox": (
             livox_enabled,
             livox_launch,
-            module_readiness_action(context, config, "livox", ["/livox_lidar_publisher"], wait_timeout),
+            module_readiness_action_with_overrides(
+                context,
+                config,
+                "livox",
+                ["/livox_lidar_publisher"],
+                wait_timeout,
+                use_launch_overrides,
+            ),
         ),
         "slam": (
             slam_enabled,
             slam_launch,
-            module_readiness_action(context, config, "slam", ["/laser_mapping"], wait_timeout),
+            module_readiness_action_with_overrides(
+                context, config, "slam", ["/laser_mapping"], wait_timeout, use_launch_overrides
+            ),
         ),
         "terrain": (
             terrain_enabled,
             terrain_launch,
-            module_readiness_action(context, config, "terrain", ["/gridmapper_node"], wait_timeout),
+            module_readiness_action_with_overrides(
+                context,
+                config,
+                "terrain",
+                ["/gridmapper_node"],
+                wait_timeout,
+                use_launch_overrides,
+            ),
         ),
         "local_planner": (
             local_planner_enabled,
             local_planner_launch,
-            module_readiness_action(
+            module_readiness_action_with_overrides(
                 context,
                 config,
                 "local_planner",
                 ["/localPlanner", "/pathFollower"],
                 wait_timeout,
+                use_launch_overrides,
             ),
         ),
         "global_planner": (
             global_planner_enabled,
             global_planner_launch,
-            module_readiness_action(
+            module_readiness_action_with_overrides(
                 context,
                 config,
                 "global_planner",
                 ["/planner_server", "/controller_server"],
                 wait_timeout,
+                use_launch_overrides,
             ),
         ),
     }
@@ -713,6 +972,20 @@ def launch_setup(context):
                 else:
                     actions.append(delayed_include(start_delay, launch_action))
                 launch_index += 1
+        if state_dir:
+            actions.extend(
+                delayed_actions(
+                    delay * launch_index,
+                    [
+                        report_result_action(
+                            state_dir,
+                            run_id,
+                            True,
+                            "navigation startup launched without readiness waiting",
+                        )
+                    ],
+                )
+            )
         return actions
 
     actions = []
@@ -727,6 +1000,11 @@ def launch_setup(context):
             ready_action,
             delay,
             shutdown_on_readiness_failure,
+            state_dir=state_dir,
+            run_id=run_id,
         )
+
+    if state_dir:
+        append_final_result_handler(actions, previous_wait, state_dir, run_id)
 
     return actions
