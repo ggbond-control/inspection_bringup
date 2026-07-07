@@ -162,6 +162,24 @@ def launch_setup(context):
             value_type=int,
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "map_root_directory": str(
+            config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Map")
+        ),
+        "localization_set_parameters_service": str(
+            config_value(
+                config,
+                "mqtt",
+                "localization_set_parameters_service",
+                "/rai_inspection_agent/set_parameters",
+            )
+        ),
+        "localization_map_parameter_name": str(
+            config_value(config, "mqtt", "localization_map_parameter_name", "slam.prior_dir")
+        ),
+        "localization_set_parameter_timeout_sec": ParameterValue(
+            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 10.0),
+            value_type=float,
+        ),
     }
     platform_params.update(live_stream_params(config))
 

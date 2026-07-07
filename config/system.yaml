@@ -15,6 +15,10 @@ mqtt:
   port: 1883
   topic_vendor_prefix: fh
   topic_root: device
+  map_root_directory: /home/cat/Workspace/Map
+  localization_set_parameters_service: /rai_inspection_agent/set_parameters
+  localization_map_parameter_name: slam.prior_dir
+  localization_set_parameter_timeout_sec: 10.0
 
 live_stream:
   config_path: ""
