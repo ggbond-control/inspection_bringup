@@ -1,5 +1,6 @@
 import hashlib
 import os
+import time
 import uuid
 
 import yaml
@@ -58,6 +59,14 @@ def load_config(path):
 
     with open(expanded_path, "r", encoding="utf-8") as config_file:
         return yaml.safe_load(config_file) or {}
+
+
+def write_yaml_atomic(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as output_file:
+        yaml.safe_dump(data, output_file, sort_keys=False)
+    os.replace(tmp_path, path)
 
 
 def config_value(config, section, key, fallback):
@@ -434,12 +443,13 @@ def append_navigation_group(
             print(
                 f"[navigation] {reason}"
             )
-            failure_actions = []
-            if state_dir:
-                failure_actions.append(report_result_action(state_dir, run_id, False, reason))
-            if state_dir or shutdown_on_readiness_failure:
-                failure_actions.append(EmitEvent(event=Shutdown(reason=reason)))
-            return failure_actions
+            return report_result_actions(
+                state_dir,
+                run_id,
+                False,
+                reason,
+                shutdown_after=(state_dir is not None or shutdown_on_readiness_failure),
+            )
         return next_actions
 
     actions.append(
@@ -453,25 +463,29 @@ def append_navigation_group(
     return wait_action
 
 
-def report_result_action(state_dir, run_id, success, reason):
-    cmd = [
-        "python3",
-        supervisor_script_path(),
-        "report-result",
-        "--state-dir",
-        state_dir,
-        "--run-id",
-        run_id or "",
-        "--reason",
-        reason,
-    ]
-    if success:
-        cmd.append("--success")
-    return ExecuteProcess(
-        cmd=cmd,
-        name="navigation_report_result",
-        output="screen",
-    )
+def report_result_actions(state_dir, run_id, success, reason, shutdown_after=False):
+    if not state_dir:
+        if shutdown_after:
+            return [EmitEvent(event=Shutdown(reason=reason))]
+        return []
+
+    def write_result(_context):
+        result_path = os.path.join(state_dir, "result.yaml")
+        write_yaml_atomic(
+            result_path,
+            {
+                "run_id": str(run_id or ""),
+                "success": bool(success),
+                "reason": reason,
+                "reported_at": time.time(),
+            },
+        )
+        print(f"[navigation] reported result: success={bool(success)} reason={reason}")
+        if shutdown_after:
+            return [TimerAction(period=0.5, actions=[EmitEvent(event=Shutdown(reason=reason))])]
+        return []
+
+    return [OpaqueFunction(function=write_result)]
 
 
 def append_final_result_handler(
@@ -483,18 +497,21 @@ def append_final_result_handler(
     shutdown_on_readiness_failure,
 ):
     if previous_wait is None:
-        actions.append(report_result_action(state_dir, run_id, True, "navigation startup complete"))
+        actions.extend(report_result_actions(state_dir, run_id, True, "navigation startup complete"))
         return
 
     def on_final_wait_exit(event, _context):
         if event.returncode != 0:
             reason = f"{previous_failure_reason}; exit_code={event.returncode}"
             print(f"[navigation] {reason}")
-            failure_actions = [report_result_action(state_dir, run_id, False, reason)]
-            if state_dir or shutdown_on_readiness_failure:
-                failure_actions.append(EmitEvent(event=Shutdown(reason=reason)))
-            return failure_actions
-        return [report_result_action(state_dir, run_id, True, "navigation startup complete")]
+            return report_result_actions(
+                state_dir,
+                run_id,
+                False,
+                reason,
+                shutdown_after=(state_dir is not None or shutdown_on_readiness_failure),
+            )
+        return report_result_actions(state_dir, run_id, True, "navigation startup complete")
 
     actions.append(
         RegisterEventHandler(
@@ -660,10 +677,7 @@ def launch_setup(context):
         def on_wait_start_exit(event, _context):
             if event.returncode != 0:
                 reason = f"navigation start wait failed with code {event.returncode}"
-                return [
-                    report_result_action(state_dir, run_id, False, reason),
-                    EmitEvent(event=Shutdown(reason=reason)),
-                ]
+                return report_result_actions(state_dir, run_id, False, reason, shutdown_after=True)
             resolved_config_path = os.path.join(state_dir, "resolved.yaml")
             try:
                 resolved_config = load_config(resolved_config_path)
@@ -677,10 +691,7 @@ def launch_setup(context):
             except Exception as exc:
                 reason = f"failed to build navigation actions from resolved config: {exc}"
                 print(f"[navigation] {reason}")
-                return [
-                    report_result_action(state_dir, run_id, False, reason),
-                    EmitEvent(event=Shutdown(reason=reason)),
-                ]
+                return report_result_actions(state_dir, run_id, False, reason, shutdown_after=True)
 
         return [
             supervisor,
@@ -1039,14 +1050,12 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             actions.extend(
                 delayed_actions(
                     delay * launch_index,
-                    [
-                        report_result_action(
-                            state_dir,
-                            run_id,
-                            True,
-                            "navigation startup launched without readiness waiting",
-                        )
-                    ],
+                    report_result_actions(
+                        state_dir,
+                        run_id,
+                        True,
+                        "navigation startup launched without readiness waiting",
+                    ),
                 )
             )
         return actions
