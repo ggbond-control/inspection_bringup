@@ -20,6 +20,11 @@ service:
 navigation:
   service_name: inspection-navigation.service
   enabled_on_boot: true
+  systemd:
+    nice: -10
+    cpu_weight: 900
+    io_weight: 900
+    oom_score_adjust: -900
   launch_args:
     navigate_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/navigate.yaml
 

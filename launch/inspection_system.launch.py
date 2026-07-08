@@ -493,7 +493,7 @@ def launch_setup(context):
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
         "map_root_directory": str(
-            config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Map")
+            config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),
         "localization_set_parameters_service": str(
             config_value(
@@ -506,8 +506,16 @@ def launch_setup(context):
         "localization_map_parameter_name": str(
             config_value(config, "mqtt", "localization_map_parameter_name", "slam.prior_dir")
         ),
+        "localization_initial_map_parameter_name": str(
+            config_value(
+                config,
+                "mqtt",
+                "localization_initial_map_parameter_name",
+                "global_planner.initial_map",
+            )
+        ),
         "localization_set_parameter_timeout_sec": ParameterValue(
-            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 10.0),
+            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 60.0),
             value_type=float,
         ),
     }

@@ -13,6 +13,7 @@ Restart=@RESTART@
 RestartSec=@RESTART_SEC@
 KillSignal=SIGINT
 TimeoutStopSec=@TIMEOUT_STOP_SEC@
+@SYSTEMD_OPTIONS@
 
 [Install]
 WantedBy=multi-user.target
