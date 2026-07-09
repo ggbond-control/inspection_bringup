@@ -3,7 +3,6 @@ service:
   workspace_root: /home/cat/Workspace/task_ws
   setup_paths:
     - /home/cat/Workspace/driver_ws/install/setup.bash
-    - /home/cat/Workspace/algor_ws/install/setup.bash
     - /home/cat/Workspace/task_ws/install/setup.bash
   environment:
     RMW_IMPLEMENTATION: rmw_cyclonedds_cpp

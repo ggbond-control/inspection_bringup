@@ -49,7 +49,10 @@ task_hub:
   navigation_heartbeat_topic: "/inspection_task_hub/heartbeat/navigation"
   gimbal_heartbeat_topic: "/inspection_task_hub/heartbeat/gimbal"
   odometry_topic: "/odometry_horizon"
+  robot_basic_state_topic: "/robot_basic_state"
+  charge_manager_state_topic: "/charge_manager_state"
   heartbeat_timeout_seconds: 3.0
+  robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 10.0
 
 gimbal:

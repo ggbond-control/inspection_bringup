@@ -435,6 +435,22 @@ def launch_setup(context):
         "odometry_topic": override_or_config(
             context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_horizon"
         ),
+        "robot_basic_state_topic": override_or_config(
+            context,
+            "robot_basic_state_topic",
+            config,
+            "task_hub",
+            "robot_basic_state_topic",
+            "/robot_basic_state",
+        ),
+        "charge_manager_state_topic": override_or_config(
+            context,
+            "charge_manager_state_topic",
+            config,
+            "task_hub",
+            "charge_manager_state_topic",
+            "/charge_manager_state",
+        ),
         "heartbeat_timeout_seconds": ParameterValue(
             override_or_config_typed(
                 context,
@@ -442,6 +458,18 @@ def launch_setup(context):
                 config,
                 "task_hub",
                 "heartbeat_timeout_seconds",
+                3.0,
+                float,
+            ),
+            value_type=float,
+        ),
+        "robot_state_timeout_seconds": ParameterValue(
+            override_or_config_typed(
+                context,
+                "robot_state_timeout_seconds",
+                config,
+                "task_hub",
+                "robot_state_timeout_seconds",
                 3.0,
                 float,
             ),
