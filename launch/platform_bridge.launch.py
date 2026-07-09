@@ -81,6 +81,36 @@ def live_stream_params(config):
             config_value(config, "live_stream", "restart_interval_sec", 5.0),
             value_type=float,
         ),
+        "acoustic_overlay_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic_overlay", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_overlay_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "topic", "/monitor/acoustic/overlay")
+        ),
+        "acoustic_overlay_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic_overlay",
+                "status_topic",
+                "/platform/acoustic_overlay_stream/status",
+            )
+        ),
+        "acoustic_overlay_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "stream_id", "x30_acoustic_overlay")
+        ),
+        "acoustic_overlay_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_overlay_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "bitrate", "1500k")
+        ),
+        "acoustic_overlay_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
         "live_stream_ffmpeg_loglevel": str(
             nested_config_value(config, "live_stream", "ffmpeg", "loglevel", "warning")
         ),

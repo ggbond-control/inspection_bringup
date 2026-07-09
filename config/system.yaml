@@ -27,6 +27,14 @@ live_stream:
   enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 5.0
+  acoustic_overlay:
+    enabled: true
+    stream_id: x30_acoustic_overlay
+    topic: /monitor/acoustic/overlay
+    status_topic: /platform/acoustic_overlay_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    restart_interval_sec: 5.0
   ffmpeg:
     loglevel: warning
     realtime_input: true
