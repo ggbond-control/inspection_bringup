@@ -34,6 +34,7 @@ live_stream:
     status_topic: /platform/acoustic_overlay_stream/status
     fps: 10.0
     bitrate: 1500k
+    output_format: flv
     restart_interval_sec: 5.0
   ffmpeg:
     loglevel: warning

@@ -107,6 +107,9 @@ def live_stream_params(config):
         "acoustic_overlay_stream_bitrate": str(
             nested_config_value(config, "live_stream", "acoustic_overlay", "bitrate", "1500k")
         ),
+        "acoustic_overlay_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic_overlay", "output_format", "flv")
+        ),
         "acoustic_overlay_stream_restart_interval_sec": ParameterValue(
             nested_config_value(config, "live_stream", "acoustic_overlay", "restart_interval_sec", 5.0),
             value_type=float,
