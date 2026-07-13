@@ -1,10 +1,34 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import re
 import subprocess
 import sys
 import time
 
+import yaml
+
+
+
+
+def write_failure_detail(path, module, reason, category="READINESS_FAILED", **fields):
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        data = {
+            "module": module,
+            "category": category,
+            "reason": reason,
+            "reported_at": time.time(),
+        }
+        data.update(fields)
+        with open(tmp_path, "w", encoding="utf-8") as stream:
+            yaml.safe_dump(data, stream, sort_keys=False)
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        print(f"[{module}] failed to write readiness detail: {exc}", file=sys.stderr, flush=True)
 
 def list_nodes():
     result = subprocess.run(
@@ -19,7 +43,7 @@ def list_nodes():
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
-def wait_for_nodes(nodes, timeout, name):
+def wait_for_nodes(nodes, timeout, name, failure_detail=None):
     deadline = deadline_from_timeout(timeout)
     expected = set(nodes)
     missing = expected
@@ -32,7 +56,9 @@ def wait_for_nodes(nodes, timeout, name):
             return True
         time.sleep(0.5)
 
-    print(f"[{name}] node wait timeout: {' '.join(sorted(missing))}", file=sys.stderr, flush=True)
+    reason = f"node wait timeout: {' '.join(sorted(missing))}"
+    print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+    write_failure_detail(failure_detail, name, reason, missing_nodes=sorted(missing))
     return False
 
 
@@ -58,7 +84,7 @@ def timeout_text(timeout):
     return f"for up to {timeout:.1f}s"
 
 
-def wait_for_topic_message(topic, timeout, name):
+def wait_for_topic_message(topic, timeout, name, failure_detail=None):
     print(f"[{name}] waiting for topic message {timeout_text(timeout)}: {topic}", flush=True)
     deadline = deadline_from_timeout(timeout)
     start_time = time.monotonic()
@@ -116,17 +142,28 @@ def wait_for_topic_message(topic, timeout, name):
         print(f"[{name}] topic info for {topic}:\n{info_output}", file=sys.stderr, flush=True)
     else:
         print(f"[{name}] topic info for {topic}: unavailable", file=sys.stderr, flush=True)
+    write_failure_detail(
+        failure_detail,
+        name,
+        f"topic message timeout after {elapsed:.1f}s: {topic}",
+        topic=topic,
+        timeout_seconds=timeout,
+        last_returncode=str(last_returncode),
+        last_stdout=last_stdout,
+        last_stderr=last_stderr,
+        topic_info=info_output,
+    )
     return False
 
 
-def wait_for_topics(topics, timeout, name):
+def wait_for_topics(topics, timeout, name, failure_detail=None):
     for topic in topics:
-        if not wait_for_topic_message(topic, timeout, name):
+        if not wait_for_topic_message(topic, timeout, name, failure_detail):
             return False
     return True
 
 
-def call_trigger_service(service, timeout, name):
+def call_trigger_service(service, timeout, name, failure_detail=None):
     deadline = deadline_from_timeout(timeout)
     print(f"[{name}] calling trigger service {timeout_text(timeout)}: {service}", flush=True)
 
@@ -156,22 +193,30 @@ def call_trigger_service(service, timeout, name):
     print(f"[{name}] trigger service timeout or failure: {service}", file=sys.stderr, flush=True)
     if last_output:
         print(f"[{name}] last trigger service output:\n{last_output}", file=sys.stderr, flush=True)
+    write_failure_detail(
+        failure_detail,
+        name,
+        f"trigger service timeout or failure: {service}",
+        service=service,
+        timeout_seconds=timeout,
+        last_output=last_output,
+    )
     return False
 
 
 def run_nodes(args):
-    return wait_for_nodes(args.nodes, args.timeout, args.name)
+    return wait_for_nodes(args.nodes, args.timeout, args.name, args.failure_detail)
 
 
 def run_topics(args):
-    return wait_for_topics(args.topics, args.timeout, args.name)
+    return wait_for_topics(args.topics, args.timeout, args.name, args.failure_detail)
 
 
 def run_nav_bridge(args):
     topics = args.topics or ["/battery/level"]
-    if not wait_for_topics(topics, args.topic_timeout, "nav_bridge"):
+    if not wait_for_topics(topics, args.topic_timeout, "nav_bridge", args.failure_detail):
         return False
-    return call_trigger_service(args.stand_service, args.stand_timeout, "nav_bridge")
+    return call_trigger_service(args.stand_service, args.stand_timeout, "nav_bridge", args.failure_detail)
 
 
 def state_name(state):
@@ -192,6 +237,54 @@ def format_score(score):
         return str(score)
 
 
+
+
+def localization_category(state, message):
+    if state == 3:
+        return "READY"
+    if "Fusion keyframe seed data unavailable" in message:
+        return "WARNING_DEGRADED"
+    if state == 4 and ("prior map load failed" in message or "prior map is not loaded" in message):
+        return "FATAL_CONFIG_ERROR"
+    if state == 4 and "max attempts reached" in message:
+        return "RETRYABLE_BLOCKED"
+    if state == 4:
+        return "BLOCKED"
+    if state in (0, 1, 2):
+        return "PROGRESS"
+    return "UNKNOWN"
+
+
+def localization_reason(msg, prefix):
+    state = int(getattr(msg, "state", 255))
+    message = str(getattr(msg, "message", ""))
+    category = localization_category(state, message)
+    return (
+        f"{prefix}: {category}: state={state_name(state)} "
+        f"attempts={getattr(msg, 'attempt_count', 0)}/{getattr(msg, 'max_attempts', 0)} "
+        f"score={format_score(getattr(msg, 'last_score', 'nan'))} "
+        f"last_success={getattr(msg, 'last_success', False)} "
+        f"message=\"{message}\""
+    )
+
+
+def write_localization_failure_detail(path, msg, reason):
+    state = int(getattr(msg, "state", 255))
+    message = str(getattr(msg, "message", ""))
+    write_failure_detail(
+        path,
+        "slam",
+        reason,
+        category=localization_category(state, message),
+        state=state,
+        state_name=state_name(state),
+        attempt_count=int(getattr(msg, "attempt_count", 0)),
+        max_attempts=int(getattr(msg, "max_attempts", 0)),
+        last_score=format_score(getattr(msg, "last_score", "nan")),
+        last_success=bool(getattr(msg, "last_success", False)),
+        message=message,
+    )
+
 def wait_for_localization_init(
     status_topic,
     timeout,
@@ -199,13 +292,16 @@ def wait_for_localization_init(
     release_control_on_blocked,
     release_control_service,
     release_control_timeout,
+    failure_detail=None,
 ):
     try:
         import rclpy
         from inspection_interfaces.msg import LocalizationInitStatus
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     except ImportError as exc:
-        print(f"[slam] failed to import localization status dependencies: {exc}", file=sys.stderr, flush=True)
+        reason = f"failed to import localization status dependencies: {exc}"
+        print(f"[slam] {reason}", file=sys.stderr, flush=True)
+        write_failure_detail(failure_detail, "slam", reason, category="IMPORT_ERROR")
         return False
 
     rclpy.init(args=None)
@@ -263,7 +359,7 @@ def wait_for_localization_init(
 
             if state == 4:
                 if release_control_on_blocked and not release_control_called_for_block:
-                    if call_trigger_service(release_control_service, release_control_timeout, "slam"):
+                    if call_trigger_service(release_control_service, release_control_timeout, "slam", failure_detail):
                         print("[slam] release_control succeeded after localization blocked", flush=True)
                     else:
                         print(
@@ -274,7 +370,9 @@ def wait_for_localization_init(
                         )
                     release_control_called_for_block = True
                 if blocked_is_failure:
-                    print("[slam] localization blocked; failing readiness", file=sys.stderr, flush=True)
+                    reason = localization_reason(msg, "localization blocked; failing readiness")
+                    print(f"[slam] {reason}", file=sys.stderr, flush=True)
+                    write_localization_failure_detail(failure_detail, msg, reason)
                     return False
                 if not blocked_notice_printed:
                     print("[slam] localization blocked; waiting for external restart", flush=True)
@@ -286,11 +384,9 @@ def wait_for_localization_init(
 
         msg = latest_status["msg"]
         if msg is None:
-            print(
-                f"[slam] localization init timeout after {timeout:.1f}s: no status received",
-                file=sys.stderr,
-                flush=True,
-            )
+            reason = f"localization init timeout after {timeout:.1f}s: no status received"
+            print(f"[slam] {reason}", file=sys.stderr, flush=True)
+            write_failure_detail(failure_detail, "slam", reason, category="TIMEOUT_NO_STATUS")
         else:
             print(
                 "[slam] localization init timeout after "
@@ -315,6 +411,7 @@ def run_localization_init(args):
         args.release_control_on_blocked,
         args.release_control_service,
         args.release_control_timeout,
+        args.failure_detail,
     )
 
 
@@ -331,6 +428,7 @@ def main():
         help="Timeout in seconds. Use 0 or a negative value to wait forever.",
     )
     nodes_parser.add_argument("nodes", nargs="+", help="Fully qualified node names to wait for.")
+    nodes_parser.add_argument("--failure-detail", default="")
     nodes_parser.set_defaults(func=run_nodes)
 
     topics_parser = subparsers.add_parser(
@@ -345,6 +443,7 @@ def main():
         help="Per-topic timeout in seconds. Use 0 or a negative value to wait forever.",
     )
     topics_parser.add_argument("topics", nargs="+", help="Topic names to wait for.")
+    topics_parser.add_argument("--failure-detail", default="")
     topics_parser.set_defaults(func=run_topics)
 
     nav_bridge_parser = subparsers.add_parser(
@@ -370,6 +469,7 @@ def main():
         default=10.0,
         help="Trigger service timeout in seconds. Use 0 or a negative value to wait forever.",
     )
+    nav_bridge_parser.add_argument("--failure-detail", default="")
     nav_bridge_parser.set_defaults(func=run_nav_bridge)
 
     localization_parser = subparsers.add_parser(
@@ -400,6 +500,7 @@ def main():
         default=5.0,
         help="release_control timeout in seconds. Use 0 or a negative value to wait forever.",
     )
+    localization_parser.add_argument("--failure-detail", default="")
     localization_parser.set_defaults(func=run_localization_init)
 
     args = parser.parse_args()

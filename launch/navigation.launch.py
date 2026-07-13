@@ -69,6 +69,16 @@ def write_yaml_atomic(path, data):
     os.replace(tmp_path, path)
 
 
+def load_yaml_file(path):
+    expanded_path = os.path.expanduser(os.path.expandvars(path))
+    with open(expanded_path, "r", encoding="utf-8") as input_file:
+        return yaml.safe_load(input_file) or {}
+
+
+def readiness_failure_detail_path(state_dir, run_id, section):
+    return os.path.join(state_dir, f"{run_id}_{section}_failure.yaml")
+
+
 def config_value(config, section, key, fallback):
     value = config.get(section, {}).get(key, fallback)
     if value is None or value == "":
@@ -198,7 +208,7 @@ def delayed_actions(delay_seconds, actions):
     return [TimerAction(period=delay_seconds, actions=actions)]
 
 
-def wait_for_nodes_action(name, nodes, timeout):
+def wait_for_nodes_action(name, nodes, timeout, failure_detail=None):
     return ExecuteProcess(
         cmd=[
             "python3",
@@ -208,6 +218,7 @@ def wait_for_nodes_action(name, nodes, timeout):
             name,
             "--timeout",
             str(timeout),
+            *( ["--failure-detail", failure_detail] if failure_detail else [] ),
             *nodes,
         ],
         name=f"wait_for_{name}_nodes",
@@ -215,7 +226,7 @@ def wait_for_nodes_action(name, nodes, timeout):
     )
 
 
-def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout):
+def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout, failure_detail=None):
     topic_args = []
     for topic in topics:
         topic_args.extend(["--topic", topic])
@@ -231,6 +242,7 @@ def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout)
             str(topic_timeout),
             "--stand-timeout",
             str(stand_timeout),
+            *( ["--failure-detail", failure_detail] if failure_detail else [] ),
             *topic_args,
         ],
         name="wait_for_nav_bridge_ready",
@@ -245,6 +257,7 @@ def localization_init_ready_action(
     release_control_on_blocked,
     release_control_service,
     release_control_timeout,
+    failure_detail=None,
 ):
     cmd = [
         "python3",
@@ -267,6 +280,8 @@ def localization_init_ready_action(
                 str(release_control_timeout),
             ]
         )
+    if failure_detail:
+        cmd.extend(["--failure-detail", failure_detail])
 
     return ExecuteProcess(
         cmd=cmd,
@@ -275,7 +290,7 @@ def localization_init_ready_action(
     )
 
 
-def module_readiness_action(context, config, section, fallback_nodes, fallback_timeout):
+def module_readiness_action(context, config, section, fallback_nodes, fallback_timeout, failure_detail=None):
     return module_readiness_action_with_overrides(
         context,
         config,
@@ -283,6 +298,7 @@ def module_readiness_action(context, config, section, fallback_nodes, fallback_t
         fallback_nodes,
         fallback_timeout,
         True,
+        failure_detail,
     )
 
 
@@ -293,6 +309,7 @@ def module_readiness_action_with_overrides(
     fallback_nodes,
     fallback_timeout,
     use_launch_overrides,
+    failure_detail=None,
 ):
     ready_type = str(readiness_value(config, section, "type", "nodes"))
 
@@ -301,11 +318,11 @@ def module_readiness_action_with_overrides(
             section,
             readiness_list(config, section, "nodes", fallback_nodes),
             float(readiness_value(config, section, "timeout_seconds", fallback_timeout)),
+            failure_detail,
         )
 
     if ready_type == "topics":
-        return ExecuteProcess(
-            cmd=[
+        cmd = [
                 "python3",
                 readiness_script_path(),
                 "topics",
@@ -313,8 +330,12 @@ def module_readiness_action_with_overrides(
                 section,
                 "--timeout",
                 str(float(readiness_value(config, section, "timeout_seconds", fallback_timeout))),
-                *readiness_list(config, section, "topics", []),
-            ],
+            ]
+        if failure_detail:
+            cmd.extend(["--failure-detail", failure_detail])
+        cmd.extend(readiness_list(config, section, "topics", []))
+        return ExecuteProcess(
+            cmd=cmd,
             name=f"wait_for_{section}_topics",
             output="screen",
         )
@@ -359,6 +380,7 @@ def module_readiness_action_with_overrides(
                 float,
                 use_launch_overrides,
             ),
+            failure_detail,
         )
 
     if ready_type == "localization_init":
@@ -369,17 +391,35 @@ def module_readiness_action_with_overrides(
             as_bool(readiness_value(config, section, "release_control_on_blocked", False)),
             str(readiness_value(config, section, "release_control_service", "/nav_bridge_node/release_control")),
             float(readiness_value(config, section, "release_control_timeout_seconds", 5.0)),
+            failure_detail,
         )
 
     print(f"[navigation] unknown readiness type for {section}: {ready_type}; falling back to nodes")
-    return wait_for_nodes_action(section, fallback_nodes, fallback_timeout)
+    return wait_for_nodes_action(section, fallback_nodes, fallback_timeout, failure_detail)
 
 
 def module_readiness_type(config, section):
     return str(readiness_value(config, section, "type", "nodes"))
 
 
-def module_readiness_failure_reason(config, section, fallback_nodes, fallback_timeout):
+def read_failure_detail(path):
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        return load_yaml_file(path)
+    except Exception as exc:
+        return {"reason": f"failed to read failure detail: {exc}"}
+
+
+def failure_reason_with_detail(base_reason, failure_detail):
+    detail = read_failure_detail(failure_detail)
+    detail_reason = str(detail.get("reason", "")).strip()
+    if detail_reason:
+        return f"{base_reason}; detail={detail_reason}"
+    return base_reason
+
+
+def module_readiness_failure_reason(config, section, fallback_nodes, fallback_timeout, failure_detail=None):
     ready_type = module_readiness_type(config, section)
 
     if ready_type == "nav_bridge":
@@ -387,29 +427,33 @@ def module_readiness_failure_reason(config, section, fallback_nodes, fallback_ti
         topic_timeout = float(readiness_value(config, section, "topic_timeout_seconds", fallback_timeout))
         stand_service = str(readiness_value(config, section, "stand_service", "/nav_bridge_node/stand"))
         stand_timeout = float(readiness_value(config, section, "stand_timeout_seconds", fallback_timeout))
-        return (
+        base_reason = (
             f"{section} readiness failed: no message on topics {topics} within "
             f"{topic_timeout:.1f}s or {stand_service} did not return success within {stand_timeout:.1f}s"
         )
+        return base_reason
 
     if ready_type == "localization_init":
         status_topic = str(readiness_value(config, section, "status_topic", "/localization_init_status"))
         timeout = float(readiness_value(config, section, "timeout_seconds", 120.0))
         blocked_is_failure = as_bool(readiness_value(config, section, "blocked_is_failure", False))
         blocked_text = "entered INITIAL_REGISTRATION_BLOCKED or " if blocked_is_failure else ""
-        return (
+        base_reason = (
             f"{section} readiness failed: localization init {blocked_text}"
             f"did not reach TRACKING on {status_topic} {timeout_text_for_reason(timeout)}"
         )
+        return base_reason
 
     if ready_type == "topics":
         topics = readiness_list(config, section, "topics", [])
         timeout = float(readiness_value(config, section, "timeout_seconds", fallback_timeout))
-        return f"{section} readiness failed: no message on topics {topics} {timeout_text_for_reason(timeout)}"
+        base_reason = f"{section} readiness failed: no message on topics {topics} {timeout_text_for_reason(timeout)}"
+        return base_reason
 
     nodes = readiness_list(config, section, "nodes", fallback_nodes)
     timeout = float(readiness_value(config, section, "timeout_seconds", fallback_timeout))
-    return f"{section} readiness failed: nodes {nodes} not ready {timeout_text_for_reason(timeout)}"
+    base_reason = f"{section} readiness failed: nodes {nodes} not ready {timeout_text_for_reason(timeout)}"
+    return base_reason
 
 
 def timeout_text_for_reason(timeout):
@@ -422,6 +466,7 @@ def append_navigation_group(
     actions,
     previous_wait,
     previous_failure_reason,
+    previous_failure_detail,
     launch_action,
     wait_action,
     delay_seconds,
@@ -439,7 +484,8 @@ def append_navigation_group(
 
     def on_previous_wait_exit(event, _context):
         if event.returncode != 0:
-            reason = f"{previous_failure_reason}; exit_code={event.returncode}; not starting the next module"
+            reason = failure_reason_with_detail(previous_failure_reason, previous_failure_detail)
+            reason = f"{reason}; exit_code={event.returncode}; not starting the next module"
             print(
                 f"[navigation] {reason}"
             )
@@ -492,6 +538,7 @@ def append_final_result_handler(
     actions,
     previous_wait,
     previous_failure_reason,
+    previous_failure_detail,
     state_dir,
     run_id,
     shutdown_on_readiness_failure,
@@ -502,7 +549,8 @@ def append_final_result_handler(
 
     def on_final_wait_exit(event, _context):
         if event.returncode != 0:
-            reason = f"{previous_failure_reason}; exit_code={event.returncode}"
+            reason = failure_reason_with_detail(previous_failure_reason, previous_failure_detail)
+            reason = f"{reason}; exit_code={event.returncode}"
             print(f"[navigation] {reason}")
             return report_result_actions(
                 state_dir,
@@ -705,6 +753,22 @@ def launch_setup(context):
         ]
 
     return build_navigation_actions(context, config)
+
+
+
+
+def load_failure_reason(state_dir, run_id, section):
+    if not state_dir or not run_id:
+        return ""
+    path = readiness_failure_detail_path(state_dir, run_id, section)
+    if not os.path.exists(path):
+        return ""
+    try:
+        detail = load_yaml_file(path)
+    except Exception as exc:
+        return f"failed to read readiness detail: {exc}"
+    reason = str(detail.get("reason", "")).strip()
+    return reason
 
 
 def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
@@ -938,14 +1002,20 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         context, "enable_global_planner", config, "modules", "global_planner", True, use_launch_overrides
     )
 
+    def detail_path(section):
+        if state_dir and run_id:
+            return readiness_failure_detail_path(state_dir, run_id, section)
+        return None
+
     navigation_groups = {
         "nav_bridge": (
             nav_bridge_enabled,
             nav_bridge_launch,
             module_readiness_action_with_overrides(
-                context, config, "nav_bridge", [], wait_timeout, use_launch_overrides
+                context, config, "nav_bridge", [], wait_timeout, use_launch_overrides, detail_path("nav_bridge")
             ),
-            module_readiness_failure_reason(config, "nav_bridge", [], wait_timeout),
+            module_readiness_failure_reason(config, "nav_bridge", [], wait_timeout, detail_path("nav_bridge")),
+            detail_path("nav_bridge"),
         ),
         "livox": (
             livox_enabled,
@@ -957,16 +1027,19 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 ["/livox_lidar_publisher"],
                 wait_timeout,
                 use_launch_overrides,
+                detail_path("livox"),
             ),
-            module_readiness_failure_reason(config, "livox", ["/livox_lidar_publisher"], wait_timeout),
+            module_readiness_failure_reason(config, "livox", ["/livox_lidar_publisher"], wait_timeout, detail_path("livox")),
+            detail_path("livox"),
         ),
         "slam": (
             slam_enabled,
             slam_launch,
             module_readiness_action_with_overrides(
-                context, config, "slam", ["/laser_mapping"], wait_timeout, use_launch_overrides
+                context, config, "slam", ["/laser_mapping"], wait_timeout, use_launch_overrides, detail_path("slam")
             ),
-            module_readiness_failure_reason(config, "slam", ["/laser_mapping"], wait_timeout),
+            module_readiness_failure_reason(config, "slam", ["/laser_mapping"], wait_timeout, detail_path("slam")),
+            detail_path("slam"),
         ),
         "terrain": (
             terrain_enabled,
@@ -978,8 +1051,10 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 ["/gridmapper_node"],
                 wait_timeout,
                 use_launch_overrides,
+                detail_path("terrain"),
             ),
-            module_readiness_failure_reason(config, "terrain", ["/gridmapper_node"], wait_timeout),
+            module_readiness_failure_reason(config, "terrain", ["/gridmapper_node"], wait_timeout, detail_path("terrain")),
+            detail_path("terrain"),
         ),
         "local_planner": (
             local_planner_enabled,
@@ -991,13 +1066,16 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 ["/localPlanner", "/pathFollower"],
                 wait_timeout,
                 use_launch_overrides,
+                detail_path("local_planner"),
             ),
             module_readiness_failure_reason(
                 config,
                 "local_planner",
                 ["/localPlanner", "/pathFollower"],
                 wait_timeout,
+                detail_path("local_planner"),
             ),
+            detail_path("local_planner"),
         ),
         "global_planner": (
             global_planner_enabled,
@@ -1009,13 +1087,16 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 ["/planner_server", "/controller_server"],
                 wait_timeout,
                 use_launch_overrides,
+                detail_path("global_planner"),
             ),
             module_readiness_failure_reason(
                 config,
                 "global_planner",
                 ["/planner_server", "/controller_server"],
                 wait_timeout,
+                detail_path("global_planner"),
             ),
+            detail_path("global_planner"),
         ),
     }
 
@@ -1032,13 +1113,13 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             print(f"[navigation] unknown sequence entry skipped: {name}")
             continue
 
-        enabled, launch_action, ready_action, failure_reason = group
-        ordered_navigation_groups.append((enabled, launch_action, name, ready_action, failure_reason))
+        enabled, launch_action, ready_action, failure_reason, failure_detail = group
+        ordered_navigation_groups.append((enabled, launch_action, name, ready_action, failure_reason, failure_detail))
 
     if not should_wait_for_readiness:
         actions = []
         launch_index = 0
-        for enabled, launch_action, name, ready_action, _failure_reason in ordered_navigation_groups:
+        for enabled, launch_action, name, ready_action, _failure_reason, _failure_detail in ordered_navigation_groups:
             if enabled:
                 start_delay = delay * launch_index
                 if name == "nav_bridge" and module_readiness_type(config, name) == "nav_bridge":
@@ -1063,13 +1144,15 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
     actions = []
     previous_wait = None
     previous_failure_reason = None
-    for enabled, launch_action, _name, ready_action, failure_reason in ordered_navigation_groups:
+    previous_failure_detail = None
+    for enabled, launch_action, _name, ready_action, failure_reason, failure_detail in ordered_navigation_groups:
         if not enabled:
             continue
         previous_wait = append_navigation_group(
             actions,
             previous_wait,
             previous_failure_reason,
+            previous_failure_detail,
             launch_action,
             ready_action,
             delay,
@@ -1078,12 +1161,14 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             run_id=run_id,
         )
         previous_failure_reason = failure_reason
+        previous_failure_detail = failure_detail
 
     if state_dir:
         append_final_result_handler(
             actions,
             previous_wait,
             previous_failure_reason,
+            previous_failure_detail,
             state_dir,
             run_id,
             shutdown_on_readiness_failure,
