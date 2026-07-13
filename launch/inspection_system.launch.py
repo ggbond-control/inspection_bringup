@@ -311,9 +311,24 @@ def generate_launch_description():
             description="Odometry topic used by dual_coordinate gimbal command.",
         ),
         DeclareLaunchArgument(
+            "robot_basic_state_topic",
+            default_value="",
+            description="Robot basic state topic for task hub work-state monitoring.",
+        ),
+        DeclareLaunchArgument(
+            "charge_manager_state_topic",
+            default_value="",
+            description="Charge manager state topic for task hub work-state monitoring.",
+        ),
+        DeclareLaunchArgument(
             "heartbeat_timeout_seconds",
             default_value="",
             description="Heartbeat timeout threshold in seconds.",
+        ),
+        DeclareLaunchArgument(
+            "robot_state_timeout_seconds",
+            default_value="",
+            description="Robot basic/charge state timeout threshold in seconds.",
         ),
         DeclareLaunchArgument(
             "trigger_service_timeout_seconds",

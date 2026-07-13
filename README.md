@@ -7,7 +7,7 @@ Unified bringup launch files for the inspection task system.
 ```bash
 cd ~/task_ws
 src/inspection_bringup/scripts/build_inspection.sh
-source install/setup.bash
+source install/setup.zsh
 ```
 
 The build helper downloads missing managed repositories from
@@ -102,6 +102,9 @@ live_stream:
 
 ```bash
 ros2 launch inspection_bringup inspection_system.launch.py
+
+
+ros2 launch inspection_bringup navigation.launch.py
 ```
 
 The launch file prints node logs to the terminal and keeps normal ROS logs under
