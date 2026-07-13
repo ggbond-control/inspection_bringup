@@ -28,10 +28,30 @@ live_stream:
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 5.0
   acoustic_overlay:
-    enabled: true
+    enabled: false
     stream_id: x30_acoustic_overlay
     topic: /monitor/acoustic/overlay
     status_topic: /platform/acoustic_overlay_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    video_codec: h264_rkmpp
+    output_format: flv
+    restart_interval_sec: 5.0
+  acoustic_camera:
+    enabled: true
+    stream_id: x30_acoustic_camera
+    topic: /monitor/acoustic/camera
+    status_topic: /platform/acoustic_camera_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    video_codec: h264_rkmpp
+    output_format: flv
+    restart_interval_sec: 5.0
+  acoustic_heatmap:
+    enabled: true
+    stream_id: x30_acoustic_heatmap
+    topic: /monitor/acoustic/heatmap
+    status_topic: /platform/acoustic_heatmap_stream/status
     fps: 10.0
     bitrate: 1500k
     video_codec: h264_rkmpp

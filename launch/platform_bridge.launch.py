@@ -117,6 +117,78 @@ def live_stream_params(config):
             nested_config_value(config, "live_stream", "acoustic_overlay", "restart_interval_sec", 5.0),
             value_type=float,
         ),
+        "acoustic_camera_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic_camera", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_camera_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "topic", "/monitor/acoustic/camera")
+        ),
+        "acoustic_camera_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic_camera",
+                "status_topic",
+                "/platform/acoustic_camera_stream/status",
+            )
+        ),
+        "acoustic_camera_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "stream_id", "x30_acoustic_camera")
+        ),
+        "acoustic_camera_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_camera", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_camera_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "bitrate", "1500k")
+        ),
+        "acoustic_camera_stream_video_codec": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "video_codec", "h264_rkmpp")
+        ),
+        "acoustic_camera_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "output_format", "flv")
+        ),
+        "acoustic_camera_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_camera", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
+        "acoustic_heatmap_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic_heatmap", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_heatmap_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "topic", "/monitor/acoustic/heatmap")
+        ),
+        "acoustic_heatmap_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic_heatmap",
+                "status_topic",
+                "/platform/acoustic_heatmap_stream/status",
+            )
+        ),
+        "acoustic_heatmap_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "stream_id", "x30_acoustic_heatmap")
+        ),
+        "acoustic_heatmap_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_heatmap_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "bitrate", "1500k")
+        ),
+        "acoustic_heatmap_stream_video_codec": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "video_codec", "h264_rkmpp")
+        ),
+        "acoustic_heatmap_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "output_format", "flv")
+        ),
+        "acoustic_heatmap_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
         "live_stream_ffmpeg_loglevel": str(
             nested_config_value(config, "live_stream", "ffmpeg", "loglevel", "warning")
         ),
