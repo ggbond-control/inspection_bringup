@@ -229,6 +229,12 @@ def diagnostic_level_name(level):
     return names.get(level, f"UNKNOWN({level})")
 
 
+def normalize_diagnostic_level(raw_level):
+    if isinstance(raw_level, (bytes, bytearray)):
+        return raw_level[0] if raw_level else 255
+    return int(raw_level)
+
+
 def diagnostic_values(msg):
     values = {}
     for item in getattr(msg, "values", []):
@@ -237,17 +243,14 @@ def diagnostic_values(msg):
 
 
 def diagnostic_reason(name, topic, msg, prefix):
-    level = int(getattr(msg, "level", 255))
-    hardware_id = str(getattr(msg, "hardware_id", ""))
+    level = normalize_diagnostic_level(getattr(msg, "level", 255))
     message = str(getattr(msg, "message", ""))
     values = diagnostic_values(msg)
+    reason = message or f"{prefix}: topic={topic} level={diagnostic_level_name(level)}"
     value_text = ", ".join(f"{key}={value}" for key, value in values.items() if key)
-    extra = f" values=({value_text})" if value_text else ""
-    hardware = f" hardware_id={hardware_id}" if hardware_id else ""
-    return (
-        f"{prefix}: topic={topic} level={diagnostic_level_name(level)} "
-        f"message=\"{message}\"{hardware}{extra}"
-    )
+    if value_text:
+        return f"{reason} values=({value_text})"
+    return reason
 
 
 def wait_for_health(topic, timeout, name, failure_detail=None):
@@ -283,25 +286,31 @@ def wait_for_health(topic, timeout, name, failure_detail=None):
             if msg is None:
                 continue
 
-            level = int(getattr(msg, "level", 255))
+            raw_level = getattr(msg, "level", 255)
+            level = normalize_diagnostic_level(raw_level)
+            message = str(getattr(msg, "message", ""))
+            values = diagnostic_values(msg)
             status_key = (
                 level,
                 str(getattr(msg, "name", "")),
-                str(getattr(msg, "message", "")),
-                tuple(sorted(diagnostic_values(msg).items())),
+                message,
+                tuple(sorted(values.items())),
             )
             if status_key != last_printed:
                 last_printed = status_key
                 print(
                     f"[{name}] health level={diagnostic_level_name(level)} "
-                    f"message=\"{getattr(msg, 'message', '')}\" "
-                    f"values={diagnostic_values(msg)}",
+                    f"message=\"{message}\" "
+                    f"values={values}",
                     flush=True,
                 )
 
             if level == 0:
                 print(f"[{name}] health ready: {topic}", flush=True)
                 return True
+
+            if level == 1:
+                continue
 
             if level in (2, 3):
                 reason = diagnostic_reason(name, topic, msg, "health failed")
@@ -311,35 +320,68 @@ def wait_for_health(topic, timeout, name, failure_detail=None):
                     name,
                     reason,
                     category=diagnostic_level_name(level),
+                    name=name,
                     topic=topic,
                     level=level,
                     level_name=diagnostic_level_name(level),
                     status_name=str(getattr(msg, "name", "")),
-                    message=str(getattr(msg, "message", "")),
+                    message=message,
                     hardware_id=str(getattr(msg, "hardware_id", "")),
-                    values=diagnostic_values(msg),
+                    values=values,
                 )
                 return False
 
+            reason = f"unknown diagnostic level on {topic}: {level}"
+            print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+            write_failure_detail(
+                failure_detail,
+                name,
+                reason,
+                category="UNKNOWN_LEVEL",
+                name=name,
+                topic=topic,
+                level=level,
+                level_name=diagnostic_level_name(level),
+                status_name=str(getattr(msg, "name", "")),
+                message=message,
+                hardware_id=str(getattr(msg, "hardware_id", "")),
+                values=values,
+            )
+            return False
+
         msg = latest_status["msg"]
         if msg is None:
-            reason = f"health timeout after {timeout:.1f}s: no status received on {topic}"
+            reason = f"health topic {topic} did not publish within {timeout:.1f}s"
             print(f"[{name}] {reason}", file=sys.stderr, flush=True)
-            write_failure_detail(failure_detail, name, reason, category="TIMEOUT_NO_STATUS", topic=topic)
+            write_failure_detail(
+                failure_detail,
+                name,
+                reason,
+                category="TIMEOUT_NO_STATUS",
+                name=name,
+                topic=topic,
+            )
         else:
-            reason = diagnostic_reason(name, topic, msg, f"health timeout after {timeout:.1f}s")
+            level = normalize_diagnostic_level(getattr(msg, "level", 255))
+            message = str(getattr(msg, "message", ""))
+            values = diagnostic_values(msg)
+            reason = (
+                f"health topic {topic} did not report OK within {timeout:.1f}s; "
+                f"last message: {message}"
+            )
             print(f"[{name}] {reason}", file=sys.stderr, flush=True)
             write_failure_detail(
                 failure_detail,
                 name,
                 reason,
                 category="TIMEOUT_NOT_READY",
+                name=name,
                 topic=topic,
-                level=int(getattr(msg, "level", 255)),
-                level_name=diagnostic_level_name(int(getattr(msg, "level", 255))),
+                level=level,
+                level_name=diagnostic_level_name(level),
                 status_name=str(getattr(msg, "name", "")),
-                message=str(getattr(msg, "message", "")),
-                values=diagnostic_values(msg),
+                message=message,
+                values=values,
             )
         return False
     finally:
