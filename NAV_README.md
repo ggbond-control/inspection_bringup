@@ -37,9 +37,26 @@ Call the service to apply runtime overrides and start the stack:
 ```bash
 ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
+  {name: 'mode', value: {type: 4, string_value: 'nav'}},
   {name: 'livox.model', value: {type: 4, string_value: 'mid360'}},
   {name: 'slam.prior_dir', value: {type: 4, string_value: 'company2'}},
   {name: 'global_planner.initial_map', value: {type: 4, string_value: 'company2'}}
+]}"
+```
+
+`mode` accepts:
+
+```text
+nav     Start the configured navigation stack normally.
+manual  Start without local_planner, even if modules.local_planner is true.
+```
+
+Manual mode example:
+
+```bash
+ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
+"{parameters: [
+  {name: 'mode', value: {type: 4, string_value: 'manual'}}
 ]}"
 ```
 

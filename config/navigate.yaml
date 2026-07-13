@@ -1,3 +1,5 @@
+mode: nav
+
 modules:
   nav_bridge: true
   livox: true

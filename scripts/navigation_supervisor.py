@@ -73,6 +73,15 @@ def set_by_path(config, dotted_path, value):
     cursor[parts[-1]] = value
 
 
+def get_by_path(config, dotted_path, fallback=None):
+    cursor = config
+    for part in dotted_path.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            return fallback
+        cursor = cursor[part]
+    return cursor
+
+
 def parameter_value_to_python(parameter_value):
     value_type = parameter_value.type
     if value_type == ParameterType.PARAMETER_BOOL:
@@ -108,6 +117,17 @@ def coerce_to_existing_type(value, existing):
     if existing is None:
         return value
     return str(value)
+
+
+def apply_start_mode(runtime_config):
+    mode = str(get_by_path(runtime_config, "mode", "nav")).strip().lower()
+    if mode not in ("nav", "manual"):
+        raise ValueError(f"unsupported navigation mode: {mode}; expected nav or manual")
+
+    set_by_path(runtime_config, "mode", mode)
+    if mode == "manual":
+        set_by_path(runtime_config, "modules.local_planner", False)
+    return mode
 
 
 class NavigationSupervisor(Node):
@@ -154,6 +174,13 @@ class NavigationSupervisor(Node):
         response.results.extend(validation_results)
         if any(not result.successful for result in validation_results):
             return response
+
+        try:
+            mode = apply_start_mode(runtime_config)
+        except Exception as exc:
+            response.results.append(self.result(False, str(exc)))
+            return response
+        response.results.append(self.result(True, f"resolved navigation mode: {mode}"))
 
         self.in_progress = True
         remove_if_exists(self.result_path)
