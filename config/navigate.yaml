@@ -44,7 +44,7 @@ livox:
 
 slam:
   relocal: true
-  prior_dir: "company2"
+  prior_dir: ""
   rviz: false
   pgo: false
   odom_imu: true
@@ -78,17 +78,13 @@ local_planner:
     timeout_seconds: 10.0
 
 global_planner:
-  initial_map: "company2"
-  map_connections_file: "default"
+  initial_map: ""
+  multi_map_dir: ""
   use_fake_cmdvel: true
   params_file: "new_local"
-  use_sim_time: false
-  bidirectional_connections: true
   waypoint_dwell_time: 1.0
   patrol_loops: 1
   readiness:
-    type: nodes
-    nodes:
-      - /planner_server
-      - /controller_server
+    type: health
+    topic: /multi_map_nav/health
     timeout_seconds: 10.0

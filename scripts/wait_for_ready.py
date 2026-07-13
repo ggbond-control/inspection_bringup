@@ -219,6 +219,138 @@ def run_nav_bridge(args):
     return call_trigger_service(args.stand_service, args.stand_timeout, "nav_bridge", args.failure_detail)
 
 
+def diagnostic_level_name(level):
+    names = {
+        0: "OK",
+        1: "WARN",
+        2: "ERROR",
+        3: "STALE",
+    }
+    return names.get(level, f"UNKNOWN({level})")
+
+
+def diagnostic_values(msg):
+    values = {}
+    for item in getattr(msg, "values", []):
+        values[str(getattr(item, "key", ""))] = str(getattr(item, "value", ""))
+    return values
+
+
+def diagnostic_reason(name, topic, msg, prefix):
+    level = int(getattr(msg, "level", 255))
+    hardware_id = str(getattr(msg, "hardware_id", ""))
+    message = str(getattr(msg, "message", ""))
+    values = diagnostic_values(msg)
+    value_text = ", ".join(f"{key}={value}" for key, value in values.items() if key)
+    extra = f" values=({value_text})" if value_text else ""
+    hardware = f" hardware_id={hardware_id}" if hardware_id else ""
+    return (
+        f"{prefix}: topic={topic} level={diagnostic_level_name(level)} "
+        f"message=\"{message}\"{hardware}{extra}"
+    )
+
+
+def wait_for_health(topic, timeout, name, failure_detail=None):
+    try:
+        import rclpy
+        from diagnostic_msgs.msg import DiagnosticStatus
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    except ImportError as exc:
+        reason = f"failed to import health status dependencies: {exc}"
+        print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+        write_failure_detail(failure_detail, name, reason, category="IMPORT_ERROR")
+        return False
+
+    rclpy.init(args=None)
+    node = rclpy.create_node(f"wait_for_{name}_health")
+    qos = QoSProfile(depth=1)
+    qos.reliability = ReliabilityPolicy.RELIABLE
+    qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+    latest_status = {"msg": None}
+
+    def on_status(msg):
+        latest_status["msg"] = msg
+
+    node.create_subscription(DiagnosticStatus, topic, on_status, qos)
+    deadline = deadline_from_timeout(timeout)
+    last_printed = None
+
+    print(f"[{name}] waiting for health status {timeout_text(timeout)}: {topic}", flush=True)
+    try:
+        while before_deadline(deadline):
+            rclpy.spin_once(node, timeout_sec=0.2)
+            msg = latest_status["msg"]
+            if msg is None:
+                continue
+
+            level = int(getattr(msg, "level", 255))
+            status_key = (
+                level,
+                str(getattr(msg, "name", "")),
+                str(getattr(msg, "message", "")),
+                tuple(sorted(diagnostic_values(msg).items())),
+            )
+            if status_key != last_printed:
+                last_printed = status_key
+                print(
+                    f"[{name}] health level={diagnostic_level_name(level)} "
+                    f"message=\"{getattr(msg, 'message', '')}\" "
+                    f"values={diagnostic_values(msg)}",
+                    flush=True,
+                )
+
+            if level == 0:
+                print(f"[{name}] health ready: {topic}", flush=True)
+                return True
+
+            if level in (2, 3):
+                reason = diagnostic_reason(name, topic, msg, "health failed")
+                print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+                write_failure_detail(
+                    failure_detail,
+                    name,
+                    reason,
+                    category=diagnostic_level_name(level),
+                    topic=topic,
+                    level=level,
+                    level_name=diagnostic_level_name(level),
+                    status_name=str(getattr(msg, "name", "")),
+                    message=str(getattr(msg, "message", "")),
+                    hardware_id=str(getattr(msg, "hardware_id", "")),
+                    values=diagnostic_values(msg),
+                )
+                return False
+
+        msg = latest_status["msg"]
+        if msg is None:
+            reason = f"health timeout after {timeout:.1f}s: no status received on {topic}"
+            print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+            write_failure_detail(failure_detail, name, reason, category="TIMEOUT_NO_STATUS", topic=topic)
+        else:
+            reason = diagnostic_reason(name, topic, msg, f"health timeout after {timeout:.1f}s")
+            print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+            write_failure_detail(
+                failure_detail,
+                name,
+                reason,
+                category="TIMEOUT_NOT_READY",
+                topic=topic,
+                level=int(getattr(msg, "level", 255)),
+                level_name=diagnostic_level_name(int(getattr(msg, "level", 255))),
+                status_name=str(getattr(msg, "name", "")),
+                message=str(getattr(msg, "message", "")),
+                values=diagnostic_values(msg),
+            )
+        return False
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def run_health(args):
+    return wait_for_health(args.topic, args.timeout, args.name, args.failure_detail)
+
+
 def state_name(state):
     names = {
         0: "WAITING_FOR_DATA",
@@ -445,6 +577,21 @@ def main():
     topics_parser.add_argument("topics", nargs="+", help="Topic names to wait for.")
     topics_parser.add_argument("--failure-detail", default="")
     topics_parser.set_defaults(func=run_topics)
+
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Wait for diagnostic_msgs/msg/DiagnosticStatus to report OK.",
+    )
+    health_parser.add_argument("--name", default="health", help="Name printed in status messages.")
+    health_parser.add_argument("--topic", required=True, help="DiagnosticStatus topic to monitor.")
+    health_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Timeout in seconds. Use 0 or a negative value to wait forever.",
+    )
+    health_parser.add_argument("--failure-detail", default="")
+    health_parser.set_defaults(func=run_health)
 
     nav_bridge_parser = subparsers.add_parser(
         "nav_bridge",

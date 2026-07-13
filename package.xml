@@ -15,6 +15,7 @@
   <exec_depend>gimbal_control_stub</exec_depend>
   <exec_depend>inspection_charge_executor</exec_depend>
   <exec_depend>inspection_interfaces</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>inspection_platform_bridge</exec_depend>
   <exec_depend>inspection_task_hub</exec_depend>
   <exec_depend>launch</exec_depend>

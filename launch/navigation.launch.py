@@ -226,6 +226,25 @@ def wait_for_nodes_action(name, nodes, timeout, failure_detail=None):
     )
 
 
+def wait_for_health_action(name, topic, timeout, failure_detail=None):
+    return ExecuteProcess(
+        cmd=[
+            "python3",
+            readiness_script_path(),
+            "health",
+            "--name",
+            name,
+            "--topic",
+            topic,
+            "--timeout",
+            str(timeout),
+            *( ["--failure-detail", failure_detail] if failure_detail else [] ),
+        ],
+        name=f"wait_for_{name}_health",
+        output="screen",
+    )
+
+
 def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout, failure_detail=None):
     topic_args = []
     for topic in topics:
@@ -340,6 +359,14 @@ def module_readiness_action_with_overrides(
             output="screen",
         )
 
+    if ready_type == "health":
+        return wait_for_health_action(
+            section,
+            str(readiness_value(config, section, "topic", f"/{section}/health")),
+            float(readiness_value(config, section, "timeout_seconds", fallback_timeout)),
+            failure_detail,
+        )
+
     if ready_type == "nav_bridge":
         return nav_bridge_ready_action(
             override_or_config_list(
@@ -443,6 +470,11 @@ def module_readiness_failure_reason(config, section, fallback_nodes, fallback_ti
             f"did not reach TRACKING on {status_topic} {timeout_text_for_reason(timeout)}"
         )
         return base_reason
+
+    if ready_type == "health":
+        topic = str(readiness_value(config, section, "topic", f"/{section}/health"))
+        timeout = float(readiness_value(config, section, "timeout_seconds", fallback_timeout))
+        return f"{section} readiness failed: health topic {topic} did not report OK {timeout_text_for_reason(timeout)}"
 
     if ready_type == "topics":
         topics = readiness_list(config, section, "topics", [])
@@ -634,9 +666,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("global_initial_map", default_value="", description="Initial multi-map map name."),
         DeclareLaunchArgument(
-            "global_map_connections_file",
+            "global_multi_map_dir",
             default_value="",
-            description="Multi-map connections file name without extension.",
+            description="Path to gridmapper data/Output/multi_maps directory.",
         ),
         DeclareLaunchArgument(
             "global_use_fake_cmdvel",
@@ -647,16 +679,6 @@ def generate_launch_description():
             "global_params_file",
             default_value="",
             description="Multi-map params file name without extension.",
-        ),
-        DeclareLaunchArgument(
-            "global_use_sim_time",
-            default_value="",
-            description="Use sim time for multi-map navigation.",
-        ),
-        DeclareLaunchArgument(
-            "global_bidirectional_connections",
-            default_value="",
-            description="Generate reverse map connections.",
         ),
         DeclareLaunchArgument(
             "global_waypoint_dwell_time",
@@ -828,7 +850,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 )
             ),
             "prior_dir": override_or_config(
-                context, "slam_prior_dir", config, "slam", "prior_dir", "company2", use_launch_overrides
+                context, "slam_prior_dir", config, "slam", "prior_dir", "", use_launch_overrides
             ),
             "rviz": as_bool_text(
                 override_or_config_bool(
@@ -912,22 +934,34 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "multi_map_nav.launch.py",
         "true",
         {
+            "multi_map_dir": os.path.expanduser(
+                os.path.expandvars(
+                    override_or_config(
+                        context,
+                        "global_multi_map_dir",
+                        config,
+                        "global_planner",
+                        "multi_map_dir",
+                        override_or_config(
+                            context,
+                            "slam_prior_dir",
+                            config,
+                            "slam",
+                            "prior_dir",
+                            "",
+                            use_launch_overrides,
+                        ),
+                        use_launch_overrides,
+                    )
+                )
+            ),
             "initial_map": override_or_config(
                 context,
                 "global_initial_map",
                 config,
                 "global_planner",
                 "initial_map",
-                "company2",
-                use_launch_overrides,
-            ),
-            "map_connections_file": override_or_config(
-                context,
-                "global_map_connections_file",
-                config,
-                "global_planner",
-                "map_connections_file",
-                "default",
+                "map_000",
                 use_launch_overrides,
             ),
             "use_fake_cmdvel": as_bool_text(
@@ -950,17 +984,6 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 "new_local",
                 use_launch_overrides,
             ),
-            "use_sim_time": as_bool_text(
-                override_or_config_bool(
-                    context,
-                    "global_use_sim_time",
-                    config,
-                    "global_planner",
-                    "use_sim_time",
-                    False,
-                    use_launch_overrides,
-                )
-            ),
             "patrol_loops": str(
                 override_or_config_typed(
                     context,
@@ -970,17 +993,6 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                     "patrol_loops",
                     1,
                     int,
-                    use_launch_overrides,
-                )
-            ),
-            "bidirectional_connections": as_bool_text(
-                override_or_config_bool(
-                    context,
-                    "global_bidirectional_connections",
-                    config,
-                    "global_planner",
-                    "bidirectional_connections",
-                    True,
                     use_launch_overrides,
                 )
             ),
@@ -1084,7 +1096,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                 context,
                 config,
                 "global_planner",
-                ["/planner_server", "/controller_server"],
+                ["/multi_map_nav_node", "/planner_server", "/controller_server"],
                 wait_timeout,
                 use_launch_overrides,
                 detail_path("global_planner"),
@@ -1092,7 +1104,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             module_readiness_failure_reason(
                 config,
                 "global_planner",
-                ["/planner_server", "/controller_server"],
+                ["/multi_map_nav_node", "/planner_server", "/controller_server"],
                 wait_timeout,
                 detail_path("global_planner"),
             ),

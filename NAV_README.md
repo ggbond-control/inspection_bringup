@@ -39,10 +39,12 @@ ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
   {name: 'mode', value: {type: 4, string_value: 'nav'}},
   {name: 'livox.model', value: {type: 4, string_value: 'mid360'}},
-  {name: 'slam.prior_dir', value: {type: 4, string_value: 'company2'}},
-  {name: 'global_planner.initial_map', value: {type: 4, string_value: 'company2'}}
+  {name: 'slam.prior_dir', value: {type: 4, string_value: '/home/cat/Workspace/Maps/company2'}},
+  {name: 'global_planner.initial_map', value: {type: 4, string_value: 'map_000'}}
 ]}"
 ```
+
+If `global_planner.multi_map_dir` is omitted, it reuses `slam.prior_dir`.
 
 `mode` accepts:
 
@@ -98,19 +100,47 @@ The launch sequence is:
 5. `local_planner/local_planner.launch.py`
 6. `multi_map_nav/multi_map_nav.launch.py`
 
-Default map and prior settings:
+Required runtime values (fill these explicitly):
 
 ```yaml
 slam:
-  prior_dir: "company2"
+  prior_dir: "/home/chen/Workspace/Maps/company2"
 
 global_planner:
-  initial_map: "company2"
-  map_connections_file: "default"
+  initial_map: "map_000"
   params_file: "new_local"
   use_fake_cmdvel: true
   patrol_loops: 1
 ```
+
+`global_planner.multi_map_dir` can be omitted and will reuse
+`slam.prior_dir`.
+
+## Multi-Map Data
+
+`global_planner.multi_map_dir` must point to the gridmapper output directory:
+
+```text
+multi_maps/
+  map_000.yaml
+  map_000.png
+  map_001.yaml
+  map_001.png
+  map_relations.csv
+  transition_points.csv
+  states/*.gridmap.bin
+```
+
+`map_relations.csv` uses `from_map,to_map,dx,dy` to describe each map frame
+relative to ROOT/world. `transition_points.csv` uses
+`transition_id,from_map,to_map,world_x,world_y,world_z,world_yaw_rad,bidirectional,type`;
+the world pose fields are already ROOT/world coordinates, not local map or yaml
+origin coordinates.
+
+When sending an external navigation goal to `multi_map_nav`, set
+`PoseStamped.header.frame_id` to the target local map name such as `map_001`,
+and put `pose.position` in that local map frame. Legal map names are inferred
+from `map_*.yaml` under `multi_map_dir`.
 
 ## Configuration Layout
 
@@ -160,7 +190,7 @@ livox:
 
 slam:
   relocal: true
-  prior_dir: "company2"
+  prior_dir: ""
   readiness:
     type: localization_init
     status_topic: /localization_init_status
@@ -305,10 +335,8 @@ local_planner:
 
 global_planner:
   readiness:
-    type: nodes
-    nodes:
-      - /planner_server
-      - /controller_server
+    type: health
+    topic: /multi_map_nav/health
 ```
 
 If a readiness check fails or times out, the timeout is printed. By default,
@@ -317,6 +345,13 @@ started modules such as `nav_bridge` are not left running alone.
 
 For topic readiness, the timeout applies to each topic individually. For
 localization readiness, `timeout_seconds <= 0` means wait indefinitely.
+
+`global_planner` expects `multi_map_nav` to publish
+`diagnostic_msgs/msg/DiagnosticStatus` on `/multi_map_nav/health` with
+transient local + reliable QoS. `level == OK` means ready. `level == WARN`
+means still initializing. `level == ERROR` or `level == STALE` fails readiness
+immediately and the diagnostic message is returned through
+`/navigation_bringup/start`.
 
 Disable readiness waiting and use only timed startup:
 
@@ -338,7 +373,8 @@ ros2 launch inspection_bringup navigation.launch.py \
   enable_livox:=false \
   livox_model:=mid360 \
   slam_prior_dir:=company2 \
-  global_initial_map:=company2
+  global_initial_map:=map_000 \
+  global_multi_map_dir:=~/Workspace/algor_ws/src/gridmapper/data/Output/multi_maps
 ```
 
 Start only localization and terrain:
