@@ -296,6 +296,12 @@ def launch_setup(context):
             config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 60.0),
             value_type=float,
         ),
+        "acoustic_start_service_name": str(
+            config_value(config, "mqtt", "acoustic_start_service_name", "/monitor/acoustic/start")
+        ),
+        "acoustic_stop_service_name": str(
+            config_value(config, "mqtt", "acoustic_stop_service_name", "/monitor/acoustic/stop")
+        ),
     }
     platform_params.update(live_stream_params(config))
 

@@ -20,6 +20,8 @@ mqtt:
   localization_map_parameter_name: slam.prior_dir
   localization_initial_map_parameter_name: global_planner.initial_map
   localization_set_parameter_timeout_sec: 60.0
+  acoustic_start_service_name: /monitor/acoustic/start
+  acoustic_stop_service_name: /monitor/acoustic/stop
 
 live_stream:
   config_path: ""
