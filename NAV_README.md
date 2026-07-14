@@ -50,7 +50,7 @@ If `global_planner.multi_map_dir` is omitted, it reuses `slam.prior_dir`.
 
 ```text
 nav     Start the configured navigation stack normally.
-manual  Start without local_planner, even if modules.local_planner is true.
+manual  Start only nav_bridge for cmd_vel forwarding; all sensors and navigation algorithms stay off.
 ```
 
 Manual mode example:
