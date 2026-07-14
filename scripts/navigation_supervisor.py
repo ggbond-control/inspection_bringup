@@ -126,7 +126,16 @@ def apply_start_mode(runtime_config):
 
     set_by_path(runtime_config, "mode", mode)
     if mode == "manual":
-        set_by_path(runtime_config, "modules.local_planner", False)
+        manual_modules = {
+            "nav_bridge": True,
+            "livox": False,
+            "slam": False,
+            "terrain": False,
+            "local_planner": False,
+            "global_planner": False,
+        }
+        for module_name, enabled in manual_modules.items():
+            set_by_path(runtime_config, f"modules.{module_name}", enabled)
     return mode
 
 
