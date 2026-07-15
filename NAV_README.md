@@ -255,9 +255,14 @@ Unknown or duplicate sequence entries are skipped with a console message.
 
 `nav_bridge` uses a custom readiness check before the rest of the stack starts:
 
-1. Wait for one message on every topic in `nav_bridge.readiness.topics`.
+1. Subscribe once to every topic in `nav_bridge.readiness.topics` with
+   `best_effort + volatile + depth 1` QoS and wait for one message.
 2. Call `nav_bridge.readiness.stand_service` as `std_srvs/srv/Trigger`.
 3. Continue only when the service response contains `success: true`.
+
+For `/battery/level`, the readiness log prints the received `UInt8` value as a
+percentage. Topic readiness uses a native `rclpy` subscriber; it does not spawn
+`ros2 topic echo --once` processes.
 
 When `bringup.wait_for_readiness` is false, `nav_bridge` still runs this
 activation step after its launch. The step no longer gates the later modules in

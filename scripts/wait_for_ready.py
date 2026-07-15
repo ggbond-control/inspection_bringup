@@ -85,73 +85,83 @@ def timeout_text(timeout):
 
 
 def wait_for_topic_message(topic, timeout, name, failure_detail=None):
+    try:
+        import rclpy
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+        from rosidl_runtime_py.utilities import get_message
+    except ImportError as exc:
+        reason = f"failed to import topic readiness dependencies: {exc}"
+        print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+        write_failure_detail(failure_detail, name, reason, category="IMPORT_ERROR", topic=topic)
+        return False
+
     print(f"[{name}] waiting for topic message {timeout_text(timeout)}: {topic}", flush=True)
     deadline = deadline_from_timeout(timeout)
     start_time = time.monotonic()
-    last_returncode = None
-    last_stdout = ""
-    last_stderr = ""
+    received = {"message": None}
+    discovered_type = ""
+    subscription = None
+    rclpy.init(args=None)
+    node = rclpy.create_node("wait_for_topic_message")
+    qos = QoSProfile(depth=1)
+    qos.reliability = ReliabilityPolicy.BEST_EFFORT
+    qos.durability = DurabilityPolicy.VOLATILE
 
-    while before_deadline(deadline):
-        remaining = remaining_timeout(deadline, 2.0)
-        process = subprocess.Popen(
-            ["ros2", "topic", "echo", "--once", topic],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+    def on_message(message):
+        received["message"] = message
 
-        try:
-            stdout, stderr = process.communicate(timeout=min(2.0, remaining))
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            try:
-                process.wait(timeout=0.5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-            last_returncode = "timeout"
-            continue
+    try:
+        while before_deadline(deadline):
+            if subscription is None:
+                topic_types = dict(node.get_topic_names_and_types()).get(topic, [])
+                if topic_types:
+                    discovered_type = topic_types[0]
+                    try:
+                        message_type = get_message(discovered_type)
+                        subscription = node.create_subscription(message_type, topic, on_message, qos)
+                        print(
+                            f"[{name}] subscribed to {topic} ({discovered_type}) "
+                            "with best_effort + volatile QoS",
+                            flush=True,
+                        )
+                    except Exception as exc:
+                        reason = f"failed to subscribe to {topic} ({discovered_type}): {exc}"
+                        print(f"[{name}] {reason}", file=sys.stderr, flush=True)
+                        write_failure_detail(
+                            failure_detail,
+                            name,
+                            reason,
+                            category="TOPIC_SUBSCRIPTION_ERROR",
+                            topic=topic,
+                            topic_type=discovered_type,
+                        )
+                        return False
 
-        last_returncode = process.returncode
-        last_stdout = stdout.strip()
-        last_stderr = stderr.strip()
-        if process.returncode == 0 and stdout.strip():
-            print(f"[{name}] topic message received: {topic}", flush=True)
+            rclpy.spin_once(node, timeout_sec=0.2)
+            message = received["message"]
+            if message is None:
+                continue
+
+            if topic.rstrip("/") == "/battery/level" and hasattr(message, "data"):
+                print(f"[{name}] battery level received: {int(message.data)}%", flush=True)
+            else:
+                print(f"[{name}] topic message received: {topic}", flush=True)
             return True
-
-        time.sleep(0.5)
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
     elapsed = time.monotonic() - start_time
-    print(f"[{name}] topic message timeout after {elapsed:.1f}s: {topic}", file=sys.stderr, flush=True)
-    if last_returncode is not None:
-        print(f"[{name}] last topic echo return: {last_returncode}", file=sys.stderr, flush=True)
-    if last_stderr:
-        print(f"[{name}] last topic echo stderr: {last_stderr}", file=sys.stderr, flush=True)
-    if last_stdout:
-        print(f"[{name}] last topic echo stdout: {last_stdout}", file=sys.stderr, flush=True)
-
-    info = subprocess.run(
-        ["ros2", "topic", "info", topic],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    info_output = (info.stdout or info.stderr).strip()
-    if info_output:
-        print(f"[{name}] topic info for {topic}:\n{info_output}", file=sys.stderr, flush=True)
-    else:
-        print(f"[{name}] topic info for {topic}: unavailable", file=sys.stderr, flush=True)
+    reason = f"topic message timeout after {elapsed:.1f}s: {topic}"
+    print(f"[{name}] {reason}", file=sys.stderr, flush=True)
     write_failure_detail(
         failure_detail,
         name,
-        f"topic message timeout after {elapsed:.1f}s: {topic}",
+        reason,
         topic=topic,
+        topic_type=discovered_type,
         timeout_seconds=timeout,
-        last_returncode=str(last_returncode),
-        last_stdout=last_stdout,
-        last_stderr=last_stderr,
-        topic_info=info_output,
     )
     return False
 

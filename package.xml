@@ -26,6 +26,7 @@
   <exec_depend>local_planner</exec_depend>
   <exec_depend>multi_map_nav</exec_depend>
   <exec_depend>nav_bridge</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>thermal_camera_monitor</exec_depend>
 
   <export>
