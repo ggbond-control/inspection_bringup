@@ -2,14 +2,20 @@
 import argparse
 import copy
 import os
+import signal
+import subprocess
 import sys
+import threading
 import time
+import uuid
 
 import yaml
 
 import rclpy
 from rcl_interfaces.msg import ParameterType, SetParametersResult
 from rcl_interfaces.srv import SetParameters
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 
@@ -36,14 +42,6 @@ def write_yaml_atomic(path, data):
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as stream:
         yaml.safe_dump(data, stream, sort_keys=False)
-    os.replace(tmp_path, path)
-
-
-def write_text_atomic(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as stream:
-        stream.write(text)
     os.replace(tmp_path, path)
 
 
@@ -140,94 +138,159 @@ def apply_start_mode(runtime_config):
 
 
 class NavigationSupervisor(Node):
-    def __init__(self, config_path, service_name, state_dir, run_id, result_timeout):
+    def __init__(self, config_path, service_name, state_dir, result_timeout):
         super().__init__("navigation_supervisor")
         self.config_path = os.path.abspath(os.path.expanduser(os.path.expandvars(config_path)))
         self.state_dir = os.path.abspath(os.path.expanduser(os.path.expandvars(state_dir)))
-        self.run_id = str(run_id)
         self.result_timeout = result_timeout
-        self.resolved_config_path = os.path.join(self.state_dir, "resolved.yaml")
-        self.start_signal_path = os.path.join(self.state_dir, "start.yaml")
-        self.result_path = os.path.join(self.state_dir, "result.yaml")
         self.base_config = load_yaml(self.config_path)
         self.allowed_paths = flatten_leaves(self.base_config)
         self.in_progress = False
+        self.request_lock = threading.Lock()
+        self.worker_process = None
+        self.worker_run_id = None
         os.makedirs(self.state_dir, exist_ok=True)
-        remove_if_exists(self.start_signal_path)
-        remove_if_exists(self.resolved_config_path)
-        remove_if_exists(self.result_path)
-        self.service = self.create_service(SetParameters, service_name, self.on_start_request)
+        self.service = self.create_service(
+            SetParameters,
+            service_name,
+            self.on_start_request,
+            callback_group=ReentrantCallbackGroup(),
+        )
         self.get_logger().info(f"waiting for navigation start service: {service_name}")
         self.get_logger().info(f"navigation supervisor state dir: {self.state_dir}")
-        self.get_logger().info(f"navigation supervisor run id: {self.run_id}")
 
     def on_start_request(self, request, response):
-        if self.in_progress:
-            response.results.append(self.result(False, "navigation startup already in progress"))
-            return response
-
-        runtime_config = copy.deepcopy(self.base_config)
-        validation_results = []
-
-        for parameter in request.parameters:
-            try:
-                if parameter.name not in self.allowed_paths:
-                    raise ValueError(f"unknown navigation parameter: {parameter.name}")
-                raw_value = parameter_value_to_python(parameter.value)
-                value = coerce_to_existing_type(raw_value, self.allowed_paths[parameter.name])
-                set_by_path(runtime_config, parameter.name, value)
-                validation_results.append(self.result(True, f"accepted {parameter.name}"))
-            except Exception as exc:
-                validation_results.append(self.result(False, str(exc)))
-
-        response.results.extend(validation_results)
-        if any(not result.successful for result in validation_results):
-            return response
+        with self.request_lock:
+            if self.in_progress:
+                response.results.append(self.result(False, "navigation startup already in progress"))
+                return response
+            self.in_progress = True
 
         try:
+            runtime_config = copy.deepcopy(self.base_config)
+            validation_results = []
+            for parameter in request.parameters:
+                try:
+                    if parameter.name not in self.allowed_paths:
+                        raise ValueError(f"unknown navigation parameter: {parameter.name}")
+                    raw_value = parameter_value_to_python(parameter.value)
+                    value = coerce_to_existing_type(raw_value, self.allowed_paths[parameter.name])
+                    set_by_path(runtime_config, parameter.name, value)
+                    validation_results.append(self.result(True, f"accepted {parameter.name}"))
+                except Exception as exc:
+                    validation_results.append(self.result(False, str(exc)))
+
+            response.results.extend(validation_results)
+            if any(not result.successful for result in validation_results):
+                return response
+
             mode = apply_start_mode(runtime_config)
-        except Exception as exc:
-            response.results.append(self.result(False, str(exc)))
-            return response
-        response.results.append(self.result(True, f"resolved navigation mode: {mode}"))
+            response.results.append(self.result(True, f"resolved navigation mode: {mode}"))
 
-        self.in_progress = True
-        remove_if_exists(self.result_path)
-        write_yaml_atomic(self.resolved_config_path, runtime_config)
-        write_yaml_atomic(
-            self.start_signal_path,
-            {
-                "run_id": self.run_id,
-                "config_path": self.resolved_config_path,
-                "requested_at": time.time(),
-            },
-        )
-        self.get_logger().info("navigation start request accepted; waiting for launch result")
-
-        result = self.wait_for_result()
-        success = bool(result.get("success", False))
-        if not success:
-            self.in_progress = False
-        response.results.append(
-            self.result(
-                success,
-                str(result.get("reason", "navigation startup result missing reason")),
+            self.stop_worker()
+            request_state_dir, request_run_id, result_path = self.start_worker(runtime_config)
+            self.get_logger().info(
+                f"navigation start request accepted; waiting for worker result: {request_run_id}"
             )
-        )
+            result = self.wait_for_result(result_path, request_run_id)
+            success = bool(result.get("success", False))
+            reason = str(result.get("reason", "navigation startup result missing reason"))
+            if not success:
+                self.stop_worker()
+            response.results.append(self.result(success, reason))
+        except Exception as exc:
+            reason = f"failed to start navigation worker: {exc}"
+            self.get_logger().error(reason)
+            response.results.append(self.result(False, reason))
+        finally:
+            # A finished request must never make the service one-shot. A later call
+            # replaces the active worker with a fresh stack using its own config.
+            with self.request_lock:
+                self.in_progress = False
         return response
 
-    def wait_for_result(self):
+    def start_worker(self, runtime_config):
+        request_run_id = uuid.uuid4().hex
+        request_state_dir = os.path.join(self.state_dir, request_run_id)
+        resolved_config_path = os.path.join(request_state_dir, "resolved.yaml")
+        result_path = os.path.join(request_state_dir, "result.yaml")
+
+        runtime_config.setdefault("bringup", {})["start_mode"] = "immediate"
+        os.makedirs(request_state_dir, exist_ok=True)
+        remove_if_exists(result_path)
+        write_yaml_atomic(resolved_config_path, runtime_config)
+        self.worker_process = subprocess.Popen(
+            [
+                "ros2",
+                "launch",
+                "inspection_bringup",
+                "navigation.launch.py",
+                f"navigate_config_path:={resolved_config_path}",
+                f"navigation_state_dir:={request_state_dir}",
+                f"navigation_run_id:={request_run_id}",
+            ],
+            start_new_session=True,
+        )
+        self.worker_run_id = request_run_id
+        self.get_logger().info(
+            f"started navigation worker pid={self.worker_process.pid} run_id={request_run_id}"
+        )
+        return request_state_dir, request_run_id, result_path
+
+    def stop_worker(self):
+        if self.worker_process is None:
+            return
+        if self.worker_process.poll() is None:
+            self.get_logger().info(
+                f"stopping active navigation worker pid={self.worker_process.pid} "
+                f"run_id={self.worker_run_id}"
+            )
+            try:
+                os.killpg(self.worker_process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            try:
+                self.worker_process.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                self.get_logger().warning("navigation worker did not stop after SIGINT; sending SIGTERM")
+                try:
+                    os.killpg(self.worker_process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    self.worker_process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    self.get_logger().error("navigation worker did not stop after SIGTERM; sending SIGKILL")
+                    try:
+                        os.killpg(self.worker_process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.worker_process.wait()
+        self.worker_process = None
+        self.worker_run_id = None
+
+    def wait_for_result(self, result_path, run_id):
         deadline = None if self.result_timeout <= 0.0 else time.monotonic() + self.result_timeout
         while deadline is None or time.monotonic() < deadline:
-            if os.path.exists(self.result_path):
+            if os.path.exists(result_path):
                 try:
-                    result = load_yaml(self.result_path)
+                    result = load_yaml(result_path)
                 except Exception as exc:
                     return {"success": False, "reason": f"failed to read launch result: {exc}"}
-                if str(result.get("run_id", "")) != self.run_id:
+                if str(result.get("run_id", "")) != run_id:
                     time.sleep(0.2)
                     continue
                 return result
+            if self.worker_process is not None:
+                returncode = self.worker_process.poll()
+                if returncode is not None:
+                    return {
+                        "success": False,
+                        "reason": (
+                            "navigation worker exited before reporting startup result "
+                            f"(exit_code={returncode})"
+                        ),
+                    }
             time.sleep(0.2)
         return {"success": False, "reason": f"navigation launch result timeout after {self.result_timeout:.1f}s"}
 
@@ -239,64 +302,23 @@ class NavigationSupervisor(Node):
         return result
 
 
-def wait_for_start(state_dir, run_id, timeout):
-    start_signal_path = os.path.join(state_dir, "start.yaml")
-    resolved_config_path = os.path.join(state_dir, "resolved.yaml")
-    deadline = None if timeout <= 0.0 else time.monotonic() + timeout
-    print(f"[navigation_supervisor] waiting for start signal: {start_signal_path}", flush=True)
-    while deadline is None or time.monotonic() < deadline:
-        if os.path.exists(start_signal_path) and os.path.exists(resolved_config_path):
-            try:
-                start_signal = load_yaml(start_signal_path)
-            except Exception as exc:
-                print(
-                    f"[navigation_supervisor] failed to read start signal: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                time.sleep(0.2)
-                continue
-            if str(start_signal.get("run_id", "")) == str(run_id):
-                print(f"[navigation_supervisor] start accepted: {resolved_config_path}", flush=True)
-                return 0
-        time.sleep(0.2)
-    print(
-        f"[navigation_supervisor] start wait timeout after {timeout:.1f}s",
-        file=sys.stderr,
-        flush=True,
-    )
-    return 1
-
-
-def report_result(state_dir, run_id, success, reason):
-    result_path = os.path.join(state_dir, "result.yaml")
-    write_yaml_atomic(
-        result_path,
-        {
-            "run_id": str(run_id),
-            "success": bool(success),
-            "reason": reason,
-            "reported_at": time.time(),
-        },
-    )
-    print(f"[navigation_supervisor] reported result: success={bool(success)} reason={reason}", flush=True)
-    return 0
-
-
 def run_node(args):
     rclpy.init()
     node = NavigationSupervisor(
         args.config,
         args.service_name,
         args.state_dir,
-        args.run_id,
         args.result_timeout,
     )
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_worker()
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
@@ -311,7 +333,6 @@ def main():
     node_parser.add_argument("--config", required=True, help="navigate.yaml path")
     node_parser.add_argument("--service-name", default="/navigation_bringup/start")
     node_parser.add_argument("--state-dir", required=True)
-    node_parser.add_argument("--run-id", required=True)
     node_parser.add_argument(
         "--result-timeout",
         type=float,
@@ -319,21 +340,6 @@ def main():
         help="Timeout for final launch result. Use 0 or negative to wait forever.",
     )
     node_parser.set_defaults(func=run_node)
-
-    wait_parser = subparsers.add_parser("wait-start", help="Wait until the start service is accepted.")
-    wait_parser.add_argument("--state-dir", required=True)
-    wait_parser.add_argument("--run-id", required=True)
-    wait_parser.add_argument("--timeout", type=float, default=0.0)
-    wait_parser.set_defaults(func=lambda args: wait_for_start(args.state_dir, args.run_id, args.timeout))
-
-    result_parser = subparsers.add_parser("report-result", help="Report final launch result to supervisor.")
-    result_parser.add_argument("--state-dir", required=True)
-    result_parser.add_argument("--run-id", required=True)
-    result_parser.add_argument("--success", action="store_true")
-    result_parser.add_argument("--reason", required=True)
-    result_parser.set_defaults(
-        func=lambda args: report_result(args.state_dir, args.run_id, args.success, args.reason)
-    )
 
     args = parser.parse_args()
     return args.func(args)

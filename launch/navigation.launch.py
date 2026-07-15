@@ -1,7 +1,6 @@
 import hashlib
 import os
 import time
-import uuid
 
 import yaml
 
@@ -610,6 +609,16 @@ def generate_launch_description():
             default_value=default_navigate_config_path(),
             description="Navigation configuration YAML path.",
         ),
+        DeclareLaunchArgument(
+            "navigation_state_dir",
+            default_value="",
+            description="Internal per-request directory used to report startup results.",
+        ),
+        DeclareLaunchArgument(
+            "navigation_run_id",
+            default_value="",
+            description="Internal per-request identifier used to report startup results.",
+        ),
         DeclareLaunchArgument("enable_nav_bridge", default_value="", description="Start nav_bridge."),
         DeclareLaunchArgument(
             "nav_bridge_wait_topics",
@@ -708,7 +717,6 @@ def launch_setup(context):
     start_mode = str(config_value(config, "bringup", "start_mode", "immediate")).strip().lower()
     if start_mode == "service":
         state_dir = navigation_state_dir(navigate_config_path)
-        run_id = uuid.uuid4().hex
         supervisor = ExecuteProcess(
             cmd=[
                 "python3",
@@ -720,61 +728,24 @@ def launch_setup(context):
                 str(config_value(config, "bringup", "start_service", "/navigation_bringup/start")),
                 "--state-dir",
                 state_dir,
-                "--run-id",
-                run_id,
                 "--result-timeout",
                 str(float(config_value(config, "bringup", "result_timeout_seconds", 0.0))),
             ],
             name="navigation_supervisor",
             output="screen",
         )
-        wait_start = ExecuteProcess(
-            cmd=[
-                "python3",
-                supervisor_script_path(),
-                "wait-start",
-                "--state-dir",
-                state_dir,
-                "--run-id",
-                run_id,
-                "--timeout",
-                str(float(config_value(config, "bringup", "start_timeout_seconds", 0.0))),
-            ],
-            name="wait_for_navigation_start",
-            output="screen",
-        )
+        return [supervisor]
 
-        def on_wait_start_exit(event, _context):
-            if event.returncode != 0:
-                reason = f"navigation start wait failed with code {event.returncode}"
-                return report_result_actions(state_dir, run_id, False, reason, shutdown_after=True)
-            resolved_config_path = os.path.join(state_dir, "resolved.yaml")
-            try:
-                resolved_config = load_config(resolved_config_path)
-                return build_navigation_actions(
-                    context,
-                    resolved_config,
-                    state_dir=state_dir,
-                    run_id=run_id,
-                    use_launch_overrides=False,
-                )
-            except Exception as exc:
-                reason = f"failed to build navigation actions from resolved config: {exc}"
-                print(f"[navigation] {reason}")
-                return report_result_actions(state_dir, run_id, False, reason, shutdown_after=True)
-
-        return [
-            supervisor,
-            wait_start,
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=wait_start,
-                    on_exit=on_wait_start_exit,
-                )
-            ),
-        ]
-
-    return build_navigation_actions(context, config)
+    state_dir = LaunchConfiguration("navigation_state_dir").perform(context).strip()
+    run_id = LaunchConfiguration("navigation_run_id").perform(context).strip()
+    if bool(state_dir) != bool(run_id):
+        raise RuntimeError("navigation_state_dir and navigation_run_id must be provided together")
+    return build_navigation_actions(
+        context,
+        config,
+        state_dir=state_dir or None,
+        run_id=run_id or None,
+    )
 
 
 

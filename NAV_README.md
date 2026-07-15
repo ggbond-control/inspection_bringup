@@ -71,7 +71,16 @@ ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 
 The service returns after the configured startup sequence and readiness checks
 finish. If a module readiness check fails, the service result contains the
-failure reason.
+failure reason. The supervisor remains running after either outcome.
+
+Every later call first stops the currently active navigation worker (if any),
+then starts a new worker using the new parameters. This makes `nav` and
+`manual` mode switching explicit: call the same service again with the desired
+`mode`; no second top-level launch is needed.
+
+Only one startup request may run at a time. While a request is waiting for
+readiness, another call is rejected immediately with
+`navigation startup already in progress`; it is not queued.
 
 The default configuration is:
 
@@ -158,7 +167,6 @@ modules:
 bringup:
   start_mode: service
   start_service: /navigation_bringup/start
-  start_timeout_seconds: 0.0
   result_timeout_seconds: 0.0
   sequence:
     - nav_bridge
@@ -208,18 +216,20 @@ readiness checks.
 
 ## Readiness Wait
 
-When `bringup.start_mode` is `service`, `navigation.launch.py` first starts
-`scripts/navigation_supervisor.py` and waits until the supervisor accepts
-`bringup.start_service`. The supervisor applies matching `SetParameters`
-overrides to `config/navigate.yaml` and writes a resolved runtime YAML. The
-launch file then reads that resolved YAML and starts the configured sequence.
+When `bringup.start_mode` is `service`, `navigation.launch.py` starts a
+persistent `scripts/navigation_supervisor.py` service. For every accepted
+`bringup.start_service` call, the supervisor applies matching `SetParameters`
+overrides, writes an isolated resolved runtime YAML, and starts one worker
+instance of `navigation.launch.py` in immediate mode. The worker starts the
+configured sequence and reports its final readiness result back to the
+supervisor.
 
-The supervisor does not launch navigation modules itself; it only gates startup
-and waits for the final result reported by `navigation.launch.py`.
+Before the next accepted call, the supervisor stops the previous worker and
+its launched modules, then creates a new worker. The top-level service process
+therefore remains available after both successful and failed startup attempts.
 
-`bringup.start_timeout_seconds` controls how long launch waits for a start
-request. `bringup.result_timeout_seconds` controls how long the service waits
-for the final launch result. Values `<= 0` mean wait without a timeout.
+`bringup.result_timeout_seconds` controls how long the service waits for the
+final launch result. Values `<= 0` mean wait without a timeout.
 
 When `bringup.wait_for_readiness` is true, each module starts, waits for that
 module's configured `readiness`, then starts the next module after
