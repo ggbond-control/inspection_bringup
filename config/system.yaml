@@ -22,6 +22,9 @@ mqtt:
   localization_set_parameter_timeout_sec: 60.0
   acoustic_start_service_name: /monitor/acoustic/start
   acoustic_stop_service_name: /monitor/acoustic/stop
+  stand_service_name: /nav_bridge_node/stand
+  lie_service_name: /nav_bridge_node/lie
+  manual_jog_max_duration_ms: 2500
 
 live_stream:
   config_path: ""
