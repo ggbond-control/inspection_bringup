@@ -74,6 +74,11 @@ def generate_launch_description():
             description="Start alarm manager.",
         ),
         DeclareLaunchArgument(
+            "enable_light",
+            default_value="",
+            description="Start light manager.",
+        ),
+        DeclareLaunchArgument(
             "enable_gas",
             default_value="",
             description="Start gas monitor.",
@@ -109,6 +114,9 @@ def launch_setup(context):
     enable_alarm = as_bool_text(
         override_or_config(context, "enable_alarm", config, "modules", "alarm", True)
     )
+    enable_light = as_bool_text(
+        override_or_config(context, "enable_light", config, "modules", "light", True)
+    )
     enable_gas = as_bool_text(
         override_or_config(context, "enable_gas", config, "modules", "gas", True)
     )
@@ -121,6 +129,7 @@ def launch_setup(context):
 
     return [
         include_package_launch("alarm_manager", "alarm_manager.launch.py", enable_alarm),
+        include_package_launch("light_manager", "light_manager.launch.py", enable_light),
         include_package_launch("gas_monitor", "gas_monitor.launch.py", enable_gas),
         include_package_launch(
             "thermal_camera_monitor",

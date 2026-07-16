@@ -2,6 +2,9 @@ repositories:
   src/alarm_manager:
     type: git
     url: https://github.com/ggbond-control/alarm_manager.git
+  src/light_manager:
+    type: git
+    url: https://github.com/ggbond-control/light_manager.git
   src/gas_monitor:
     type: git
     url: https://github.com/ggbond-control/gas_monitor.git

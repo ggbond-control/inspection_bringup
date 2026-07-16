@@ -4,6 +4,7 @@ modules:
   charge: true
   sensors: true
   alarm: true
+  light: true
   gas: true
   thermal: true
   acoustic: true
