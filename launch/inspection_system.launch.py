@@ -380,7 +380,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "odometry_topic",
             default_value="",
-            description="Odometry topic used by dual_coordinate gimbal command.",
+            description="Navigation odometry topic used for current map frame and position.",
         ),
         DeclareLaunchArgument(
             "robot_basic_state_topic",
@@ -556,7 +556,7 @@ def launch_setup(context):
             "/inspection_task_hub/heartbeat/gimbal",
         ),
         "odometry_topic": override_or_config(
-            context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_horizon"
+            context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_multi_maps"
         ),
         "robot_basic_state_topic": override_or_config(
             context,

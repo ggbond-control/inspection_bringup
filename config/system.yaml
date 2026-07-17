@@ -84,7 +84,7 @@ task_hub:
   require_waypoint_validation_success: false
   navigation_heartbeat_topic: "/inspection_task_hub/heartbeat/navigation"
   gimbal_heartbeat_topic: "/inspection_task_hub/heartbeat/gimbal"
-  odometry_topic: "/odometry_horizon"
+  odometry_topic: "/odometry_multi_maps"
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
   heartbeat_timeout_seconds: 3.0
