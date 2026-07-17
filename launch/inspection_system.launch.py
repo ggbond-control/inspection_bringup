@@ -403,6 +403,11 @@ def generate_launch_description():
             description="Robot basic/charge state timeout threshold in seconds.",
         ),
         DeclareLaunchArgument(
+            "manual_mode_ready_timeout_seconds",
+            default_value="",
+            description="Timeout waiting for manual control readiness after navigation mode switch.",
+        ),
+        DeclareLaunchArgument(
             "trigger_service_timeout_seconds",
             default_value="",
             description="Timeout in seconds for stand/lie trigger calls.",
@@ -594,6 +599,18 @@ def launch_setup(context):
                 "task_hub",
                 "robot_state_timeout_seconds",
                 3.0,
+                float,
+            ),
+            value_type=float,
+        ),
+        "manual_mode_ready_timeout_seconds": ParameterValue(
+            override_or_config_typed(
+                context,
+                "manual_mode_ready_timeout_seconds",
+                config,
+                "task_hub",
+                "manual_mode_ready_timeout_seconds",
+                10.0,
                 float,
             ),
             value_type=float,

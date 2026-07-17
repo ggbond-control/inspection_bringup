@@ -89,7 +89,8 @@ task_hub:
   charge_manager_state_topic: "/charge_manager_state"
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
-  trigger_service_timeout_seconds: 10.0
+  trigger_service_timeout_seconds: 30.0
+  manual_mode_ready_timeout_seconds: 60.0
 
 gimbal:
   params_file: ""
