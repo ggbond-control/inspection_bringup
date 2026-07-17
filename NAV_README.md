@@ -192,9 +192,9 @@ nav_bridge:
 livox:
   model: mid360
   readiness:
-    type: nodes
-    nodes:
-      - /livox_lidar_publisher
+    type: topics
+    topics:
+      - /livox/lidar
 
 slam:
   relocal: true
@@ -294,7 +294,7 @@ scripts/wait_for_ready.py
 It has subcommands for the supported readiness checks:
 
 ```bash
-python3 scripts/wait_for_ready.py nodes --name livox --timeout 10.0 /livox_lidar_publisher
+python3 scripts/wait_for_ready.py topics --name livox --timeout 10.0 /livox/lidar
 python3 scripts/wait_for_ready.py topics --name battery --timeout 10.0 /battery/level
 python3 scripts/wait_for_ready.py nav_bridge --topic /battery/level --stand-service /nav_bridge_node/stand
 python3 scripts/wait_for_ready.py localization-init --status-topic /localization_init_status --timeout 0.0 --release-control-on-blocked
@@ -324,9 +324,9 @@ nav_bridge:
 livox:
   model: mid360
   readiness:
-    type: nodes
-    nodes:
-      - /livox_lidar_publisher
+    type: topics
+    topics:
+      - /livox/lidar
 
 slam:
   readiness:

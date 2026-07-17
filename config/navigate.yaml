@@ -36,9 +36,9 @@ nav_bridge:
 livox:
   model: mid360
   readiness:
-    type: nodes
-    nodes:
-      - /livox_lidar_publisher
+    type: topics
+    topics:
+      - /livox/lidar
     timeout_seconds: 10.0
 
 slam:
