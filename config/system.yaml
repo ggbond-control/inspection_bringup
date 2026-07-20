@@ -7,14 +7,14 @@ modules:
   light: true
   gas: true
   thermal: true
-  acoustic: true
+  acoustic: false
   mqtt: true
 
 mqtt:
   sn: x30
-  host: 192.168.2.102
+  host: 192.168.2.107
   port: 1883
-  topic_vendor_prefix: fh
+  topic_vendor_prefix: test
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
   localization_set_parameters_service: /navigation_bringup/start
