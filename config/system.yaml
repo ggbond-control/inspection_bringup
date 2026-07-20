@@ -17,10 +17,11 @@ mqtt:
   topic_vendor_prefix: fh
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
-  localization_set_parameters_service: /rai_inspection_agent/set_parameters
+  localization_set_parameters_service: /navigation_bringup/start
   localization_map_parameter_name: slam.prior_dir
   localization_initial_map_parameter_name: global_planner.initial_map
   localization_set_parameter_timeout_sec: 60.0
+  localization_service_wait_timeout_sec: 5.0
   acoustic_start_service_name: /monitor/acoustic/start
   acoustic_stop_service_name: /monitor/acoustic/stop
   stand_service_name: /nav_bridge_node/stand

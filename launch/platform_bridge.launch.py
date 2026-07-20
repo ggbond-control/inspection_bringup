@@ -278,7 +278,7 @@ def launch_setup(context):
                 config,
                 "mqtt",
                 "localization_set_parameters_service",
-                "/rai_inspection_agent/set_parameters",
+                "/navigation_bringup/start",
             )
         ),
         "localization_map_parameter_name": str(
@@ -294,6 +294,10 @@ def launch_setup(context):
         ),
         "localization_set_parameter_timeout_sec": ParameterValue(
             config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 60.0),
+            value_type=float,
+        ),
+        "localization_service_wait_timeout_sec": ParameterValue(
+            config_value(config, "mqtt", "localization_service_wait_timeout_sec", 5.0),
             value_type=float,
         ),
         "acoustic_start_service_name": str(
