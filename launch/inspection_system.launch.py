@@ -379,7 +379,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "odometry_topic",
-            default_value="",
+            default_value="/odometry_multi_maps",
             description="Navigation odometry topic used for current map frame and position.",
         ),
         DeclareLaunchArgument(
