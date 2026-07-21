@@ -702,6 +702,9 @@ def launch_setup(context):
         "lie_service_name": str(
             config_value(config, "mqtt", "lie_service_name", "/nav_bridge_node/lie")
         ),
+        "soft_estop_service_name": str(
+            config_value(config, "mqtt", "soft_estop_service_name", "/nav_bridge_node/soft_estop")
+        ),
         "manual_jog_max_duration_ms": ParameterValue(
             config_value(config, "mqtt", "manual_jog_max_duration_ms", 2500),
             value_type=int,

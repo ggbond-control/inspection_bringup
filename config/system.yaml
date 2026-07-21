@@ -26,6 +26,7 @@ mqtt:
   acoustic_stop_service_name: /monitor/acoustic/stop
   stand_service_name: /nav_bridge_node/stand
   lie_service_name: /nav_bridge_node/lie
+  soft_estop_service_name: /nav_bridge_node/soft_estop
   manual_jog_max_duration_ms: 2500
 
 live_stream:
