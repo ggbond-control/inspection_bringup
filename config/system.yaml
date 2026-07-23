@@ -76,6 +76,11 @@ live_stream:
 task_hub:
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
+  algorithm_center_base_url: "http://192.168.2.108:8080"
+  algorithm_visible_stream_url: ""
+  algorithm_callback_url: ""
+  algorithm_callback_port: 8081
+  algorithm_http_timeout_seconds: 10.0
   stand_service_name: "/nav_bridge_node/stand"
   lie_service_name: "/nav_bridge_node/lie"
   set_gait_service_name: "/nav_bridge_node/set_gait"

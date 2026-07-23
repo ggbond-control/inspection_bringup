@@ -327,6 +327,11 @@ def generate_launch_description():
             default_value="",
             description="Task hub runtime event log directory.",
         ),
+        DeclareLaunchArgument("algorithm_center_base_url", default_value=""),
+        DeclareLaunchArgument("algorithm_visible_stream_url", default_value=""),
+        DeclareLaunchArgument("algorithm_callback_url", default_value=""),
+        DeclareLaunchArgument("algorithm_callback_port", default_value=""),
+        DeclareLaunchArgument("algorithm_http_timeout_seconds", default_value=""),
         DeclareLaunchArgument(
             "stand_service_name",
             default_value="",
@@ -543,6 +548,25 @@ def launch_setup(context):
         ),
         "capture_action_name": override_or_config(
             context, "capture_action_name", config, "task_hub", "capture_action_name", "capture_media"
+        ),
+        "algorithm_center_base_url": override_or_config(
+            context, "algorithm_center_base_url", config, "task_hub", "algorithm_center_base_url",
+            "http://192.168.2.108:8080"
+        ),
+        "algorithm_visible_stream_url": override_or_config(
+            context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
+        ),
+        "algorithm_callback_url": override_or_config(
+            context, "algorithm_callback_url", config, "task_hub", "algorithm_callback_url",
+            ""
+        ),
+        "algorithm_callback_port": ParameterValue(
+            override_or_config_typed(context, "algorithm_callback_port", config, "task_hub",
+                                      "algorithm_callback_port", 8081, int), value_type=int
+        ),
+        "algorithm_http_timeout_seconds": ParameterValue(
+            override_or_config_typed(context, "algorithm_http_timeout_seconds", config, "task_hub",
+                                      "algorithm_http_timeout_seconds", 10.0, float), value_type=float
         ),
         "navigation_heartbeat_topic": override_or_config(
             context,
