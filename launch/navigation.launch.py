@@ -1,5 +1,4 @@
 import hashlib
-import json
 import os
 import time
 
@@ -59,52 +58,6 @@ def load_config(path):
 
     with open(expanded_path, "r", encoding="utf-8") as config_file:
         return yaml.safe_load(config_file) or {}
-
-
-def active_map_from_index(index_path):
-    """Return the active map directory and initial frame recorded by the map manager."""
-    expanded_path = os.path.abspath(os.path.expanduser(os.path.expandvars(index_path)))
-    try:
-        with open(expanded_path, "r", encoding="utf-8") as index_file:
-            index = json.load(index_file)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"unable to read map index '{expanded_path}': {exc}") from exc
-
-    if not isinstance(index, dict):
-        raise RuntimeError(f"map index '{expanded_path}' must contain an object")
-
-    active_maps = []
-    for key, entry in index.items():
-        if not isinstance(entry, dict) or not bool(entry.get("ifActivate")):
-            continue
-        code = str(entry.get("mapCode") or key).strip()
-        init_frame = str(entry.get("initFrame") or "").strip()
-        if code and init_frame:
-            active_maps.append((code, init_frame))
-
-    if len(active_maps) != 1:
-        raise RuntimeError(
-            f"map index '{expanded_path}' must contain exactly one active map with mapCode and initFrame"
-        )
-
-    code, init_frame = active_maps[0]
-    return {
-        "code": code,
-        "directory": os.path.join(os.path.dirname(expanded_path), code),
-        "init_frame": init_frame,
-    }
-
-
-def active_map_settings(config):
-    if not as_bool(config_value(config, "maps", "sync_active_map", True)):
-        return None
-    index_path = config_value(
-        config,
-        "maps",
-        "index_path",
-        os.environ.get("INSPECTION_MAP_INDEX_PATH", "/home/cat/Workspace/Maps/index.json"),
-    )
-    return active_map_from_index(str(index_path))
 
 
 def write_yaml_atomic(path, data):
@@ -812,42 +765,6 @@ def load_failure_reason(state_dir, run_id, section):
 
 
 def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
-    active_map = active_map_settings(config)
-    if active_map:
-        print(
-            "[navigation] using active map from index: "
-            f"code={active_map['code']} directory={active_map['directory']} "
-            f"initFrame={active_map['init_frame']}"
-        )
-
-    slam_prior_dir = (
-        active_map["directory"]
-        if active_map
-        else override_or_config(
-            context, "slam_prior_dir", config, "slam", "prior_dir", "", use_launch_overrides
-        )
-    )
-    global_initial_map = (
-        active_map["init_frame"]
-        if active_map
-        else override_or_config(
-            context, "global_initial_map", config, "global_planner", "initial_map", "map_000", use_launch_overrides
-        )
-    )
-    global_multi_map_dir = (
-        active_map["directory"]
-        if active_map
-        else override_or_config(
-            context,
-            "global_multi_map_dir",
-            config,
-            "global_planner",
-            "multi_map_dir",
-            slam_prior_dir,
-            use_launch_overrides,
-        )
-    )
-
     delay = override_or_config_typed(
         context,
         "navigation_start_delay_seconds",
@@ -903,7 +820,9 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                     context, "slam_relocal", config, "slam", "relocal", True, use_launch_overrides
                 )
             ),
-            "prior_dir": slam_prior_dir,
+            "prior_dir": override_or_config(
+                context, "slam_prior_dir", config, "slam", "prior_dir", "", use_launch_overrides
+            ),
             "rviz": as_bool_text(
                 override_or_config_bool(
                     context, "slam_rviz", config, "slam", "rviz", False, use_launch_overrides
@@ -986,8 +905,36 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "multi_map_nav.launch.py",
         "true",
         {
-            "multi_map_dir": os.path.expanduser(os.path.expandvars(global_multi_map_dir)),
-            "initial_map": global_initial_map,
+            "multi_map_dir": os.path.expanduser(
+                os.path.expandvars(
+                    override_or_config(
+                        context,
+                        "global_multi_map_dir",
+                        config,
+                        "global_planner",
+                        "multi_map_dir",
+                        override_or_config(
+                            context,
+                            "slam_prior_dir",
+                            config,
+                            "slam",
+                            "prior_dir",
+                            "",
+                            use_launch_overrides,
+                        ),
+                        use_launch_overrides,
+                    )
+                )
+            ),
+            "initial_map": override_or_config(
+                context,
+                "global_initial_map",
+                config,
+                "global_planner",
+                "initial_map",
+                "map_000",
+                use_launch_overrides,
+            ),
             "use_fake_cmdvel": as_bool_text(
                 override_or_config_bool(
                     context,
