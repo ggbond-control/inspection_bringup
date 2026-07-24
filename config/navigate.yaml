@@ -1,10 +1,5 @@
 mode: nav
 
-# Navigation follows the single ifActivate=true entry in this index at startup.
-maps:
-  sync_active_map: true
-  index_path: "/home/cat/Workspace/Maps/index.json"
-
 modules:
   nav_bridge: true
   livox: true
