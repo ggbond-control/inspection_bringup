@@ -334,6 +334,11 @@ def generate_launch_description():
         DeclareLaunchArgument("algorithm_callback_port", default_value=""),
         DeclareLaunchArgument("algorithm_http_timeout_seconds", default_value=""),
         DeclareLaunchArgument(
+            "passive_charge_arrival_battery_reserve_percent",
+            default_value="",
+            description="Battery percentage reserved upon passive-charge arrival (0-99).",
+        ),
+        DeclareLaunchArgument(
             "stand_service_name",
             default_value="",
             description="Trigger service name for stand task.",
@@ -572,6 +577,18 @@ def launch_setup(context):
         "algorithm_http_timeout_seconds": ParameterValue(
             override_or_config_typed(context, "algorithm_http_timeout_seconds", config, "task_hub",
                                       "algorithm_http_timeout_seconds", 10.0, float), value_type=float
+        ),
+        "passive_charge_arrival_battery_reserve_percent": ParameterValue(
+            override_or_config_typed(
+                context,
+                "passive_charge_arrival_battery_reserve_percent",
+                config,
+                "task_hub",
+                "passive_charge_arrival_battery_reserve_percent",
+                10,
+                int,
+            ),
+            value_type=int,
         ),
         "navigation_heartbeat_topic": override_or_config(
             context,
