@@ -121,39 +121,39 @@ def live_stream_params(config):
             value_type=float,
         ),
         "acoustic_overlay_stream_enabled": ParameterValue(
-            as_bool(nested_config_value(config, "live_stream", "acoustic_overlay", "enabled", False)),
+            as_bool(nested_config_value(config, "live_stream", "acoustic", "enabled", False)),
             value_type=bool,
         ),
         "acoustic_overlay_stream_topic": str(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "topic", "/monitor/acoustic/overlay")
+            nested_config_value(config, "live_stream", "acoustic", "topic", "/monitor/acoustic/overlay")
         ),
         "acoustic_overlay_stream_status_topic": str(
             nested_config_value(
                 config,
                 "live_stream",
-                "acoustic_overlay",
+                "acoustic",
                 "status_topic",
                 "/platform/acoustic_overlay_stream/status",
             )
         ),
         "acoustic_overlay_stream_id": str(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "stream_id", "x30_acoustic_overlay")
+            nested_config_value(config, "live_stream", "acoustic", "stream_id", "x30/acoustic")
         ),
         "acoustic_overlay_stream_fps": ParameterValue(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "fps", 10.0),
+            nested_config_value(config, "live_stream", "acoustic", "fps", 10.0),
             value_type=float,
         ),
         "acoustic_overlay_stream_bitrate": str(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "bitrate", "1500k")
+            nested_config_value(config, "live_stream", "acoustic", "bitrate", "1500k")
         ),
         "acoustic_overlay_stream_video_codec": str(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "video_codec", "h264_rkmpp")
+            nested_config_value(config, "live_stream", "acoustic", "video_codec", "h264_rkmpp")
         ),
         "acoustic_overlay_stream_output_format": str(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "output_format", "flv")
+            nested_config_value(config, "live_stream", "acoustic", "output_format", "flv")
         ),
         "acoustic_overlay_stream_restart_interval_sec": ParameterValue(
-            nested_config_value(config, "live_stream", "acoustic_overlay", "restart_interval_sec", 5.0),
+            nested_config_value(config, "live_stream", "acoustic", "restart_interval_sec", 5.0),
             value_type=float,
         ),
         "acoustic_camera_stream_enabled": ParameterValue(

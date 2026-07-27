@@ -7,12 +7,12 @@ modules:
   light: true
   gas: true
   thermal: true
-  acoustic: false
+  acoustic: true
   mqtt: true
 
 mqtt:
   sn: x30
-  host: 192.168.2.107
+  host: 192.168.2.100
   port: 1883
   topic_vendor_prefix: test
   topic_root: device
@@ -35,18 +35,18 @@ live_stream:
   enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 5.0
-  acoustic_overlay:
-    enabled: false
-    stream_id: x30_acoustic_overlay
-    topic: /monitor/acoustic/overlay
-    status_topic: /platform/acoustic_overlay_stream/status
+  acoustic:
+    enabled: true
+    stream_id: x30/acoustic
+    topic: /monitor/acoustic_sensor
+    status_topic: /platform/acoustic_sensor_stream/status
     fps: 10.0
     bitrate: 1500k
     video_codec: h264_rkmpp
     output_format: flv
     restart_interval_sec: 5.0
   acoustic_camera:
-    enabled: true
+    enabled: false
     stream_id: x30_acoustic_camera
     topic: /monitor/acoustic/camera
     status_topic: /platform/acoustic_camera_stream/status
@@ -56,7 +56,7 @@ live_stream:
     output_format: flv
     restart_interval_sec: 5.0
   acoustic_heatmap:
-    enabled: true
+    enabled: false
     stream_id: x30_acoustic_heatmap
     topic: /monitor/acoustic/heatmap
     status_topic: /platform/acoustic_heatmap_stream/status
