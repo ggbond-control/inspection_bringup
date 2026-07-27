@@ -22,6 +22,9 @@ from rclpy.node import Node
 STOPPED = "stopped"
 MANUAL = "manual"
 NAV = "nav"
+MANUAL_BRIDGE_ONLY = "bridge_only"
+MANUAL_LOCALIZED = "localized"
+MANUAL_WITHOUT_MAP_MODULES = ("nav_bridge",)
 MANUAL_MODULES = (
     "nav_bridge",
     "livox",
@@ -135,6 +138,7 @@ class NavigationSupervisor(Node):
         self.module_names = SUPPORTED_MODULES
         self.validate_layer_sequences(self.base_config)
         self.current_state = STOPPED
+        self.manual_profile = None
         self.active_config = None
         self.map_context = {}
         self.in_progress = False
@@ -171,14 +175,18 @@ class NavigationSupervisor(Node):
 
                 target_state = self.target_state(runtime_config)
                 self.validate_layer_sequences(runtime_config)
-                self.validate_map_requirements(runtime_config, target_state, provided_paths)
+                manual_profile = self.validate_map_requirements(
+                    runtime_config, target_state, provided_paths
+                )
                 self.normalize_map_config(runtime_config, provided_paths)
 
                 transition = self.select_transition(runtime_config, target_state, provided_paths)
                 self.get_logger().info(
                     f"navigation request: current={self.current_state} target={target_state} transition={transition}"
                 )
-                success, reason = self.execute_transition(runtime_config, target_state, transition)
+                success, reason = self.execute_transition(
+                    runtime_config, target_state, transition, manual_profile
+                )
                 response.results.append(self.result(success, reason))
         except Exception as exc:
             reason = str(exc)
@@ -217,13 +225,12 @@ class NavigationSupervisor(Node):
         return mode
 
     def validate_map_requirements(self, config, target_state, provided_paths):
-        has_prior = bool(str(self.map_context.get("slam.prior_dir", "")).strip())
         has_initial = bool(str(self.map_context.get("global_planner.initial_map", "")).strip())
+        prior_dir = str(get_by_path(config, "slam.prior_dir", "")).strip()
+        manual_profile = self.manual_profile_for(target_state, prior_dir)
 
-        if self.current_state == STOPPED and not has_prior and "slam.prior_dir" not in provided_paths:
-            raise ValueError(
-                "missing required map information: slam.prior_dir must be provided because no cached map path exists"
-            )
+        if target_state == MANUAL and manual_profile == MANUAL_BRIDGE_ONLY:
+            return manual_profile
 
         if self.current_state == STOPPED and target_state == NAV:
             if not has_initial and "global_planner.initial_map" not in provided_paths:
@@ -232,12 +239,18 @@ class NavigationSupervisor(Node):
                 )
 
         if self.current_state == MANUAL and target_state == NAV:
+            missing = []
+            if self.manual_profile == MANUAL_BRIDGE_ONLY and "slam.prior_dir" not in provided_paths:
+                missing.append("slam.prior_dir")
             if "global_planner.initial_map" not in provided_paths:
+                missing.append("global_planner.initial_map")
+            if missing:
                 raise ValueError(
-                    "manual to nav requires explicit global_planner.initial_map; cached values are not trusted"
+                    "manual bridge-only to nav requires explicit " + ", ".join(missing)
+                    if self.manual_profile == MANUAL_BRIDGE_ONLY
+                    else "manual to nav requires explicit global_planner.initial_map; cached values are not trusted"
                 )
 
-        prior_dir = str(get_by_path(config, "slam.prior_dir", "")).strip()
         if not prior_dir:
             raise ValueError("missing required map information: slam.prior_dir is empty")
         if not os.path.isdir(os.path.expanduser(os.path.expandvars(prior_dir))):
@@ -247,6 +260,13 @@ class NavigationSupervisor(Node):
             initial_map = str(get_by_path(config, "global_planner.initial_map", "")).strip()
             if not initial_map:
                 raise ValueError("missing required map information: global_planner.initial_map is empty")
+        return manual_profile
+
+    @staticmethod
+    def manual_profile_for(target_state, prior_dir):
+        if target_state != MANUAL:
+            return MANUAL_LOCALIZED
+        return MANUAL_LOCALIZED if prior_dir else MANUAL_BRIDGE_ONLY
 
     def normalize_map_config(self, config, provided_paths):
         prior_dir = str(get_by_path(config, "slam.prior_dir", "")).strip()
@@ -257,6 +277,7 @@ class NavigationSupervisor(Node):
             set_by_path(config, "global_planner.multi_map_dir", prior_dir)
 
     def validate_layer_sequences(self, config):
+        self.layer_sequence(config, "manual_without_map")
         manual_sequence = self.layer_sequence(config, "base")
         navigation_sequence = self.layer_sequence(config, "navigation")
         overlap = set(manual_sequence) & set(navigation_sequence)
@@ -267,8 +288,12 @@ class NavigationSupervisor(Node):
             )
 
     def layer_sequence(self, config, layer):
-        key = "manual_sequence" if layer == "base" else "nav_extension_sequence"
-        expected_modules = MANUAL_MODULES if layer == "base" else NAV_EXTENSION_MODULES
+        sequence_info = {
+            "manual_without_map": ("manual_without_map_sequence", MANUAL_WITHOUT_MAP_MODULES),
+            "base": ("manual_sequence", MANUAL_MODULES),
+            "navigation": ("nav_extension_sequence", NAV_EXTENSION_MODULES),
+        }
+        key, expected_modules = sequence_info[layer]
         sequence = get_by_path(config, f"bringup.{key}", [])
         if not isinstance(sequence, list) or not sequence:
             raise ValueError(f"bringup.{key} must be a non-empty list")
@@ -312,7 +337,7 @@ class NavigationSupervisor(Node):
             return "enable_navigation"
         raise RuntimeError(f"unsupported navigation transition: {self.current_state} -> {target_state}")
 
-    def execute_transition(self, config, target_state, transition):
+    def execute_transition(self, config, target_state, transition, manual_profile):
         if transition == "noop":
             return True, f"navigation already running in {target_state} mode"
 
@@ -320,6 +345,7 @@ class NavigationSupervisor(Node):
             self.stop_worker("navigation")
             set_by_path(self.active_config, "mode", MANUAL)
             self.current_state = MANUAL
+            self.manual_profile = MANUAL_LOCALIZED
             return True, "switched navigation mode: nav -> manual; localization remains running"
 
         if transition == "enable_navigation":
@@ -327,17 +353,21 @@ class NavigationSupervisor(Node):
             if not success:
                 self.stop_worker("navigation")
                 return False, f"manual to nav failed: {reason}; localization remains running in manual mode"
-            self.commit_success(config, NAV)
+            self.commit_success(config, NAV, MANUAL_LOCALIZED)
             return True, "switched navigation mode: manual -> nav"
 
         if transition == "full_restart":
             self.stop_all_workers()
             self.current_state = STOPPED
+            self.manual_profile = None
             self.active_config = None
 
-        success, reason = self.start_layer("base", config)
+        base_sequence = "manual_without_map" if manual_profile == MANUAL_BRIDGE_ONLY else "base"
+        success, reason = self.start_layer("base", config, base_sequence)
         if not success:
             self.stop_worker("base")
+            if manual_profile == MANUAL_BRIDGE_ONLY:
+                return False, f"manual bridge-only startup failed: {reason}"
             return False, f"base localization startup failed: {reason}"
 
         if target_state == NAV:
@@ -347,12 +377,17 @@ class NavigationSupervisor(Node):
                 self.stop_worker("base")
                 return False, f"navigation startup failed: {reason}"
 
-        self.commit_success(config, target_state)
+        self.commit_success(config, target_state, manual_profile)
+        if manual_profile == MANUAL_BRIDGE_ONLY:
+            return True, "manual bridge-only started; localization skipped because no slam.prior_dir is available"
         return True, f"navigation started in {target_state} mode"
 
-    def commit_success(self, config, state):
+    def commit_success(self, config, state, manual_profile):
         self.active_config = copy.deepcopy(config)
         self.current_state = state
+        self.manual_profile = manual_profile if state == MANUAL else MANUAL_LOCALIZED
+        if self.manual_profile == MANUAL_BRIDGE_ONLY:
+            return
         for path in ("slam.prior_dir", "global_planner.multi_map_dir", "global_planner.initial_map"):
             value = str(get_by_path(config, path, "")).strip()
             if value:
@@ -370,13 +405,13 @@ class NavigationSupervisor(Node):
         runtime_config["bringup"]["sequence"] = list(sequence)
         return runtime_config
 
-    def start_layer(self, layer, config):
+    def start_layer(self, layer, config, sequence_layer=None):
         run_id = uuid.uuid4().hex
         worker_state_dir = os.path.join(self.state_dir, run_id, layer)
         resolved_config_path = os.path.join(worker_state_dir, "resolved.yaml")
         result_path = os.path.join(worker_state_dir, "result.yaml")
         os.makedirs(worker_state_dir, exist_ok=True)
-        write_yaml_atomic(resolved_config_path, self.layer_config(config, layer))
+        write_yaml_atomic(resolved_config_path, self.layer_config(config, sequence_layer or layer))
 
         process = subprocess.Popen(
             [
@@ -457,12 +492,14 @@ class NavigationSupervisor(Node):
                 self.stop_worker("navigation")
             self.workers["base"] = None
             self.current_state = STOPPED
+            self.manual_profile = None
             self.active_config = None
         elif self.current_state == NAV and not navigation_alive:
             self.workers["navigation"] = None
             if self.active_config is not None:
                 set_by_path(self.active_config, "mode", MANUAL)
             self.current_state = MANUAL
+            self.manual_profile = MANUAL_LOCALIZED
 
     def monitor_workers(self):
         # A worker can exit after startup has reported success. Keep the in-memory

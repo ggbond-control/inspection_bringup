@@ -4,6 +4,8 @@ bringup:
   start_mode: service
   start_service: /navigation_bringup/start
   result_timeout_seconds: 0.0
+  manual_without_map_sequence:
+    - nav_bridge
   manual_sequence:
     - nav_bridge
     - livox

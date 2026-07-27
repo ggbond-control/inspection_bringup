@@ -50,7 +50,7 @@ If `global_planner.multi_map_dir` is omitted, it reuses `slam.prior_dir`.
 
 ```text
 nav     Start the configured navigation stack normally.
-manual  Keep nav_bridge, Livox, and faster_lio localization running; terrain and planners stay off.
+manual  Use nav_bridge for manual cmd_vel forwarding. With map information, it also keeps Livox and faster_lio localization running.
 ```
 
 Manual mode example:
@@ -60,6 +60,17 @@ ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
   {name: 'mode', value: {type: 4, string_value: 'manual'}},
   {name: 'slam.prior_dir', value: {type: 4, string_value: '/home/cat/Workspace/Maps/company2'}}
+]}"
+```
+
+Manual mode without `slam.prior_dir` is also valid. When the supervisor has no
+successful map path cached, it starts only `nav_bridge`; Livox and SLAM are not
+started. This allows manual cmd_vel forwarding before a map is selected:
+
+```bash
+ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
+"{parameters: [
+  {name: 'mode', value: {type: 4, string_value: 'manual'}}
 ]}"
 ```
 
@@ -75,22 +86,55 @@ finish. If a module readiness check fails, the service result contains the
 failure reason. The supervisor remains running after either outcome.
 
 The supervisor keeps its state only while it is running: `stopped`, `manual`,
-or `nav`. `manual` keeps `nav_bridge + livox + slam`; `nav` additionally runs
+or `nav`. Manual has two internal profiles while keeping the same public mode:
+`bridge_only` runs `nav_bridge` only when no map path is available, while
+`localized` runs `nav_bridge + livox + slam`. Nav additionally runs
 `terrain + local_planner + global_planner`.
 
+### 状态转换表
+
+| 当前状态 | 调用目标 | 必填输入 | 执行动作 | 返回结果 |
+| --- | --- | --- | --- | --- |
+| `stopped`，无地图缓存 | `manual` | 无 | 启动 `nav_bridge`，进入 `manual/bridge_only` | 成功；说明定位因无地图被跳过 |
+| `stopped`，有地图缓存或传入 `slam.prior_dir` | `manual` | 有缓存时无；否则有效 `slam.prior_dir` | 启动 `nav_bridge + livox + slam`，进入 `manual/localized` | 成功；定位 ready 后返回 |
+| `stopped` | `nav` | 无缓存时为 `slam.prior_dir` 和 `global_planner.initial_map`；否则可复用缓存 | 启动定位基础层，再启动 terrain 和规划层 | 成功；所有 readiness 完成后返回 |
+| `manual/bridge_only` | `manual`，补传 `slam.prior_dir` | 有效 `slam.prior_dir` | 全量重启为 `manual/localized` | 成功；定位 ready 后返回 |
+| `manual/bridge_only` | `nav` | 显式 `slam.prior_dir` 和 `global_planner.initial_map` | 全量重启定位基础层和导航扩展层 | 成功；全部 readiness 完成后返回 |
+| `manual/localized` | `nav` | 显式 `global_planner.initial_map` | 保留定位，仅启动 terrain 和规划层 | 成功；扩展层 ready 后返回 |
+| `nav` | `manual` | 无 | 停止 terrain 和规划层，保留定位 | 成功；进入 `manual/localized` |
+| 任意运行状态 | 同一 mode，且非 `mode` 参数变化 | 变化的参数 | 全量重启为目标配置 | 成功或失败；失败原因在 service result 中返回 |
+| 任意状态 | `nav` 缺少所需地图输入 | 缺少的参数 | 不启动或不切换 | 失败；service result 说明缺失参数 |
+
+### State Transition Table
+
+| Current state | Requested mode | Required input | Action | Service result |
+| --- | --- | --- | --- | --- |
+| `stopped`, no map cache | `manual` | None | Start `nav_bridge`; enter `manual/bridge_only` | Success; localization is skipped because no map is available |
+| `stopped`, cached map or supplied `slam.prior_dir` | `manual` | None when cached; otherwise valid `slam.prior_dir` | Start `nav_bridge + livox + slam`; enter `manual/localized` | Success after localization is ready |
+| `stopped` | `nav` | `slam.prior_dir` and `global_planner.initial_map` when uncached; otherwise reuse the successful cache | Start localization, then terrain and planners | Success after all readiness checks finish |
+| `manual/bridge_only` | `manual` with a supplied map path | Valid `slam.prior_dir` | Fully restart into `manual/localized` | Success after localization is ready |
+| `manual/bridge_only` | `nav` | Explicit `slam.prior_dir` and `global_planner.initial_map` | Fully restart localization and navigation extensions | Success after all readiness checks finish |
+| `manual/localized` | `nav` | Explicit `global_planner.initial_map` | Keep localization; start terrain and planners only | Success after extension readiness checks finish |
+| `nav` | `manual` | None | Stop terrain and planners; retain localization | Success; enter `manual/localized` |
+| Any running state | Same mode with a changed non-`mode` parameter | Changed parameter | Fully restart with the requested configuration | Success or failure; reason is returned in the service result |
+| Any state | `nav` without required map input | Missing parameter | Do not start or switch | Failure; service result names the missing input |
+
 Pure mode switching preserves localization. `nav -> manual` stops only terrain
-and planners. `manual -> nav` starts only terrain and planners, but each such
-request must explicitly contain `global_planner.initial_map`. The value may be
-the same as the previous one.
+and planners. `localized manual -> nav` starts only terrain and planners, but
+each such request must explicitly contain `global_planner.initial_map`. A
+`bridge_only manual -> nav` request must explicitly contain both
+`slam.prior_dir` and `global_planner.initial_map`, and uses a full restart to
+start localization before navigation.
 
 An explicit non-mode parameter whose value differs from the active runtime
 configuration triggers a full restart. Otherwise a same-mode request succeeds
 without restarting modules.
 
-When no map path is cached in the current supervisor process,
-`slam.prior_dir` is required for the first startup. A first startup directly to
-`nav` also requires `global_planner.initial_map`. Missing required map input is
-returned as a failed result from `/navigation_bringup/start`.
+When no map path is cached in the current supervisor process, `slam.prior_dir`
+is optional only for a bridge-only manual startup. A first startup directly to
+`nav` requires both `slam.prior_dir` and `global_planner.initial_map`. Missing
+required map input is returned as a failed result from
+`/navigation_bringup/start`.
 
 Only one startup request may run at a time. While a request is waiting for
 readiness, another call is rejected immediately with
@@ -170,7 +214,7 @@ from `map_*.yaml` under `multi_map_dir`.
 
 ## Configuration Layout
 
-`config/navigate.yaml` is split by module. The two sequences are the only YAML
+`config/navigate.yaml` is split by module. The three sequences are the only YAML
 source of truth for which modules start:
 
 ```yaml
@@ -178,6 +222,8 @@ bringup:
   start_mode: service
   start_service: /navigation_bringup/start
   result_timeout_seconds: 0.0
+  manual_without_map_sequence:
+    - nav_bridge
   manual_sequence:
     - nav_bridge
     - livox
@@ -220,12 +266,17 @@ slam:
     release_control_timeout_seconds: 5.0
 ```
 
-`bringup.manual_sequence` controls the manual/base localization layer, while
+`bringup.manual_without_map_sequence` controls bridge-only manual startup when
+no map path is available. `bringup.manual_sequence` controls localized manual
+startup, while
 `bringup.nav_extension_sequence` controls the modules added only in nav mode.
-Nav mode runs the two sequences in that order. The sequences must be non-empty,
-contain known module names, and not overlap. `bringup` also controls launch
-timing and readiness wait behavior. Each module section contains only that
-module's launch arguments and readiness checks.
+Nav mode runs the localized manual and extension sequences in that order. The
+sequences must be non-empty and contain exactly their intended modules:
+`manual_without_map_sequence` is `nav_bridge`, `manual_sequence` is
+`nav_bridge + livox + slam`, and `nav_extension_sequence` is terrain plus both
+planners. `bringup` also controls launch timing and readiness wait behavior.
+Each module section contains only that module's launch arguments and readiness
+checks.
 
 ## Readiness Wait
 
@@ -258,10 +309,12 @@ module's configured `readiness`, then starts the next module after
 Set `bringup.start_mode: immediate` to use the older behavior where launch
 starts the sequence immediately without waiting for the service.
 
-The mode-specific module order comes from the two sequences:
+The mode-specific module order comes from the three sequences:
 
 ```yaml
 bringup:
+  manual_without_map_sequence:
+    - nav_bridge
   manual_sequence:
     - nav_bridge
     - livox
@@ -442,7 +495,7 @@ The old `x30-company2` commands map to the new launch like this:
 
 ```text
 livox   -> manual_sequence + livox.readiness
-nav_bridge -> manual_sequence + nav_bridge.readiness
+nav_bridge -> manual_without_map_sequence or manual_sequence + nav_bridge.readiness
 slam    -> manual_sequence + slam.*
 terrain -> nav_extension_sequence + terrain.*
 local   -> nav_extension_sequence + local_planner.*
