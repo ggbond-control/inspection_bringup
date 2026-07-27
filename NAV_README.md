@@ -50,7 +50,7 @@ If `global_planner.multi_map_dir` is omitted, it reuses `slam.prior_dir`.
 
 ```text
 nav     Start the configured navigation stack normally.
-manual  Start only nav_bridge for cmd_vel forwarding; all sensors and navigation algorithms stay off.
+manual  Keep nav_bridge, Livox, and faster_lio localization running; terrain and planners stay off.
 ```
 
 Manual mode example:
@@ -58,7 +58,8 @@ Manual mode example:
 ```bash
 ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
-  {name: 'mode', value: {type: 4, string_value: 'manual'}}
+  {name: 'mode', value: {type: 4, string_value: 'manual'}},
+  {name: 'slam.prior_dir', value: {type: 4, string_value: '/home/cat/Workspace/Maps/company2'}}
 ]}"
 ```
 
@@ -73,10 +74,23 @@ The service returns after the configured startup sequence and readiness checks
 finish. If a module readiness check fails, the service result contains the
 failure reason. The supervisor remains running after either outcome.
 
-Every later call first stops the currently active navigation worker (if any),
-then starts a new worker using the new parameters. This makes `nav` and
-`manual` mode switching explicit: call the same service again with the desired
-`mode`; no second top-level launch is needed.
+The supervisor keeps its state only while it is running: `stopped`, `manual`,
+or `nav`. `manual` keeps `nav_bridge + livox + slam`; `nav` additionally runs
+`terrain + local_planner + global_planner`.
+
+Pure mode switching preserves localization. `nav -> manual` stops only terrain
+and planners. `manual -> nav` starts only terrain and planners, but each such
+request must explicitly contain `global_planner.initial_map`. The value may be
+the same as the previous one.
+
+An explicit non-mode parameter whose value differs from the active runtime
+configuration triggers a full restart. Otherwise a same-mode request succeeds
+without restarting modules.
+
+When no map path is cached in the current supervisor process,
+`slam.prior_dir` is required for the first startup. A first startup directly to
+`nav` also requires `global_planner.initial_map`. Missing required map input is
+returned as a failed result from `/navigation_bringup/start`.
 
 Only one startup request may run at a time. While a request is waiting for
 readiness, another call is rejected immediately with
@@ -124,6 +138,9 @@ global_planner:
 
 `global_planner.multi_map_dir` can be omitted and will reuse
 `slam.prior_dir`.
+When a service request explicitly changes `slam.prior_dir` but omits
+`global_planner.multi_map_dir`, the planner directory is updated to the same
+path as well.
 
 ## Multi-Map Data
 
@@ -153,25 +170,19 @@ from `map_*.yaml` under `multi_map_dir`.
 
 ## Configuration Layout
 
-`config/navigate.yaml` is split by module:
+`config/navigate.yaml` is split by module. The two sequences are the only YAML
+source of truth for which modules start:
 
 ```yaml
-modules:
-  nav_bridge: true
-  livox: true
-  slam: true
-  terrain: true
-  local_planner: true
-  global_planner: true
-
 bringup:
   start_mode: service
   start_service: /navigation_bringup/start
   result_timeout_seconds: 0.0
-  sequence:
+  manual_sequence:
     - nav_bridge
     - livox
     - slam
+  nav_extension_sequence:
     - terrain
     - local_planner
     - global_planner
@@ -203,30 +214,39 @@ slam:
     type: localization_init
     status_topic: /localization_init_status
     timeout_seconds: 0.0
-    blocked_is_failure: false
+    blocked_is_failure: true
     release_control_on_blocked: true
     release_control_service: /nav_bridge_node/release_control
     release_control_timeout_seconds: 5.0
 ```
 
-`modules` controls whether each module is launched. `bringup.sequence` controls
-the launch order. `bringup` also controls the launch timing and readiness wait
-behavior. Each module section contains only that module's launch arguments and
-readiness checks.
+`bringup.manual_sequence` controls the manual/base localization layer, while
+`bringup.nav_extension_sequence` controls the modules added only in nav mode.
+Nav mode runs the two sequences in that order. The sequences must be non-empty,
+contain known module names, and not overlap. `bringup` also controls launch
+timing and readiness wait behavior. Each module section contains only that
+module's launch arguments and readiness checks.
 
 ## Readiness Wait
 
 When `bringup.start_mode` is `service`, `navigation.launch.py` starts a
 persistent `scripts/navigation_supervisor.py` service. For every accepted
 `bringup.start_service` call, the supervisor applies matching `SetParameters`
-overrides, writes an isolated resolved runtime YAML, and starts one worker
-instance of `navigation.launch.py` in immediate mode. The worker starts the
-configured sequence and reports its final readiness result back to the
-supervisor.
+overrides and uses two independently managed immediate-mode workers: the base
+localization layer (`nav_bridge`, Livox, SLAM) and the navigation extension
+layer (terrain and planners). Each worker reports its final readiness result
+back to the supervisor.
 
-Before the next accepted call, the supervisor stops the previous worker and
-its launched modules, then creates a new worker. The top-level service process
-therefore remains available after both successful and failed startup attempts.
+This separation allows mode changes without restarting localization. A full
+restart is used only when an explicitly supplied non-mode parameter differs
+from the active configuration. The top-level service process remains available
+after both successful and failed attempts.
+
+The supervisor also checks both worker processes once per second. If the base
+localization worker exits, it stops the navigation extension and changes its
+state to `stopped`; if only the extension worker exits, it changes its state to
+`manual`. This detects worker-launch failures after startup, but it is not a
+replacement for per-module runtime health interfaces.
 
 `bringup.result_timeout_seconds` controls how long the service waits for the
 final launch result. Values `<= 0` mean wait without a timeout.
@@ -238,20 +258,22 @@ module's configured `readiness`, then starts the next module after
 Set `bringup.start_mode: immediate` to use the older behavior where launch
 starts the sequence immediately without waiting for the service.
 
-The module order comes from `bringup.sequence`:
+The mode-specific module order comes from the two sequences:
 
 ```yaml
 bringup:
-  sequence:
+  manual_sequence:
     - nav_bridge
     - livox
     - slam
+  nav_extension_sequence:
     - terrain
     - local_planner
     - global_planner
 ```
 
-Unknown or duplicate sequence entries are skipped with a console message.
+Invalid sequence entries are rejected by `/navigation_bringup/start` with a
+clear failure reason instead of starting a partial stack.
 
 `nav_bridge` uses a custom readiness check before the rest of the stack starts:
 
@@ -378,7 +400,9 @@ bringup:
 
 ## Command-Line Overrides
 
-Launch arguments override `config/navigate.yaml` for one run.
+These launch arguments apply only when `bringup.start_mode: immediate`. The
+default service mode starts only the supervisor; pass configuration overrides
+to `/navigation_bringup/start` instead.
 
 Examples:
 
@@ -392,11 +416,12 @@ ros2 launch inspection_bringup navigation.launch.py \
   global_multi_map_dir:=~/Workspace/algor_ws/src/gridmapper/data/Output/multi_maps
 ```
 
-Start only localization and terrain:
+Start base localization and terrain without planners:
 
 ```bash
 ros2 launch inspection_bringup navigation.launch.py \
-  enable_livox:=false \
+  enable_nav_bridge:=true \
+  enable_livox:=true \
   enable_slam:=true \
   enable_terrain:=true \
   enable_local_planner:=false \
@@ -416,12 +441,12 @@ ros2 launch inspection_bringup navigation.launch.py \
 The old `x30-company2` commands map to the new launch like this:
 
 ```text
-livox   -> modules.livox + livox.readiness
-nav_bridge -> modules.nav_bridge + nav_bridge.readiness
-slam    -> modules.slam + slam.*
-terrain -> modules.terrain + terrain.*
-local   -> modules.local_planner + local_planner.*
-global  -> modules.global_planner + global_planner.*
+livox   -> manual_sequence + livox.readiness
+nav_bridge -> manual_sequence + nav_bridge.readiness
+slam    -> manual_sequence + slam.*
+terrain -> nav_extension_sequence + terrain.*
+local   -> nav_extension_sequence + local_planner.*
+global  -> nav_extension_sequence + global_planner.*
 ```
 
 The old screen sessions are no longer used. Process lifecycle is managed by ROS

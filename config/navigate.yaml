@@ -1,21 +1,14 @@
 mode: nav
 
-modules:
-  nav_bridge: true
-  livox: true
-  slam: true
-  terrain: true
-  local_planner: true
-  global_planner: true
-
 bringup:
   start_mode: service
   start_service: /navigation_bringup/start
   result_timeout_seconds: 0.0
-  sequence:
+  manual_sequence:
     - nav_bridge
     - livox
     - slam
+  nav_extension_sequence:
     - terrain
     - local_planner
     - global_planner

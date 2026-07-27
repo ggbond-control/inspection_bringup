@@ -155,12 +155,25 @@ def config_list(config, section, key, fallback):
 
 
 def config_sequence(config):
-    return config_list(
-        config,
-        "bringup",
-        "sequence",
-        ["nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"],
-    )
+    bringup = config.get("bringup", {})
+    if not isinstance(bringup, dict):
+        bringup = {}
+    if bringup.get("sequence") not in (None, ""):
+        return config_list(config, "bringup", "sequence", [])
+
+    manual_sequence = config_list(config, "bringup", "manual_sequence", [])
+    nav_extension_sequence = config_list(config, "bringup", "nav_extension_sequence", [])
+    if manual_sequence or nav_extension_sequence:
+        return manual_sequence + nav_extension_sequence
+    return ["nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"]
+
+
+def sequence_module_enabled(context, override_name, sequence, module_name, use_launch_overrides=True):
+    if use_launch_overrides:
+        override = LaunchConfiguration(override_name).perform(context)
+        if override != "":
+            return as_bool(override)
+    return module_name in sequence
 
 
 def module_config(config, section):
@@ -765,6 +778,7 @@ def load_failure_reason(state_dir, run_id, section):
 
 
 def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
+    sequence = config_sequence(config)
     delay = override_or_config_typed(
         context,
         "navigation_start_delay_seconds",
@@ -793,8 +807,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "nav_bridge.launch.py",
         "true",
     )
-    nav_bridge_enabled = override_or_config_bool(
-        context, "enable_nav_bridge", config, "modules", "nav_bridge", True, use_launch_overrides
+    nav_bridge_enabled = sequence_module_enabled(
+        context, "enable_nav_bridge", sequence, "nav_bridge", use_launch_overrides
     )
 
     livox_launch = include_package_launch(
@@ -807,8 +821,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
         },
     )
-    livox_enabled = override_or_config_bool(
-        context, "enable_livox", config, "modules", "livox", True, use_launch_overrides
+    livox_enabled = sequence_module_enabled(
+        context, "enable_livox", sequence, "livox", use_launch_overrides
     )
     slam_launch = include_package_launch(
         "faster_lio",
@@ -845,8 +859,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
         },
     )
-    slam_enabled = override_or_config_bool(
-        context, "enable_slam", config, "modules", "slam", True, use_launch_overrides
+    slam_enabled = sequence_module_enabled(
+        context, "enable_slam", sequence, "slam", use_launch_overrides
     )
     terrain_launch = include_package_launch(
         "gridmapper",
@@ -865,8 +879,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
         },
     )
-    terrain_enabled = override_or_config_bool(
-        context, "enable_terrain", config, "modules", "terrain", True, use_launch_overrides
+    terrain_enabled = sequence_module_enabled(
+        context, "enable_terrain", sequence, "terrain", use_launch_overrides
     )
     local_planner_launch = include_package_launch(
         "local_planner",
@@ -897,8 +911,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
         },
     )
-    local_planner_enabled = override_or_config_bool(
-        context, "enable_local_planner", config, "modules", "local_planner", True, use_launch_overrides
+    local_planner_enabled = sequence_module_enabled(
+        context, "enable_local_planner", sequence, "local_planner", use_launch_overrides
     )
     global_planner_launch = include_package_launch(
         "multi_map_nav",
@@ -981,8 +995,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
         },
     )
-    global_planner_enabled = override_or_config_bool(
-        context, "enable_global_planner", config, "modules", "global_planner", True, use_launch_overrides
+    global_planner_enabled = sequence_module_enabled(
+        context, "enable_global_planner", sequence, "global_planner", use_launch_overrides
     )
 
     def detail_path(section):
@@ -1085,7 +1099,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
 
     ordered_navigation_groups = []
     seen_group_names = set()
-    for name in config_sequence(config):
+    for name in sequence:
         if name in seen_group_names:
             print(f"[navigation] duplicate sequence entry skipped: {name}")
             continue
