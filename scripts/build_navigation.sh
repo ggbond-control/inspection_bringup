@@ -45,6 +45,7 @@ Build behavior:
   Clones missing repositories with git clone --depth 1.
   Existing repositories are skipped without pull, checkout, or reset.
   Builds GTSAM and Livox-SDK2 into driver_ws/third_party/install.
+  Builds only ROS packages found in repositories managed by the .repos file.
   Does not run apt, sudo, sysctl, or any system-wide install step.
 EOF
 }
@@ -174,6 +175,109 @@ if [[ ! -f "${REPOS_FILE}" ]]; then
 fi
 
 mkdir -p "${ALGOR_WS}/src" "${DRIVER_WS}/src" "${THIRD_PARTY_DIR}/src"
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "${command_name}" >/dev/null 2>&1; then
+    echo "error: required command not found: ${command_name}" >&2
+    exit 2
+  fi
+}
+
+validate_python_yaml() {
+  if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    echo "error: Python module PyYAML is required to read ${REPOS_FILE}" >&2
+    exit 2
+  fi
+}
+
+prepare_ros_environment() {
+  unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH CMAKE_LIBRARY_PATH CMAKE_INCLUDE_PATH
+  unset COLCON_PREFIX_PATH COLCON_CURRENT_PREFIX ROS_PACKAGE_PATH PYTHONPATH
+  unset ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
+}
+
+preflight_build_environment() {
+  require_command git
+  require_command python3
+  validate_python_yaml
+  if [[ "${FETCH_ONLY}" -eq 1 ]]; then
+    return
+  fi
+  if [[ "${SKIP_THIRD_PARTY}" -eq 0 || "${THIRD_PARTY_ONLY}" -eq 1 || \
+        "${SKIP_DRIVER_BUILD}" -eq 0 || "${SKIP_ALGOR_BUILD}" -eq 0 ]]; then
+    require_command cmake
+  fi
+  if [[ "${THIRD_PARTY_ONLY}" -eq 0 && \
+        ( "${SKIP_DRIVER_BUILD}" -eq 0 || "${SKIP_ALGOR_BUILD}" -eq 0 ) ]]; then
+    require_command colcon
+  fi
+  if [[ "${THIRD_PARTY_ONLY}" -eq 0 && "${SKIP_ALGOR_BUILD}" -eq 0 && \
+        -z "${INTERFACE_UNDERLAY}" ]]; then
+    echo "error: --interface-underlay is required when building algor_ws" >&2
+    exit 2
+  fi
+}
+
+managed_workspace_packages() {
+  local workspace_name="$1"
+  local workspace_src="$2"
+
+  python3 - "${REPOS_FILE}" "${workspace_name}" "${workspace_src}" <<'PY'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+import yaml
+
+repos_file = Path(sys.argv[1])
+workspace_name = sys.argv[2]
+source_root = Path(sys.argv[3])
+prefix = f"{workspace_name}/src/"
+
+with repos_file.open("r", encoding="utf-8") as stream:
+    repositories = (yaml.safe_load(stream) or {}).get("repositories", {})
+
+repo_paths = [
+    source_root / repo_path[len(prefix):]
+    for repo_path in repositories
+    if repo_path.startswith(prefix)
+]
+
+if not repo_paths:
+    raise SystemExit(f"no managed repositories for {workspace_name} in {repos_file}")
+
+missing_repositories = [str(path) for path in repo_paths if not path.is_dir()]
+if missing_repositories:
+    raise SystemExit(
+        f"{workspace_name} is missing managed repositories: {', '.join(missing_repositories)}"
+    )
+
+packages = set()
+
+for repo_path in repo_paths:
+    for manifest in repo_path.rglob("package.xml"):
+        try:
+            root = ET.parse(manifest).getroot()
+            name = root.findtext("name")
+        except ET.ParseError as exc:
+            raise SystemExit(f"invalid package manifest {manifest}: {exc}")
+        if name:
+            packages.add(name.strip())
+
+if not packages:
+    raise SystemExit(f"no ROS package manifests found in managed {workspace_name} repositories")
+
+print("\n".join(sorted(packages)))
+PY
+}
+
+validate_interface_underlay() {
+  if ! ros2 pkg prefix inspection_interfaces >/dev/null 2>&1; then
+    echo "error: inspection_interfaces was not found after sourcing ${INTERFACE_UNDERLAY}" >&2
+    exit 2
+  fi
+}
 
 fetch_missing_repositories() {
   python3 - "$WORKSPACE_ROOT" "$ALGOR_WS" "$DRIVER_WS" "$REPOS_FILE" <<'PY'
@@ -315,7 +419,7 @@ def update_status(repo_path):
     return f"upstream={upstream} {state}"
 
 
-for rel_path in repositories:
+for rel_path, spec in repositories.items():
     abs_path = resolve_repo_path(rel_path)
 
     if not os.path.exists(abs_path):
@@ -331,6 +435,16 @@ for rel_path in repositories:
         branch = f"detached@{short_sha}" if short_sha else "unknown"
 
     parts = [branch]
+    expected_url = str(spec.get("url", ""))
+    actual_url = git_output(abs_path, ["remote", "get-url", "origin"])
+    if actual_url and expected_url and actual_url != expected_url:
+        parts.append(f"remote-mismatch={actual_url}")
+
+    expected_version = str(spec.get("version", ""))
+    if expected_version:
+        exact_tag = git_output(abs_path, ["describe", "--tags", "--exact-match", "HEAD"])
+        if branch != expected_version and exact_tag != expected_version:
+            parts.append(f"expected={expected_version}")
     if git_output(abs_path, ["status", "--porcelain"]):
         parts.append("dirty")
     if check_updates:
@@ -359,6 +473,11 @@ source_required() {
   source_if_exists "${setup_file}"
 }
 
+path_list_to_cmake_list() {
+  local path_list="$1"
+  printf '%s' "${path_list//:/;}"
+}
+
 use_third_party_prefix() {
   export CMAKE_PREFIX_PATH="${THIRD_PARTY_PREFIX}:${CMAKE_PREFIX_PATH:-}"
   export CMAKE_LIBRARY_PATH="${THIRD_PARTY_PREFIX}/lib:${THIRD_PARTY_PREFIX}/lib64:${CMAKE_LIBRARY_PATH:-}"
@@ -368,11 +487,15 @@ use_third_party_prefix() {
 }
 
 cmake_prefix_arg() {
-  local value="${THIRD_PARTY_PREFIX}"
-  if [[ -n "${CMAKE_PREFIX_PATH:-}" ]]; then
-    value="${value};${CMAKE_PREFIX_PATH}"
-  fi
-  echo "${value}"
+  path_list_to_cmake_list "${CMAKE_PREFIX_PATH:-${THIRD_PARTY_PREFIX}}"
+}
+
+cmake_library_path_arg() {
+  path_list_to_cmake_list "${CMAKE_LIBRARY_PATH:-${THIRD_PARTY_PREFIX}/lib:${THIRD_PARTY_PREFIX}/lib64}"
+}
+
+cmake_include_path_arg() {
+  path_list_to_cmake_list "${CMAKE_INCLUDE_PATH:-${THIRD_PARTY_PREFIX}/include}"
 }
 
 third_party_rpath_arg() {
@@ -406,6 +529,7 @@ build_third_party() {
     "${THIRD_PARTY_DIR}/src/gtsam" \
     "${THIRD_PARTY_DIR}/build/gtsam" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_INSTALL_PREFIX="${THIRD_PARTY_PREFIX}" \
     -DGTSAM_USE_SYSTEM_EIGEN=ON \
     -DGTSAM_BUILD_TESTS=OFF \
@@ -417,6 +541,7 @@ build_third_party() {
     "${THIRD_PARTY_DIR}/src/livox_sdk2" \
     "${THIRD_PARTY_DIR}/build/livox_sdk2" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_INSTALL_PREFIX="${THIRD_PARTY_PREFIX}"
 }
 
@@ -444,7 +569,10 @@ EOF
 }
 
 if [[ "${BUILD_ONLY}" -eq 0 ]]; then
+  preflight_build_environment
   fetch_missing_repositories
+else
+  preflight_build_environment
 fi
 
 if [[ "${CHECK_BRANCHES}" -eq 1 ]]; then
@@ -456,6 +584,7 @@ if [[ "${FETCH_ONLY}" -eq 1 ]]; then
   exit 0
 fi
 
+prepare_ros_environment
 source_required /opt/ros/jazzy/setup.bash "ROS 2 Jazzy"
 
 if [[ "${SKIP_THIRD_PARTY}" -eq 0 ]]; then
@@ -471,19 +600,22 @@ if [[ "${THIRD_PARTY_ONLY}" -eq 1 ]]; then
 fi
 
 if [[ "${SKIP_DRIVER_BUILD}" -eq 0 ]]; then
-  echo "[build] driver_ws packages"
+  mapfile -t DRIVER_PACKAGES < <(managed_workspace_packages driver_ws "${DRIVER_WS}/src")
+  echo "[build] managed driver_ws packages: ${DRIVER_PACKAGES[*]}"
   cd "${DRIVER_WS}"
-  MAKEFLAGS="-j${BUILD_JOBS}" colcon build \
-    --packages-select control_input_msgs ndt_omp livox_ros_driver2 \
+  CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build \
+    --packages-select "${DRIVER_PACKAGES[@]}" \
     --symlink-install \
     --parallel-workers "${BUILD_JOBS}" \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
       --no-warn-unused-cli \
       -DCMAKE_PREFIX_PATH="$(cmake_prefix_arg)" \
-      -DCMAKE_LIBRARY_PATH="${THIRD_PARTY_PREFIX}/lib;${THIRD_PARTY_PREFIX}/lib64" \
-      -DCMAKE_INCLUDE_PATH="${THIRD_PARTY_PREFIX}/include" \
+      -DCMAKE_LIBRARY_PATH="$(cmake_library_path_arg)" \
+      -DCMAKE_INCLUDE_PATH="$(cmake_include_path_arg)" \
       -DCMAKE_BUILD_RPATH="$(third_party_rpath_arg)" \
       -DCMAKE_INSTALL_RPATH="$(third_party_rpath_arg)" \
       -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
@@ -491,26 +623,27 @@ if [[ "${SKIP_DRIVER_BUILD}" -eq 0 ]]; then
       -DLIVOX_LIDAR_SDK_INCLUDE_DIR="${THIRD_PARTY_PREFIX}/include"
 fi
 
-source_required "${DRIVER_WS}/install/setup.bash" "driver_ws"
-
-if [[ -n "${INTERFACE_UNDERLAY}" ]]; then
-  source_required "${INTERFACE_UNDERLAY}" "inspection_interfaces underlay"
-fi
-
 if [[ "${SKIP_ALGOR_BUILD}" -eq 0 ]]; then
-  echo "[build] algor_ws packages"
+  source_required "${DRIVER_WS}/install/setup.bash" "driver_ws"
+  source_required "${INTERFACE_UNDERLAY}" "inspection_interfaces underlay"
+  validate_interface_underlay
+  mapfile -t ALGOR_PACKAGES < <(managed_workspace_packages algor_ws "${ALGOR_WS}/src")
+
+  echo "[build] managed algor_ws packages: ${ALGOR_PACKAGES[*]}"
   cd "${ALGOR_WS}"
-  MAKEFLAGS="-j${BUILD_JOBS}" colcon build \
-    --packages-select nav_bridge faster_lio gridmapper local_planner multi_map_nav inspection_bringup \
+  CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build \
+    --packages-select "${ALGOR_PACKAGES[@]}" \
     --symlink-install \
     --parallel-workers "${BUILD_JOBS}" \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
       --no-warn-unused-cli \
       -DCMAKE_PREFIX_PATH="$(cmake_prefix_arg)" \
-      -DCMAKE_LIBRARY_PATH="${THIRD_PARTY_PREFIX}/lib;${THIRD_PARTY_PREFIX}/lib64" \
-      -DCMAKE_INCLUDE_PATH="${THIRD_PARTY_PREFIX}/include" \
+      -DCMAKE_LIBRARY_PATH="$(cmake_library_path_arg)" \
+      -DCMAKE_INCLUDE_PATH="$(cmake_include_path_arg)" \
       -DCMAKE_BUILD_RPATH="$(third_party_rpath_arg)" \
       -DCMAKE_INSTALL_RPATH="$(third_party_rpath_arg)" \
       -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \

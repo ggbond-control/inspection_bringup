@@ -24,11 +24,15 @@ or building:
   driver_ws/
   task_ws/
     src/inspection_bringup
+    install/  # Existing inspection_interfaces and inspection_bringup overlays
 ```
 
 Use `--workspace-root PATH` to place both workspaces under a different root, or
 use `--algor-ws PATH` / `--driver-ws PATH` when the two workspaces should not
-share the same parent.
+share the same parent. `inspection_bringup` may live in `task_ws`, `algor_ws`,
+or another workspace. Its location does not affect the deployment helper: the
+helper never builds `inspection_bringup` and only builds packages from
+`config/navigation_deps.repos`.
 
 Install system packages before running the helper. The exact apt source is
 environment-specific, but the navigation stack expects these families to be
@@ -55,7 +59,7 @@ ros-jazzy-rviz-2d-overlay-msgs
 existing underlay that provides it when building `algor_ws`:
 
 ```bash
-src/inspection_bringup/scripts/build_navigation.sh \
+task_ws/src/inspection_bringup/scripts/build_navigation.sh \
   --interface-underlay ~/Workspace/task_ws/install/setup.bash
 ```
 
@@ -65,9 +69,12 @@ Managed repositories are listed in:
 config/navigation_deps.repos
 ```
 
-Missing repositories are cloned with `git clone --depth 1`. Existing
-repositories are skipped; the helper does not pull, checkout, reset, or overwrite
-local changes.
+Missing repositories are cloned with `git clone --depth 1`. Navigation ROS
+repositories are pinned to their `jazzy` branches; GTSAM remains pinned to the
+`4.2.0` tag because it is not a ROS Jazzy repository. Existing repositories are
+skipped; the helper does not pull, checkout, reset, or overwrite local changes.
+It reports an existing repository whose origin or checked-out branch/tag does
+not match the manifest.
 
 GTSAM and Livox-SDK2 are built locally into:
 
@@ -81,26 +88,48 @@ The helper passes this prefix to CMake and sets package RPATHs to
 the local shared libraries without `sudo make install`. It also prints an
 `LD_LIBRARY_PATH` fallback for ad-hoc tools or manually built binaries.
 
+Before building, the helper clears inherited ROS overlay variables and sources
+only ROS Jazzy, then `driver_ws`, and the supplied `inspection_interfaces`
+underlay before building `algor_ws`. This prevents old workspaces from
+accidentally satisfying dependencies. It also converts Linux colon-separated
+prefix paths to CMake's semicolon-separated list format before passing `-D`
+CMake options. It discovers package manifests only inside repositories listed
+in `config/navigation_deps.repos`, so unrelated packages in either workspace,
+including `inspection_bringup`, are not built.
+
+Every ROS package contained in the managed repositories receives these CMake
+settings:
+
+```text
+-Wno-dev
+-DCMAKE_BUILD_TYPE=Release
+-DCMAKE_EXPORT_COMPILE_COMMANDS=1
+--symlink-install
+```
+
+GTSAM and Livox-SDK2 remain native CMake projects and receive the equivalent
+Release and compile-command options.
+
 Useful commands:
 
 ```bash
-# Clone missing repositories, build third-party libraries, driver_ws, and algor_ws.
-src/inspection_bringup/scripts/build_navigation.sh \
+# Clone missing repositories, then build managed third-party, driver, and algor packages.
+task_ws/src/inspection_bringup/scripts/build_navigation.sh \
   --interface-underlay ~/Workspace/task_ws/install/setup.bash
 
 # Use a different deployment root.
-src/inspection_bringup/scripts/build_navigation.sh \
+task_ws/src/inspection_bringup/scripts/build_navigation.sh \
   --workspace-root /workspaces/navigation \
   --interface-underlay /workspaces/task_ws/install/setup.bash
 
 # Only clone missing repositories.
-src/inspection_bringup/scripts/build_navigation.sh --fetch-only
+task_ws/src/inspection_bringup/scripts/build_navigation.sh --fetch-only
 
 # Only build local third-party libraries.
-src/inspection_bringup/scripts/build_navigation.sh --third-party-only
+task_ws/src/inspection_bringup/scripts/build_navigation.sh --third-party-only
 
 # Rebuild from existing sources.
-src/inspection_bringup/scripts/build_navigation.sh \
+task_ws/src/inspection_bringup/scripts/build_navigation.sh \
   --build-only \
   --interface-underlay ~/Workspace/task_ws/install/setup.bash
 ```
@@ -118,12 +147,17 @@ not change system configuration.
 
 ## Start
 
-Build and source the workspace first:
+Build the navigation workspaces with the deployment helper, then source the
+resulting overlays in order:
 
 ```bash
-cd ~/Workspace/algor_ws
-colcon build --packages-select inspection_bringup --symlink-install
-source install/setup.zsh
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+
+source /opt/ros/jazzy/setup.bash
+source ~/Workspace/driver_ws/install/setup.bash
+source ~/Workspace/task_ws/install/setup.bash
+source ~/Workspace/algor_ws/install/setup.bash
 ```
 
 Start the default navigation stack:
