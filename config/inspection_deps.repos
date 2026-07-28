@@ -5,6 +5,9 @@ repositories:
   src/light_manager:
     type: git
     url: https://github.com/ggbond-control/light_manager.git
+  src/acoustic_monitor:
+    type: git
+    url: https://github.com/ggbond-control/acoustic_monitor.git
   src/gas_monitor:
     type: git
     url: https://github.com/ggbond-control/gas_monitor.git

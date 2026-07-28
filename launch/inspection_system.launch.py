@@ -283,6 +283,11 @@ def generate_launch_description():
             description="Start alarm manager when sensors are enabled.",
         ),
         DeclareLaunchArgument(
+            "enable_light",
+            default_value="",
+            description="Start light manager when sensors are enabled.",
+        ),
+        DeclareLaunchArgument(
             "enable_gas",
             default_value="",
             description="Start gas monitor when sensors are enabled.",
@@ -487,6 +492,9 @@ def launch_setup(context):
     ))
     enable_alarm = as_bool_text(override_or_config(
         context, "enable_alarm", config, "modules", "alarm", True
+    ))
+    enable_light = as_bool_text(override_or_config(
+        context, "enable_light", config, "modules", "light", True
     ))
     enable_gas = as_bool_text(override_or_config(context, "enable_gas", config, "modules", "gas", True))
     enable_thermal = as_bool_text(override_or_config(
@@ -829,7 +837,9 @@ def launch_setup(context):
             "sensors.launch.py",
             None,
             {
+                "system_config_path": LaunchConfiguration("system_config_path").perform(context),
                 "enable_alarm": enable_alarm,
+                "enable_light": enable_light,
                 "enable_gas": enable_gas,
                 "enable_thermal": enable_thermal,
                 "enable_acoustic": enable_acoustic,

@@ -172,12 +172,18 @@ tmux attach -t inspection
 
 ## Systemd Services
 
-`inspection_bringup` can install and manage two endpoint system services:
+`inspection_bringup` can install and manage three endpoint system services:
 
 ```text
 inspection-navigation.service -> navigation.launch.py
+inspection-hardware.service   -> acoustic, light, and gas pump hardware processes
 inspection-system.service     -> inspection_system.launch.py
 ```
+
+The hardware service runs as root and replaces the package-specific
+`acoustic_monitor_agent.service`, `light_manager_agent.service`, and
+`gas_monitor_pump_agent.service` units. Installing the bringup services stops
+and disables those legacy units to prevent hardware and Unix socket conflicts.
 
 The default service configuration is `config/services.yaml` and targets the
 endpoint account and workspace:
@@ -185,7 +191,7 @@ endpoint account and workspace:
 ```yaml
 service:
   user: cat
-  workspace_root: /home/cat/task_ws
+  workspace_root: /home/cat/Workspace/task_ws
 ```
 
 Install the services after the workspace has been built on the endpoint:
@@ -205,8 +211,10 @@ Useful commands:
 ```bash
 src/inspection_bringup/scripts/manage_inspection_services.sh status
 src/inspection_bringup/scripts/manage_inspection_services.sh restart navigation
+src/inspection_bringup/scripts/manage_inspection_services.sh restart hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh restart system
 src/inspection_bringup/scripts/manage_inspection_services.sh logs navigation
+src/inspection_bringup/scripts/manage_inspection_services.sh logs hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh logs system
 src/inspection_bringup/scripts/manage_inspection_services.sh uninstall
 ```

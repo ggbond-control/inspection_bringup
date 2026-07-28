@@ -27,6 +27,19 @@ navigation:
   launch_args:
     navigate_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/navigate.yaml
 
+hardware:
+  service_name: inspection-hardware.service
+  enabled_on_boot: true
+  restart: always
+  restart_sec: 2
+  processes:
+    - name: acoustic_monitor
+      command: /home/cat/Workspace/task_ws/src/acoustic_monitor/scripts/run_acoustic_monitor_agent.sh
+    - name: light_manager
+      command: /home/cat/Workspace/task_ws/src/light_manager/scripts/run_light_manager_agent.sh
+    - name: gas_monitor_pump
+      command: /home/cat/Workspace/task_ws/src/gas_monitor/scripts/run_gas_monitor_pump_agent.sh
+
 inspection_system:
   service_name: inspection-system.service
   enabled_on_boot: true

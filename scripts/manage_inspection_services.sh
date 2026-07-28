@@ -18,12 +18,12 @@ Commands:
   install             Generate and install wrappers and systemd units.
   uninstall           Disable and remove installed systemd units and wrappers.
   enable              Enable services configured with enabled_on_boot: true.
-  disable             Disable both services.
-  start [service]     Start both services or one service: navigation|system.
-  stop [service]      Stop both services or one service: navigation|system.
-  restart [service]   Restart both services or one service: navigation|system.
+  disable             Disable all services.
+  start [service]     Start all services or one: navigation|hardware|system.
+  stop [service]      Stop all services or one: navigation|hardware|system.
+  restart [service]   Restart all services or one: navigation|hardware|system.
   status [service]    Show systemd status.
-  logs <service>      Follow journal logs for navigation|system.
+  logs <service>      Follow journal logs for navigation|hardware|system.
   render              Render files to a temporary directory without installing.
 
 Options:
@@ -110,6 +110,7 @@ config_value() {
 DEFAULT_SUDO_PASSWORD="$(config_value service.sudo_default_password "${DEFAULT_SUDO_PASSWORD}")"
 INSTALL_DIR="$(config_value service.install_dir /opt/inspection_bringup)"
 NAV_SERVICE="$(config_value navigation.service_name inspection-navigation.service)"
+HARDWARE_SERVICE="$(config_value hardware.service_name inspection-hardware.service)"
 SYSTEM_SERVICE="$(config_value inspection_system.service_name inspection-system.service)"
 
 require_sudo() {
@@ -139,6 +140,9 @@ service_for_target() {
     navigation)
       echo "${NAV_SERVICE}"
       ;;
+    hardware)
+      echo "${HARDWARE_SERVICE}"
+      ;;
     system|inspection_system)
       echo "${SYSTEM_SERVICE}"
       ;;
@@ -146,7 +150,7 @@ service_for_target() {
       return 1
       ;;
     *)
-      echo "error: unknown service target '$1' (expected navigation or system)" >&2
+      echo "error: unknown service target '$1' (expected navigation, hardware, or system)" >&2
       exit 2
       ;;
   esac
@@ -164,12 +168,14 @@ systemctl_for_target() {
 
   if [[ "${action}" == "start" || "${action}" == "restart" ]]; then
     sudo_run systemctl "${action}" "${NAV_SERVICE}"
+    sudo_run systemctl "${action}" "${HARDWARE_SERVICE}"
     sudo_run systemctl "${action}" "${SYSTEM_SERVICE}"
   elif [[ "${action}" == "stop" ]]; then
     sudo_run systemctl "${action}" "${SYSTEM_SERVICE}" || true
+    sudo_run systemctl "${action}" "${HARDWARE_SERVICE}" || true
     sudo_run systemctl "${action}" "${NAV_SERVICE}" || true
   else
-    sudo_run systemctl "${action}" "${NAV_SERVICE}" "${SYSTEM_SERVICE}"
+    sudo_run systemctl "${action}" "${NAV_SERVICE}" "${HARDWARE_SERVICE}" "${SYSTEM_SERVICE}"
   fi
 }
 
@@ -298,7 +304,99 @@ exec ros2 launch inspection_bringup {shlex.quote(launch_file)} {args}
 """
 
 
+def hardware_wrapper_content(processes):
+    if not isinstance(processes, list) or not processes:
+        raise SystemExit("hardware.processes must contain at least one process")
+
+    start_lines = []
+    for process in processes:
+        if not isinstance(process, dict):
+            raise SystemExit("each hardware.processes entry must be a mapping")
+        name = str(process.get("name", "")).strip()
+        command = str(process.get("command", "")).strip()
+        if not name or not command:
+            raise SystemExit("each hardware process requires name and command")
+        start_lines.append(f"start_process {shlex.quote(name)} {shlex.quote(command)}")
+
+    environment_lines = []
+    for key, value in environment.items():
+        if not key:
+            continue
+        environment_lines.append(f"export {key}={shlex.quote(str(value))}")
+
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+export WORKSPACE_ROOT={shlex.quote(workspace_root)}
+export ROS_SETUP=/opt/ros/{shlex.quote(ros_distro)}/setup.bash
+{os.linesep.join(environment_lines)}
+
+pids=()
+names=()
+stopping=0
+
+stop_children() {{
+  if [[ "${{stopping}}" -eq 1 ]]; then
+    return
+  fi
+  stopping=1
+  trap - SIGINT SIGTERM
+  for pid in "${{pids[@]}}"; do
+    kill -TERM "${{pid}}" 2>/dev/null || true
+  done
+  for pid in "${{pids[@]}}"; do
+    wait "${{pid}}" 2>/dev/null || true
+  done
+}}
+
+handle_signal() {{
+  stop_children
+  exit 0
+}}
+
+start_process() {{
+  local name="$1"
+  local command="$2"
+  if [[ ! -x "${{command}}" ]]; then
+    echo "error: hardware process runner not executable: ${{command}}" >&2
+    stop_children
+    exit 1
+  fi
+  "${{command}}" &
+  names+=("${{name}}")
+  pids+=("$!")
+  echo "[hardware] started ${{name}} pid=$!"
+}}
+
+trap handle_signal SIGINT SIGTERM
+
+{os.linesep.join(start_lines)}
+
+set +e
+exited_pid=""
+wait -n -p exited_pid "${{pids[@]}}"
+exit_code=$?
+set -e
+
+exited_name="unknown"
+for index in "${{!pids[@]}}"; do
+  if [[ "${{pids[$index]}}" == "${{exited_pid}}" ]]; then
+    exited_name="${{names[$index]}}"
+    break
+  fi
+done
+
+echo "error: hardware process ${{exited_name}} exited with code ${{exit_code}}" >&2
+stop_children
+if [[ "${{exit_code}}" -eq 0 ]]; then
+  exit 1
+fi
+exit "${{exit_code}}"
+"""
+
+
 navigation = config.get("navigation", {})
+hardware = config.get("hardware", {})
 inspection_system = config.get("inspection_system", {})
 
 write_executable(
@@ -308,6 +406,10 @@ write_executable(
         "navigation.launch.py",
         launch_args_text(navigation.get("launch_args", {})),
     ),
+)
+write_executable(
+    os.path.join(output_dir, "wrappers", "run_inspection_hardware.sh"),
+    hardware_wrapper_content(hardware.get("processes", [])),
 )
 write_executable(
     os.path.join(output_dir, "wrappers", "run_inspection_system.sh"),
@@ -323,6 +425,7 @@ replacements = {
     "@HOME_DIR@": home_dir,
     "@WORKSPACE_ROOT@": workspace_root,
     "@INSTALL_DIR@": install_dir,
+    "@HARDWARE_SERVICE@": str(hardware.get("service_name", "inspection-hardware.service")),
     "@RESTART@": restart,
     "@RESTART_SEC@": restart_sec,
     "@TIMEOUT_STOP_SEC@": timeout_stop_sec,
@@ -330,12 +433,15 @@ replacements = {
 
 for template_name, section, default_service in (
     ("inspection-navigation.service.in", navigation, "inspection-navigation.service"),
+    ("inspection-hardware.service.in", hardware, "inspection-hardware.service"),
     ("inspection-system.service.in", inspection_system, "inspection-system.service"),
 ):
     with open(os.path.join(template_dir, template_name), "r", encoding="utf-8") as stream:
         content = stream.read()
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, str(value))
+    content = content.replace("@HARDWARE_RESTART@", str(hardware.get("restart", "always")))
+    content = content.replace("@HARDWARE_RESTART_SEC@", str(hardware.get("restart_sec", 2)))
     content = content.replace("@SYSTEMD_OPTIONS@", systemd_options_text(section.get("systemd", {})))
 
     service_name = str(section.get("service_name", default_service))
@@ -345,6 +451,8 @@ for template_name, section, default_service in (
 with open(os.path.join(output_dir, "enabled_services"), "w", encoding="utf-8") as stream:
     if as_bool(navigation.get("enabled_on_boot"), True):
         stream.write(str(navigation.get("service_name", "inspection-navigation.service")) + "\n")
+    if as_bool(hardware.get("enabled_on_boot"), True):
+        stream.write(str(hardware.get("service_name", "inspection-hardware.service")) + "\n")
     if as_bool(inspection_system.get("enabled_on_boot"), True):
         stream.write(str(inspection_system.get("service_name", "inspection-system.service")) + "\n")
 PY
@@ -359,20 +467,29 @@ install_services() {
   require_sudo
   sudo_run install -d -m 0755 "${INSTALL_DIR}"
   sudo_run install -m 0755 "${tmp_dir}/wrappers/run_navigation.sh" "${INSTALL_DIR}/run_navigation.sh"
+  sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_hardware.sh" "${INSTALL_DIR}/run_inspection_hardware.sh"
   sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_system.sh" "${INSTALL_DIR}/run_inspection_system.sh"
   sudo_run install -m 0644 "${tmp_dir}/systemd/${NAV_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
+  sudo_run install -m 0644 "${tmp_dir}/systemd/${HARDWARE_SERVICE}" "${SYSTEMD_DIR}/${HARDWARE_SERVICE}"
   sudo_run install -m 0644 "${tmp_dir}/systemd/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${SYSTEM_SERVICE}"
+  sudo_run systemctl disable --now \
+    acoustic_monitor_agent.service \
+    light_manager_agent.service \
+    gas_monitor_pump_agent.service >/dev/null 2>&1 || true
   sudo_run systemctl daemon-reload
-  echo "[install] installed ${NAV_SERVICE}, ${SYSTEM_SERVICE}"
+  echo "[install] installed ${NAV_SERVICE}, ${HARDWARE_SERVICE}, ${SYSTEM_SERVICE}"
 }
 
 uninstall_services() {
   require_sudo
-  sudo_run systemctl disable --now "${SYSTEM_SERVICE}" "${NAV_SERVICE}" >/dev/null 2>&1 || true
-  sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
-  sudo_run rm -f "${INSTALL_DIR}/run_inspection_system.sh" "${INSTALL_DIR}/run_navigation.sh"
+  sudo_run systemctl disable --now "${SYSTEM_SERVICE}" "${HARDWARE_SERVICE}" "${NAV_SERVICE}" >/dev/null 2>&1 || true
+  sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${HARDWARE_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
+  sudo_run rm -f \
+    "${INSTALL_DIR}/run_inspection_system.sh" \
+    "${INSTALL_DIR}/run_inspection_hardware.sh" \
+    "${INSTALL_DIR}/run_navigation.sh"
   sudo_run systemctl daemon-reload
-  echo "[uninstall] removed ${NAV_SERVICE}, ${SYSTEM_SERVICE}"
+  echo "[uninstall] removed ${NAV_SERVICE}, ${HARDWARE_SERVICE}, ${SYSTEM_SERVICE}"
 }
 
 enable_services() {
@@ -408,7 +525,7 @@ case "${COMMAND}" in
     ;;
   logs)
     if [[ -z "${TARGET}" ]]; then
-      echo "error: logs requires service target: navigation or system" >&2
+      echo "error: logs requires service target: navigation, hardware, or system" >&2
       exit 2
     fi
     journalctl -u "$(service_for_target "${TARGET}")" -f

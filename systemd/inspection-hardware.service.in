@@ -1,0 +1,26 @@
+[Unit]
+Description=Inspection Hardware Services
+After=network-online.target
+Wants=network-online.target
+Conflicts=acoustic_monitor_agent.service light_manager_agent.service gas_monitor_pump_agent.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=@WORKSPACE_ROOT@
+Environment=HOME=/root
+Environment=ROS_HOME=/root/.ros
+Environment=ROS_LOG_DIR=/root/.ros/log
+RuntimeDirectory=acoustic_monitor light_manager gas_monitor
+RuntimeDirectoryMode=0775
+ExecStart=@INSTALL_DIR@/run_inspection_hardware.sh
+Restart=@HARDWARE_RESTART@
+RestartSec=@HARDWARE_RESTART_SEC@
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=@TIMEOUT_STOP_SEC@
+@SYSTEMD_OPTIONS@
+
+[Install]
+WantedBy=multi-user.target
