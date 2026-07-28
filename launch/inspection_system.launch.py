@@ -120,6 +120,114 @@ def live_stream_params(config):
             config_value(config, "live_stream", "restart_interval_sec", 5.0),
             value_type=float,
         ),
+        "acoustic_overlay_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_overlay_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic", "topic", "/monitor/acoustic/overlay")
+        ),
+        "acoustic_overlay_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic",
+                "status_topic",
+                "/platform/acoustic_overlay_stream/status",
+            )
+        ),
+        "acoustic_overlay_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic", "stream_id", "x30/acoustic")
+        ),
+        "acoustic_overlay_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_overlay_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic", "bitrate", "1500k")
+        ),
+        "acoustic_overlay_stream_video_codec": str(
+            nested_config_value(config, "live_stream", "acoustic", "video_codec", "h264_rkmpp")
+        ),
+        "acoustic_overlay_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic", "output_format", "flv")
+        ),
+        "acoustic_overlay_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
+        "acoustic_camera_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic_camera", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_camera_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "topic", "/monitor/acoustic/camera")
+        ),
+        "acoustic_camera_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic_camera",
+                "status_topic",
+                "/platform/acoustic_camera_stream/status",
+            )
+        ),
+        "acoustic_camera_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "stream_id", "x30_acoustic_camera")
+        ),
+        "acoustic_camera_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_camera", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_camera_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "bitrate", "1500k")
+        ),
+        "acoustic_camera_stream_video_codec": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "video_codec", "h264_rkmpp")
+        ),
+        "acoustic_camera_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic_camera", "output_format", "flv")
+        ),
+        "acoustic_camera_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_camera", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
+        "acoustic_heatmap_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "acoustic_heatmap", "enabled", False)),
+            value_type=bool,
+        ),
+        "acoustic_heatmap_stream_topic": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "topic", "/monitor/acoustic/heatmap")
+        ),
+        "acoustic_heatmap_stream_status_topic": str(
+            nested_config_value(
+                config,
+                "live_stream",
+                "acoustic_heatmap",
+                "status_topic",
+                "/platform/acoustic_heatmap_stream/status",
+            )
+        ),
+        "acoustic_heatmap_stream_id": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "stream_id", "x30_acoustic_heatmap")
+        ),
+        "acoustic_heatmap_stream_fps": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "fps", 10.0),
+            value_type=float,
+        ),
+        "acoustic_heatmap_stream_bitrate": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "bitrate", "1500k")
+        ),
+        "acoustic_heatmap_stream_video_codec": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "video_codec", "h264_rkmpp")
+        ),
+        "acoustic_heatmap_stream_output_format": str(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "output_format", "flv")
+        ),
+        "acoustic_heatmap_stream_restart_interval_sec": ParameterValue(
+            nested_config_value(config, "live_stream", "acoustic_heatmap", "restart_interval_sec", 5.0),
+            value_type=float,
+        ),
         "live_stream_ffmpeg_loglevel": str(
             nested_config_value(config, "live_stream", "ffmpeg", "loglevel", "warning")
         ),
@@ -185,6 +293,11 @@ def generate_launch_description():
             description="Start thermal camera monitor when sensors are enabled.",
         ),
         DeclareLaunchArgument(
+            "enable_acoustic",
+            default_value="",
+            description="Start acoustic monitor when sensors are enabled.",
+        ),
+        DeclareLaunchArgument(
             "enable_mqtt",
             default_value="",
             description="Start ROS 2 <-> MQTT platform bridge.",
@@ -213,6 +326,17 @@ def generate_launch_description():
             "runtime_log_directory",
             default_value="",
             description="Task hub runtime event log directory.",
+        ),
+        DeclareLaunchArgument("algorithm_execute_url", default_value=""),
+        DeclareLaunchArgument("algorithm_stop_url", default_value=""),
+        DeclareLaunchArgument("algorithm_visible_stream_url", default_value=""),
+        DeclareLaunchArgument("algorithm_callback_url", default_value=""),
+        DeclareLaunchArgument("algorithm_callback_port", default_value=""),
+        DeclareLaunchArgument("algorithm_http_timeout_seconds", default_value=""),
+        DeclareLaunchArgument(
+            "passive_charge_arrival_battery_reserve_percent",
+            default_value="",
+            description="Battery percentage reserved upon passive-charge arrival (0-99).",
         ),
         DeclareLaunchArgument(
             "stand_service_name",
@@ -266,13 +390,33 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "odometry_topic",
+            default_value="/odometry_multi_maps",
+            description="Navigation odometry topic used for current map frame and position.",
+        ),
+        DeclareLaunchArgument(
+            "robot_basic_state_topic",
             default_value="",
-            description="Odometry topic used by dual_coordinate gimbal command.",
+            description="Robot basic state topic for task hub work-state monitoring.",
+        ),
+        DeclareLaunchArgument(
+            "charge_manager_state_topic",
+            default_value="",
+            description="Charge manager state topic for task hub work-state monitoring.",
         ),
         DeclareLaunchArgument(
             "heartbeat_timeout_seconds",
             default_value="",
             description="Heartbeat timeout threshold in seconds.",
+        ),
+        DeclareLaunchArgument(
+            "robot_state_timeout_seconds",
+            default_value="",
+            description="Robot basic/charge state timeout threshold in seconds.",
+        ),
+        DeclareLaunchArgument(
+            "manual_mode_ready_timeout_seconds",
+            default_value="",
+            description="Timeout waiting for manual control readiness after navigation mode switch.",
         ),
         DeclareLaunchArgument(
             "trigger_service_timeout_seconds",
@@ -348,6 +492,9 @@ def launch_setup(context):
     enable_thermal = as_bool_text(override_or_config(
         context, "enable_thermal", config, "modules", "thermal", True
     ))
+    enable_acoustic = as_bool_text(override_or_config(
+        context, "enable_acoustic", config, "modules", "acoustic", True
+    ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
 
     task_hub_params = {
@@ -408,6 +555,41 @@ def launch_setup(context):
         "capture_action_name": override_or_config(
             context, "capture_action_name", config, "task_hub", "capture_action_name", "capture_media"
         ),
+        "algorithm_execute_url": override_or_config(
+            context, "algorithm_execute_url", config, "task_hub", "algorithm_execute_url",
+            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
+        ),
+        "algorithm_stop_url": override_or_config(
+            context, "algorithm_stop_url", config, "task_hub", "algorithm_stop_url",
+            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
+        ),
+        "algorithm_visible_stream_url": override_or_config(
+            context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
+        ),
+        "algorithm_callback_url": override_or_config(
+            context, "algorithm_callback_url", config, "task_hub", "algorithm_callback_url",
+            "http://192.168.2.99:8081/api/v1/algorithm/result"
+        ),
+        "algorithm_callback_port": ParameterValue(
+            override_or_config_typed(context, "algorithm_callback_port", config, "task_hub",
+                                      "algorithm_callback_port", 8081, int), value_type=int
+        ),
+        "algorithm_http_timeout_seconds": ParameterValue(
+            override_or_config_typed(context, "algorithm_http_timeout_seconds", config, "task_hub",
+                                      "algorithm_http_timeout_seconds", 10.0, float), value_type=float
+        ),
+        "passive_charge_arrival_battery_reserve_percent": ParameterValue(
+            override_or_config_typed(
+                context,
+                "passive_charge_arrival_battery_reserve_percent",
+                config,
+                "task_hub",
+                "passive_charge_arrival_battery_reserve_percent",
+                10,
+                int,
+            ),
+            value_type=int,
+        ),
         "navigation_heartbeat_topic": override_or_config(
             context,
             "navigation_heartbeat_topic",
@@ -425,7 +607,23 @@ def launch_setup(context):
             "/inspection_task_hub/heartbeat/gimbal",
         ),
         "odometry_topic": override_or_config(
-            context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_horizon"
+            context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_multi_maps"
+        ),
+        "robot_basic_state_topic": override_or_config(
+            context,
+            "robot_basic_state_topic",
+            config,
+            "task_hub",
+            "robot_basic_state_topic",
+            "/robot_basic_state",
+        ),
+        "charge_manager_state_topic": override_or_config(
+            context,
+            "charge_manager_state_topic",
+            config,
+            "task_hub",
+            "charge_manager_state_topic",
+            "/charge_manager_state",
         ),
         "heartbeat_timeout_seconds": ParameterValue(
             override_or_config_typed(
@@ -435,6 +633,30 @@ def launch_setup(context):
                 "task_hub",
                 "heartbeat_timeout_seconds",
                 3.0,
+                float,
+            ),
+            value_type=float,
+        ),
+        "robot_state_timeout_seconds": ParameterValue(
+            override_or_config_typed(
+                context,
+                "robot_state_timeout_seconds",
+                config,
+                "task_hub",
+                "robot_state_timeout_seconds",
+                3.0,
+                float,
+            ),
+            value_type=float,
+        ),
+        "manual_mode_ready_timeout_seconds": ParameterValue(
+            override_or_config_typed(
+                context,
+                "manual_mode_ready_timeout_seconds",
+                config,
+                "task_hub",
+                "manual_mode_ready_timeout_seconds",
+                10.0,
                 float,
             ),
             value_type=float,
@@ -484,6 +706,55 @@ def launch_setup(context):
             value_type=int,
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "map_root_directory": str(
+            config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
+        ),
+        "localization_set_parameters_service": str(
+            config_value(
+                config,
+                "mqtt",
+                "localization_set_parameters_service",
+                "/navigation_bringup/start",
+            )
+        ),
+        "localization_map_parameter_name": str(
+            config_value(config, "mqtt", "localization_map_parameter_name", "slam.prior_dir")
+        ),
+        "localization_initial_map_parameter_name": str(
+            config_value(
+                config,
+                "mqtt",
+                "localization_initial_map_parameter_name",
+                "global_planner.initial_map",
+            )
+        ),
+        "localization_set_parameter_timeout_sec": ParameterValue(
+            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 60.0),
+            value_type=float,
+        ),
+        "localization_service_wait_timeout_sec": ParameterValue(
+            config_value(config, "mqtt", "localization_service_wait_timeout_sec", 5.0),
+            value_type=float,
+        ),
+        "acoustic_start_service_name": str(
+            config_value(config, "mqtt", "acoustic_start_service_name", "/monitor/acoustic/start")
+        ),
+        "acoustic_stop_service_name": str(
+            config_value(config, "mqtt", "acoustic_stop_service_name", "/monitor/acoustic/stop")
+        ),
+        "stand_service_name": str(
+            config_value(config, "mqtt", "stand_service_name", "/nav_bridge_node/stand")
+        ),
+        "lie_service_name": str(
+            config_value(config, "mqtt", "lie_service_name", "/nav_bridge_node/lie")
+        ),
+        "soft_estop_service_name": str(
+            config_value(config, "mqtt", "soft_estop_service_name", "/nav_bridge_node/soft_estop")
+        ),
+        "manual_jog_max_duration_ms": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_max_duration_ms", 2500),
+            value_type=int,
+        ),
     }
     platform_params.update(live_stream_params(config))
 
@@ -561,6 +832,7 @@ def launch_setup(context):
                 "enable_alarm": enable_alarm,
                 "enable_gas": enable_gas,
                 "enable_thermal": enable_thermal,
+                "enable_acoustic": enable_acoustic,
             },
         ),
     )

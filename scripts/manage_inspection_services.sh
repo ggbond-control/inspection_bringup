@@ -229,6 +229,27 @@ def launch_args_text(args):
     return " ".join(parts)
 
 
+def systemd_options_text(options):
+    if not isinstance(options, dict):
+        return ""
+
+    mapping = (
+        ("nice", "Nice"),
+        ("cpu_weight", "CPUWeight"),
+        ("io_weight", "IOWeight"),
+        ("oom_score_adjust", "OOMScoreAdjust"),
+        ("cpu_scheduling_policy", "CPUSchedulingPolicy"),
+        ("cpu_scheduling_priority", "CPUSchedulingPriority"),
+    )
+    lines = []
+    for key, directive in mapping:
+        value = options.get(key)
+        if value is None or value == "":
+            continue
+        lines.append(f"{directive}={value}")
+    return "\n".join(lines)
+
+
 def write_executable(path, content):
     with open(path, "w", encoding="utf-8") as stream:
         stream.write(content)
@@ -255,7 +276,6 @@ source {quoted_path}
             continue
         environment_lines.append(f"export {key}={shlex.quote(str(value))}")
     environment_block = "\n".join(environment_lines)
-
     return f"""#!/usr/bin/env bash
 set -eo pipefail
 
@@ -316,6 +336,7 @@ for template_name, section, default_service in (
         content = stream.read()
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, str(value))
+    content = content.replace("@SYSTEMD_OPTIONS@", systemd_options_text(section.get("systemd", {})))
 
     service_name = str(section.get("service_name", default_service))
     with open(os.path.join(output_dir, "systemd", service_name), "w", encoding="utf-8") as stream:

@@ -34,7 +34,7 @@ live_stream:
   request_on_startup: true
   enable_push: true
   ffmpeg_bin: ffmpeg
-  restart_interval_sec: 1.0
+  restart_interval_sec: 5.0
   acoustic:
     enabled: true
     stream_id: x30/acoustic
@@ -67,7 +67,7 @@ live_stream:
     restart_interval_sec: 5.0
   ffmpeg:
     loglevel: warning
-    realtime_input: false
+    realtime_input: true
     rtsp_transport: tcp
     video_codec: copy
     audio_codec: copy
