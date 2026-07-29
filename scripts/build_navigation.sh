@@ -566,6 +566,11 @@ EOF
   ros2 launch inspection_bringup navigation.launch.py
 
 EOF
+  cat <<EOF
+[next] For GPU/video device access, run: sudo usermod -aG video,render ${USER}
+[next] Then log out and back in for the group change to take effect.
+
+EOF
 }
 
 if [[ "${BUILD_ONLY}" -eq 0 ]]; then

@@ -14,6 +14,14 @@ The navigation deployment helper keeps all managed source and third-party build
 artifacts inside user workspaces. It does not run `sudo`, install apt packages,
 write sysctl files, or install libraries into `/usr/local`.
 
+After a successful build, the helper prints this optional command for systems
+that require access to GPU or video devices. Run it manually, then log out and
+back in for the membership change to take effect:
+
+```bash
+sudo usermod -aG video,render $USER
+```
+
 By default, run the helper from a navigation deployment rooted at
 `~/Workspace`. The helper creates missing workspace directories before cloning
 or building:
@@ -39,20 +47,23 @@ environment-specific, but the navigation stack expects these families to be
 available:
 
 ```text
-libgoogle-glog-dev
-libgflags-dev
-libyaml-cpp-dev
-libeigen3-dev
-libpcl-dev
-libopencv-dev
-libtbb-dev
-opencl-headers
-ocl-icd-opencl-dev
-libapr1-dev
-ros-jazzy-navigation2
-ros-jazzy-nav2-bringup
-ros-jazzy-grid-map
-ros-jazzy-rviz-2d-overlay-msgs
+sudo apt install libgoogle-glog-dev \
+libgflags-dev \
+libyaml-cpp-dev \
+libeigen3-dev \
+libpcl-dev \
+libopencv-dev \
+libtbb-dev \
+opencl-headers \
+ocl-icd-opencl-dev \
+ros-jazzy-pcl-ros \
+ros-jazzy-navigation2 \
+ros-jazzy-grid-map \
+ros-jazzy-rviz-2d-overlay-msgs \
+opencl-headers \
+ocl-icd-opencl-dev \
+mesa-opencl-icd \
+clinfo
 ```
 
 `inspection_interfaces` is not managed by the navigation helper. Source an

@@ -185,8 +185,13 @@ endpoint account and workspace:
 ```yaml
 service:
   user: cat
-  workspace_root: /home/cat/task_ws
+  workspace_root: /home/cat/Workspace/task_ws
 ```
+
+The navigation wrapper sources the driver, task, and algor overlays in that
+order. Its `LD_LIBRARY_PATH` is configured in `service.environment` so local
+GTSAM and Livox-SDK2 libraries installed under `driver_ws/third_party/install`
+are available to systemd as well.
 
 Install the services after the workspace has been built on the endpoint:
 
