@@ -17,8 +17,8 @@ Usage: manage_inspection_services.sh [--config PATH] <command> [service]
 Commands:
   install             Generate and install wrappers and systemd units.
   uninstall           Disable and remove installed systemd units and wrappers.
-  enable              Enable services configured with enabled_on_boot: true.
-  disable             Disable all services.
+  enable [service]    Enable configured services or one: navigation|hardware|system.
+  disable [service]   Disable all services or one: navigation|hardware|system.
   start [service]     Start all services or one: navigation|hardware|system.
   stop [service]      Stop all services or one: navigation|hardware|system.
   restart [service]   Restart all services or one: navigation|hardware|system.
@@ -493,7 +493,17 @@ uninstall_services() {
 }
 
 enable_services() {
+  local target="${1:-}"
   local tmp_dir
+
+  if [[ -n "${target}" ]]; then
+    local service_name
+    service_name="$(service_for_target "${target}")"
+    require_sudo
+    sudo_run systemctl enable "${service_name}"
+    return
+  fi
+
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' RETURN
 
@@ -515,7 +525,7 @@ case "${COMMAND}" in
     uninstall_services
     ;;
   enable)
-    enable_services
+    enable_services "${TARGET}"
     ;;
   disable)
     systemctl_for_target disable "${TARGET}"

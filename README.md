@@ -218,6 +218,8 @@ src/inspection_bringup/scripts/manage_inspection_services.sh status
 src/inspection_bringup/scripts/manage_inspection_services.sh restart navigation
 src/inspection_bringup/scripts/manage_inspection_services.sh restart hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh restart system
+src/inspection_bringup/scripts/manage_inspection_services.sh enable hardware
+src/inspection_bringup/scripts/manage_inspection_services.sh disable hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh logs navigation
 src/inspection_bringup/scripts/manage_inspection_services.sh logs hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh logs system
