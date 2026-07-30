@@ -91,6 +91,8 @@ live_stream:
   enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 5.0
+  gimbal:
+    enabled: true
   ffmpeg:
     loglevel: warning
     realtime_input: true

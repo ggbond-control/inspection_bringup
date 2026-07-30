@@ -35,6 +35,8 @@ live_stream:
   enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
+  gimbal:
+    enabled: true
   acoustic:
     enabled: true
     stream_id: x30/acoustic
