@@ -203,6 +203,10 @@ setup_paths = service.get("setup_paths")
 if not isinstance(setup_paths, list) or not setup_paths:
     setup_paths = [os.path.join(workspace_root, "install", "setup.bash")]
 setup_paths = [str(path) for path in setup_paths]
+library_paths = service.get("library_paths", [])
+if not isinstance(library_paths, list):
+    raise SystemExit("service.library_paths must be a list")
+library_paths = [str(path).strip() for path in library_paths if str(path).strip()]
 environment = service.get("environment", {})
 if not isinstance(environment, dict):
     environment = {}
@@ -263,6 +267,13 @@ def write_executable(path, content):
     os.chmod(path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def library_path_export():
+    if not library_paths:
+        return ""
+    prefix = shlex.quote(":".join(library_paths))
+    return f'export LD_LIBRARY_PATH={prefix}"${{LD_LIBRARY_PATH:+:${{LD_LIBRARY_PATH}}}}"'
+
+
 def wrapper_content(kind, launch_file, args):
     setup_lines = []
     for setup_path in setup_paths:
@@ -291,6 +302,7 @@ source /opt/ros/{shlex.quote(ros_distro)}/setup.bash
 
 set -u
 
+{library_path_export()}
 {environment_block}
 
 mkdir -p {shlex.quote(ros_log_dir)}
@@ -329,6 +341,7 @@ set -euo pipefail
 
 export WORKSPACE_ROOT={shlex.quote(workspace_root)}
 export ROS_SETUP=/opt/ros/{shlex.quote(ros_distro)}/setup.bash
+{library_path_export()}
 {os.linesep.join(environment_lines)}
 
 pids=()

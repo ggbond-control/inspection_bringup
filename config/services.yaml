@@ -5,8 +5,10 @@ service:
     - /home/cat/Workspace/driver_ws/install/setup.bash
     - /home/cat/Workspace/task_ws/install/setup.bash
     - /home/cat/Workspace/algor_ws/install/setup.bash
+  library_paths:
+    - /home/cat/Workspace/driver_ws/third_party/install/lib
+    - /home/cat/Workspace/driver_ws/third_party/install/lib64
   environment:
-    LD_LIBRARY_PATH: /home/cat/Workspace/driver_ws/third_party/install/lib:/home/cat/Workspace/driver_ws/third_party/install/lib64
     RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
     CYCLONEDDS_URI: file:///home/cat/Config/cyclonedds_large_message.xml
     ROS_DOMAIN_ID: "26"
