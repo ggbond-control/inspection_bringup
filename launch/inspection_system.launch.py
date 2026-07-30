@@ -120,6 +120,10 @@ def live_stream_params(config):
             config_value(config, "live_stream", "restart_interval_sec", 5.0),
             value_type=float,
         ),
+        "gimbal_live_stream_enabled": ParameterValue(
+            as_bool(nested_config_value(config, "live_stream", "gimbal", "enabled", True)),
+            value_type=bool,
+        ),
         "acoustic_overlay_stream_enabled": ParameterValue(
             as_bool(nested_config_value(config, "live_stream", "acoustic", "enabled", False)),
             value_type=bool,

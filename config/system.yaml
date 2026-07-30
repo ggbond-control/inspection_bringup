@@ -36,7 +36,7 @@ live_stream:
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
   gimbal:
-    enabled: true
+    enabled: false
   acoustic:
     enabled: true
     stream_id: x30/acoustic
@@ -80,7 +80,7 @@ task_hub:
   runtime_log_directory: "~/runtime_logs"
   algorithm_execute_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
   algorithm_stop_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
-  algorithm_visible_stream_url: ""
+  algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
   algorithm_callback_url: "http://192.168.2.99:8081/api/v1/algorithm/result"
   algorithm_callback_port: 8081
   algorithm_http_timeout_seconds: 10.0
