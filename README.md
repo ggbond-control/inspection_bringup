@@ -194,7 +194,14 @@ endpoint account and workspace:
 service:
   user: cat
   workspace_root: /home/cat/Workspace/task_ws
+  library_paths:
+    - /home/cat/Workspace/driver_ws/third_party/install/lib
+    - /home/cat/Workspace/driver_ws/third_party/install/lib64
 ```
+
+`library_paths` are prepended to the `LD_LIBRARY_PATH` produced by the ROS and
+workspace setup files. Do not set `LD_LIBRARY_PATH` in `service.environment`,
+because that would replace the ROS library search paths.
 
 The navigation wrapper sources the driver, task, and algor overlays in that
 order. Its `LD_LIBRARY_PATH` is configured in `service.environment` so local
