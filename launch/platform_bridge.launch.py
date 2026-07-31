@@ -242,6 +242,16 @@ def generate_launch_description():
             default_value="",
             description="MQTT broker port.",
         ),
+        DeclareLaunchArgument(
+            "mqtt_username",
+            default_value="",
+            description="MQTT broker username.",
+        ),
+        DeclareLaunchArgument(
+            "mqtt_password",
+            default_value="",
+            description="MQTT broker password.",
+        ),
     ]
 
     return LaunchDescription(
@@ -272,6 +282,12 @@ def launch_setup(context):
         "mqtt_port": ParameterValue(
             override_or_config(context, "mqtt_port", config, "mqtt", "port", 1883),
             value_type=int,
+        ),
+        "mqtt_username": override_or_config(
+            context, "mqtt_username", config, "mqtt", "username", ""
+        ),
+        "mqtt_password": override_or_config(
+            context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
         "map_root_directory": str(

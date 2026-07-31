@@ -12,8 +12,10 @@ modules:
 
 mqtt:
   sn: x30
-  host: 192.168.2.100
+  host: 47.99.202.196
   port: 1883
+  username: "jiangxi"
+  password: "123456"
   topic_vendor_prefix: test
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
@@ -36,7 +38,7 @@ live_stream:
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
   gimbal:
-    enabled: false
+    enabled: true
   acoustic:
     enabled: true
     stream_id: x30/acoustic
