@@ -204,9 +204,9 @@ workspace setup files. Do not set `LD_LIBRARY_PATH` in `service.environment`,
 because that would replace the ROS library search paths.
 
 The navigation wrapper sources the driver, task, and algor overlays in that
-order. Its `LD_LIBRARY_PATH` is configured in `service.environment` so local
-GTSAM and Livox-SDK2 libraries installed under `driver_ws/third_party/install`
-are available to systemd as well.
+order. Its `library_paths` are prepended to the `LD_LIBRARY_PATH` produced by
+those setup files so local GTSAM and Livox-SDK2 libraries installed under
+`driver_ws/third_party/install` are available to systemd as well.
 
 Install the services after the workspace has been built on the endpoint:
 
@@ -224,6 +224,8 @@ Useful commands:
 
 ```bash
 src/inspection_bringup/scripts/manage_inspection_services.sh status
+src/inspection_bringup/scripts/manage_inspection_services.sh install hardware
+src/inspection_bringup/scripts/manage_inspection_services.sh uninstall hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh restart navigation
 src/inspection_bringup/scripts/manage_inspection_services.sh restart hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh restart system

@@ -15,8 +15,8 @@ usage() {
 Usage: manage_inspection_services.sh [--config PATH] <command> [service]
 
 Commands:
-  install             Generate and install wrappers and systemd units.
-  uninstall           Disable and remove installed systemd units and wrappers.
+  install [service]   Generate and install all or one: navigation|hardware|system.
+  uninstall [service] Disable and remove all or one: navigation|hardware|system.
   enable [service]    Enable configured services or one: navigation|hardware|system.
   disable [service]   Disable all services or one: navigation|hardware|system.
   start [service]     Start all services or one: navigation|hardware|system.
@@ -473,36 +473,76 @@ PY
 
 install_services() {
   local tmp_dir
+  local target
+  local -a target_list
+
+  if [[ -n "${TARGET}" ]]; then
+    service_for_target "${TARGET}" >/dev/null
+    target_list=("${TARGET}")
+  else
+    target_list=(navigation hardware system)
+  fi
+
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir}"' RETURN
 
   render_files "${tmp_dir}"
   require_sudo
   sudo_run install -d -m 0755 "${INSTALL_DIR}"
-  sudo_run install -m 0755 "${tmp_dir}/wrappers/run_navigation.sh" "${INSTALL_DIR}/run_navigation.sh"
-  sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_hardware.sh" "${INSTALL_DIR}/run_inspection_hardware.sh"
-  sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_system.sh" "${INSTALL_DIR}/run_inspection_system.sh"
-  sudo_run install -m 0644 "${tmp_dir}/systemd/${NAV_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
-  sudo_run install -m 0644 "${tmp_dir}/systemd/${HARDWARE_SERVICE}" "${SYSTEMD_DIR}/${HARDWARE_SERVICE}"
-  sudo_run install -m 0644 "${tmp_dir}/systemd/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${SYSTEM_SERVICE}"
-  sudo_run systemctl disable --now \
-    acoustic_monitor_agent.service \
-    light_manager_agent.service \
-    gas_monitor_pump_agent.service >/dev/null 2>&1 || true
+  for target in "${target_list[@]}"; do
+    case "${target}" in
+      navigation)
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/run_navigation.sh" "${INSTALL_DIR}/run_navigation.sh"
+        sudo_run install -m 0644 "${tmp_dir}/systemd/${NAV_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
+        ;;
+      hardware)
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_hardware.sh" "${INSTALL_DIR}/run_inspection_hardware.sh"
+        sudo_run install -m 0644 "${tmp_dir}/systemd/${HARDWARE_SERVICE}" "${SYSTEMD_DIR}/${HARDWARE_SERVICE}"
+        sudo_run systemctl disable --now \
+          acoustic_monitor_agent.service \
+          light_manager_agent.service \
+          gas_monitor_pump_agent.service >/dev/null 2>&1 || true
+        ;;
+      system)
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_system.sh" "${INSTALL_DIR}/run_inspection_system.sh"
+        sudo_run install -m 0644 "${tmp_dir}/systemd/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${SYSTEM_SERVICE}"
+        ;;
+    esac
+  done
   sudo_run systemctl daemon-reload
-  echo "[install] installed ${NAV_SERVICE}, ${HARDWARE_SERVICE}, ${SYSTEM_SERVICE}"
+  echo "[install] installed: ${target_list[*]}"
 }
 
 uninstall_services() {
+  local target
+  local -a target_list
+
+  if [[ -n "${TARGET}" ]]; then
+    service_for_target "${TARGET}" >/dev/null
+    target_list=("${TARGET}")
+  else
+    target_list=(navigation hardware system)
+  fi
+
   require_sudo
-  sudo_run systemctl disable --now "${SYSTEM_SERVICE}" "${HARDWARE_SERVICE}" "${NAV_SERVICE}" >/dev/null 2>&1 || true
-  sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${HARDWARE_SERVICE}" "${SYSTEMD_DIR}/${NAV_SERVICE}"
-  sudo_run rm -f \
-    "${INSTALL_DIR}/run_inspection_system.sh" \
-    "${INSTALL_DIR}/run_inspection_hardware.sh" \
-    "${INSTALL_DIR}/run_navigation.sh"
+  for target in "${target_list[@]}"; do
+    case "${target}" in
+      navigation)
+        sudo_run systemctl disable --now "${NAV_SERVICE}" >/dev/null 2>&1 || true
+        sudo_run rm -f "${SYSTEMD_DIR}/${NAV_SERVICE}" "${INSTALL_DIR}/run_navigation.sh"
+        ;;
+      hardware)
+        sudo_run systemctl disable --now "${HARDWARE_SERVICE}" >/dev/null 2>&1 || true
+        sudo_run rm -f "${SYSTEMD_DIR}/${HARDWARE_SERVICE}" "${INSTALL_DIR}/run_inspection_hardware.sh"
+        ;;
+      system)
+        sudo_run systemctl disable --now "${SYSTEM_SERVICE}" >/dev/null 2>&1 || true
+        sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${INSTALL_DIR}/run_inspection_system.sh"
+        ;;
+    esac
+  done
   sudo_run systemctl daemon-reload
-  echo "[uninstall] removed ${NAV_SERVICE}, ${HARDWARE_SERVICE}, ${SYSTEM_SERVICE}"
+  echo "[uninstall] removed: ${target_list[*]}"
 }
 
 enable_services() {
