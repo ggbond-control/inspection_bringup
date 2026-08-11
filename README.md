@@ -51,6 +51,22 @@ Example output:
 [branch] src/inspection_task_hub: main dirty upstream=origin/main behind=2
 ```
 
+To fast-forward existing managed repositories to the newest commit of each
+repository's current branch before building, run:
+
+```bash
+src/inspection_bringup/scripts/build_inspection.sh --update-current-branch
+```
+
+The update is fast-forward only. It refuses dirty repositories, detached HEAD,
+branches without an upstream, local commits ahead of upstream, and diverged
+history. It never changes branches, stashes changes, rebases, or creates merge
+commits. To update without building:
+
+```bash
+src/inspection_bringup/scripts/build_inspection.sh --update-only
+```
+
 Disable the branch status output when needed:
 
 ```bash
