@@ -9,6 +9,7 @@ modules:
   thermal: true
   acoustic: true
   mqtt: true
+  algorithm_mqtt: true
 
 mqtt:
   sn: x30
@@ -30,6 +31,16 @@ mqtt:
   lie_service_name: /nav_bridge_node/lie
   soft_estop_service_name: /nav_bridge_node/soft_estop
   manual_jog_max_duration_ms: 2500
+
+algorithm_mqtt:
+  host: 47.99.202.196
+  port: 1883
+  username: "jiangxi"
+  password: "123456"
+  topic_root: algorithm/device
+  database_path: "~/.ros/inspection_algorithm_bridge/queue.db"
+  max_attempts: 3
+  result_drain_timeout_sec: 30.0
 
 live_stream:
   config_path: ""
@@ -78,6 +89,7 @@ live_stream:
     output_format: flv
 
 task_hub:
+  algorithm_transport: mqtt
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
   algorithm_execute_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
@@ -86,6 +98,11 @@ task_hub:
   algorithm_callback_url: "http://192.168.2.99:8081/api/v1/algorithm/result"
   algorithm_callback_port: 8081
   algorithm_http_timeout_seconds: 10.0
+  algorithm_command_topic: "/algorithm_transport/commands"
+  algorithm_session_event_topic: "/algorithm_transport/session_events"
+  algorithm_result_topic: "/algorithm_transport/results"
+  algorithm_ack_service: "/algorithm_transport/ack_result"
+  platform_current_bid_topic: "/platform/current_bid"
   passive_charge_arrival_battery_reserve_percent: 10
   stand_service_name: "/nav_bridge_node/stand"
   lie_service_name: "/nav_bridge_node/lie"

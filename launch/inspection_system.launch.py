@@ -518,8 +518,28 @@ def launch_setup(context):
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
+    enable_algorithm_mqtt = as_bool_text(
+        as_bool(config_value(config, "modules", "algorithm_mqtt", True))
+        and str(config_value(config, "task_hub", "algorithm_transport", "http")) == "mqtt"
+    )
 
     task_hub_params = {
+        "algorithm_transport": str(config_value(config, "task_hub", "algorithm_transport", "http")),
+        "algorithm_command_topic": str(config_value(
+            config, "task_hub", "algorithm_command_topic", "/algorithm_transport/commands"
+        )),
+        "algorithm_session_event_topic": str(config_value(
+            config, "task_hub", "algorithm_session_event_topic", "/algorithm_transport/session_events"
+        )),
+        "algorithm_result_topic": str(config_value(
+            config, "task_hub", "algorithm_result_topic", "/algorithm_transport/results"
+        )),
+        "algorithm_ack_service": str(config_value(
+            config, "task_hub", "algorithm_ack_service", "/algorithm_transport/ack_result"
+        )),
+        "platform_current_bid_topic": str(config_value(
+            config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
+        )),
         "default_route_config_path": os.path.expanduser(
             override_or_config(
                 context,
@@ -734,6 +754,9 @@ def launch_setup(context):
             context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "platform_current_bid_topic": str(config_value(
+            config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
+        )),
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),
@@ -795,6 +818,43 @@ def launch_setup(context):
         prefix=["stdbuf -o L -e L"],
         condition=IfCondition(enable_mqtt),
         parameters=[platform_params],
+    )
+
+    algorithm_mqtt_params = {
+        "sn": str(config_value(config, "mqtt", "sn", "x30")),
+        "mqtt_host": str(config_value(config, "algorithm_mqtt", "host", "127.0.0.1")),
+        "mqtt_port": ParameterValue(
+            config_value(config, "algorithm_mqtt", "port", 1883), value_type=int
+        ),
+        "mqtt_username": str(config_value(config, "algorithm_mqtt", "username", "")),
+        "mqtt_password": str(config_value(config, "algorithm_mqtt", "password", "")),
+        "algorithm_topic_root": str(config_value(
+            config, "algorithm_mqtt", "topic_root", "algorithm/device"
+        )),
+        "database_path": os.path.expanduser(str(config_value(
+            config, "algorithm_mqtt", "database_path", "~/.ros/inspection_algorithm_bridge/queue.db"
+        ))),
+        "max_attempts": ParameterValue(
+            config_value(config, "algorithm_mqtt", "max_attempts", 3), value_type=int
+        ),
+        "drain_timeout_seconds": ParameterValue(
+            config_value(config, "algorithm_mqtt", "result_drain_timeout_sec", 30.0),
+            value_type=float,
+        ),
+        "command_topic": task_hub_params["algorithm_command_topic"],
+        "session_event_topic": task_hub_params["algorithm_session_event_topic"],
+        "result_topic": task_hub_params["algorithm_result_topic"],
+        "ack_service": task_hub_params["algorithm_ack_service"],
+    }
+    algorithm_mqtt_bridge = Node(
+        package="inspection_algorithm_bridge",
+        executable="algorithm_mqtt_bridge_node",
+        name="algorithm_mqtt_bridge_node",
+        output="screen",
+        emulate_tty=True,
+        prefix=["stdbuf -o L -e L"],
+        condition=IfCondition(enable_algorithm_mqtt),
+        parameters=[algorithm_mqtt_params],
     )
 
     gimbal_params_file = os.path.expanduser(
@@ -867,4 +927,5 @@ def launch_setup(context):
         ),
     )
     actions.append(platform_mqtt_bridge)
+    actions.append(algorithm_mqtt_bridge)
     return actions
