@@ -513,9 +513,6 @@ def launch_setup(context):
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
-    enable_algorithm_mqtt = as_bool_text(
-        as_bool(config_value(config, "modules", "algorithm_mqtt", True))
-    )
 
     task_hub_params = {
         "algorithm_command_topic": str(config_value(
@@ -826,7 +823,7 @@ def launch_setup(context):
         output="screen",
         emulate_tty=True,
         prefix=["stdbuf -o L -e L"],
-        condition=IfCondition(enable_algorithm_mqtt),
+        condition=IfCondition(enable_mqtt),
         parameters=[algorithm_mqtt_params],
     )
 

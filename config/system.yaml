@@ -9,7 +9,6 @@ modules:
   thermal: true
   acoustic: true
   mqtt: true
-  algorithm_mqtt: true
 
 mqtt:
   sn: x30
