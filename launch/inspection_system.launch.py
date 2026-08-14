@@ -346,12 +346,7 @@ def generate_launch_description():
             default_value="",
             description="Task hub runtime event log directory.",
         ),
-        DeclareLaunchArgument("algorithm_execute_url", default_value=""),
-        DeclareLaunchArgument("algorithm_stop_url", default_value=""),
         DeclareLaunchArgument("algorithm_visible_stream_url", default_value=""),
-        DeclareLaunchArgument("algorithm_callback_url", default_value=""),
-        DeclareLaunchArgument("algorithm_callback_port", default_value=""),
-        DeclareLaunchArgument("algorithm_http_timeout_seconds", default_value=""),
         DeclareLaunchArgument(
             "passive_charge_arrival_battery_reserve_percent",
             default_value="",
@@ -520,11 +515,9 @@ def launch_setup(context):
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
     enable_algorithm_mqtt = as_bool_text(
         as_bool(config_value(config, "modules", "algorithm_mqtt", True))
-        and str(config_value(config, "task_hub", "algorithm_transport", "http")) == "mqtt"
     )
 
     task_hub_params = {
-        "algorithm_transport": str(config_value(config, "task_hub", "algorithm_transport", "http")),
         "algorithm_command_topic": str(config_value(
             config, "task_hub", "algorithm_command_topic", "/algorithm_transport/commands"
         )),
@@ -597,28 +590,8 @@ def launch_setup(context):
         "capture_action_name": override_or_config(
             context, "capture_action_name", config, "task_hub", "capture_action_name", "capture_media"
         ),
-        "algorithm_execute_url": override_or_config(
-            context, "algorithm_execute_url", config, "task_hub", "algorithm_execute_url",
-            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
-        ),
-        "algorithm_stop_url": override_or_config(
-            context, "algorithm_stop_url", config, "task_hub", "algorithm_stop_url",
-            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
-        ),
         "algorithm_visible_stream_url": override_or_config(
             context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
-        ),
-        "algorithm_callback_url": override_or_config(
-            context, "algorithm_callback_url", config, "task_hub", "algorithm_callback_url",
-            "http://192.168.2.99:8081/api/v1/algorithm/result"
-        ),
-        "algorithm_callback_port": ParameterValue(
-            override_or_config_typed(context, "algorithm_callback_port", config, "task_hub",
-                                      "algorithm_callback_port", 8081, int), value_type=int
-        ),
-        "algorithm_http_timeout_seconds": ParameterValue(
-            override_or_config_typed(context, "algorithm_http_timeout_seconds", config, "task_hub",
-                                      "algorithm_http_timeout_seconds", 10.0, float), value_type=float
         ),
         "passive_charge_arrival_battery_reserve_percent": ParameterValue(
             override_or_config_typed(
@@ -832,7 +805,7 @@ def launch_setup(context):
             config, "algorithm_mqtt", "topic_root", "algorithm/device"
         )),
         "database_path": os.path.expanduser(str(config_value(
-            config, "algorithm_mqtt", "database_path", "~/.ros/inspection_algorithm_bridge/queue.db"
+            config, "algorithm_mqtt", "database_path", "~/.ros/inspection_platform_bridge/algorithm_queue.db"
         ))),
         "max_attempts": ParameterValue(
             config_value(config, "algorithm_mqtt", "max_attempts", 3), value_type=int
@@ -847,7 +820,7 @@ def launch_setup(context):
         "ack_service": task_hub_params["algorithm_ack_service"],
     }
     algorithm_mqtt_bridge = Node(
-        package="inspection_algorithm_bridge",
+        package="inspection_platform_bridge",
         executable="algorithm_mqtt_bridge_node",
         name="algorithm_mqtt_bridge_node",
         output="screen",

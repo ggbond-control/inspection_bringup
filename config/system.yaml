@@ -38,7 +38,7 @@ algorithm_mqtt:
   username: "jiangxi"
   password: "123456"
   topic_root: algorithm/device
-  database_path: "~/.ros/inspection_algorithm_bridge/queue.db"
+  database_path: "~/.ros/inspection_platform_bridge/algorithm_queue.db"
   max_attempts: 3
   result_drain_timeout_sec: 30.0
 
@@ -89,15 +89,9 @@ live_stream:
     output_format: flv
 
 task_hub:
-  algorithm_transport: mqtt
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
-  algorithm_execute_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
-  algorithm_stop_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
   algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
-  algorithm_callback_url: "http://192.168.2.99:8081/api/v1/algorithm/result"
-  algorithm_callback_port: 8081
-  algorithm_http_timeout_seconds: 10.0
   algorithm_command_topic: "/algorithm_transport/commands"
   algorithm_session_event_topic: "/algorithm_transport/session_events"
   algorithm_result_topic: "/algorithm_transport/results"
