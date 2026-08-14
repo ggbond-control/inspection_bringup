@@ -256,7 +256,8 @@ The supervisor keeps its state only while it is running: `stopped`, `manual`,
 `bridge_only` runs `nav_bridge` only when no map path is available, while
 `localized` runs `nav_bridge + livox + slam`. Nav additionally runs
 `terrain + local_planner + global_planner`; add runs only `global_planner` as
-its extension and releases nav_bridge control.
+its extension. On a cold add startup, nav_bridge control is acquired first and
+then explicitly released.
 
 ### 状态转换表
 
@@ -268,9 +269,10 @@ its extension and releases nav_bridge control.
 | `manual/bridge_only` | `manual`，补传 `slam.prior_dir` | 有效 `slam.prior_dir` | 全量重启为 `manual/localized` | 成功；定位 ready 后返回 |
 | `manual/bridge_only` | `nav` | 显式 `slam.prior_dir` 和 `global_planner.initial_map` | 全量重启定位基础层和导航扩展层 | 成功；全部 readiness 完成后返回 |
 | `manual/localized` | `nav` | 显式 `global_planner.initial_map` | 保留定位，仅启动 terrain 和规划层 | 成功；扩展层 ready 后返回 |
-| `nav` | `manual` | 无 | 停止 terrain 和规划层，保留定位 | 成功；进入 `manual/localized` |
-| 任意状态 | `add` | 显式 `slam.prior_dir`、`global_planner.initial_map` | 启动或保留定位及 global planner；释放控制权 | 成功；不启动 terrain/local planner |
-| `add` | `nav` | 无额外地图参数 | 显式调用 `/nav_bridge_node/stand` 成功后启动 terrain/local planner/global planner | 成功；控制权接管失败则不启动 local planner |
+| `nav` | `manual` | 无 | 停止 terrain、local planner 和 global planner，保留定位 | 成功；进入 `manual/localized` |
+| 任意状态 | `add` | 显式 `slam.prior_dir`、`global_planner.initial_map` | 启动或保留定位及 global planner；冷启动时先接管再释放控制权 | 成功；不启动 terrain/local planner |
+| `nav` | `add` | 显式 `slam.prior_dir`、`global_planner.initial_map` | 仅停止 terrain 和 local planner，保留 global planner，再释放控制权 | 成功；global planner 不重启 |
+| `add` | `nav` | 无额外地图参数 | 显式调用 `/nav_bridge_node/stand` 成功后，仅启动 terrain 和 local planner | 成功；global planner 保留；控制权接管失败则不启动 local planner |
 | 任意运行状态 | 同一 mode，且非 `mode` 参数变化 | 变化的参数 | 全量重启为目标配置 | 成功或失败；失败原因在 service result 中返回 |
 | 任意状态 | `nav` 缺少所需地图输入 | 缺少的参数 | 不启动或不切换 | 失败；service result 说明缺失参数 |
 
@@ -284,24 +286,29 @@ its extension and releases nav_bridge control.
 | `manual/bridge_only` | `manual` with a supplied map path | Valid `slam.prior_dir` | Fully restart into `manual/localized` | Success after localization is ready |
 | `manual/bridge_only` | `nav` | Explicit `slam.prior_dir` and `global_planner.initial_map` | Fully restart localization and navigation extensions | Success after all readiness checks finish |
 | `manual/localized` | `nav` | Explicit `global_planner.initial_map` | Keep localization; start terrain and planners only | Success after extension readiness checks finish |
-| `nav` | `manual` | None | Stop terrain and planners; retain localization | Success; enter `manual/localized` |
-| Any state | `add` | Explicit `slam.prior_dir` and `global_planner.initial_map` | Start or retain localization and global planner; release control | Success; terrain and local planner remain stopped |
-| `add` | `nav` | No extra map input | Call `/nav_bridge_node/stand`, then start terrain, local planner, and global planner | Failure if control acquisition fails; local planner is not started |
+| `nav` | `manual` | None | Stop terrain, local planner, and global planner; retain localization | Success; enter `manual/localized` |
+| Any state | `add` | Explicit `slam.prior_dir` and `global_planner.initial_map` | Start or retain localization and global planner; a cold startup acquires then releases control | Success; terrain and local planner remain stopped |
+| `nav` | `add` | Explicit `slam.prior_dir` and `global_planner.initial_map` | Stop only terrain and local planner, retain global planner, then release control | Success; global planner is not restarted |
+| `add` | `nav` | No extra map input | Call `/nav_bridge_node/stand`, then start only terrain and local planner | Failure if control acquisition fails; local planner is not started; global planner is retained |
 | Any running state | Same mode with a changed non-`mode` parameter | Changed parameter | Fully restart with the requested configuration | Success or failure; reason is returned in the service result |
 | Any state | `nav` without required map input | Missing parameter | Do not start or switch | Failure; service result names the missing input |
 
-Pure mode switching preserves localization. `nav -> manual` stops only terrain
-and planners. `localized manual -> nav` starts only terrain and planners, but
+Pure mode switching preserves localization. `nav -> manual` stops terrain and
+all planners. `localized manual -> nav` starts only terrain and planners, but
 each such request must explicitly contain `global_planner.initial_map`. A
 `bridge_only manual -> nav` request must explicitly contain both
 `slam.prior_dir` and `global_planner.initial_map`, and uses a full restart to
-start localization before navigation. `add -> nav` first explicitly reacquires
-control with `/nav_bridge_node/stand`; it never relies on local planner cmd_vel
-publication to acquire nav_bridge control.
+start localization before navigation. `nav -> add` stops only terrain and
+local planner, retaining global planner. `add -> nav` first explicitly
+reacquires control with `/nav_bridge_node/stand`, then starts only terrain and
+local planner; it never relies on local planner cmd_vel publication to acquire
+nav_bridge control.
 
 An explicit non-mode parameter whose value differs from the active runtime
 configuration triggers a full restart. Otherwise a same-mode request succeeds
-without restarting modules.
+without restarting modules. The supervisor has one base worker and one worker
+per extension (`terrain`, `local_planner`, `global_planner`), so a warm mode
+switch stops and starts only the extension-module difference.
 
 When no map path is cached in the current supervisor process, `slam.prior_dir`
 is optional only for a bridge-only manual startup. A first startup directly to
@@ -414,9 +421,10 @@ bringup:
       control_action: acquire_control
       sequence: [nav_bridge, acquire_control, livox, slam, terrain, local_planner, global_planner]
     add:
+      startup_control_action: acquire_control
       control_action: release_control
       required_parameters: [slam.prior_dir, global_planner.initial_map]
-      sequence: [nav_bridge, release_control, livox, slam, global_planner]
+      sequence: [nav_bridge, acquire_control, release_control, livox, slam, global_planner]
   start_delay_seconds: 1.0
   wait_for_readiness: true
   shutdown_on_readiness_failure: true
@@ -450,10 +458,11 @@ slam:
 ```
 
 `manual.bridge_only_sequence` is selected only without a map path. Every mode
-declares the complete ordered stack it needs. `acquire_control` and
-`release_control` must immediately follow `nav_bridge`; this makes control
-ownership explicit and allows the supervisor to repeat the target mode's action
-on a warm mode switch. `bringup` also controls launch timing and readiness wait
+declares the complete ordered stack it needs. `startup_control_action` must
+immediately follow `nav_bridge`. `control_action` is repeated on a warm mode
+switch, so add can acquire control at cold startup and release it afterward
+while still using only `release_control` for `nav -> add`. `bringup` also
+controls launch timing and readiness wait
 behavior. Each module section contains only that module's launch arguments and
 readiness checks. New modes can be added in YAML by composing the existing
 module names and configured actions. Base modules and actions must precede
@@ -465,21 +474,22 @@ support in `navigation.launch.py`.
 When `bringup.start_mode` is `service`, `navigation.launch.py` starts a
 persistent `scripts/navigation_supervisor.py` service. For every accepted
 `bringup.start_service` call, the supervisor applies matching `SetParameters`
-overrides and uses two independently managed immediate-mode workers: the base
-localization layer (`nav_bridge`, Livox, SLAM) and the navigation extension
-layer (terrain and planners). Each worker reports its final readiness result
-back to the supervisor.
+overrides and uses independently managed immediate-mode workers: one base
+localization worker (`nav_bridge`, Livox, SLAM) and one worker per navigation
+extension (`terrain`, `local_planner`, `global_planner`). Each worker reports
+its final readiness result back to the supervisor.
 
 This separation allows mode changes without restarting localization. A full
 restart is used only when an explicitly supplied non-mode parameter differs
 from the active configuration. The top-level service process remains available
 after both successful and failed attempts.
 
-The supervisor also checks both worker processes once per second. If the base
-localization worker exits, it stops the navigation extension and changes its
-state to `stopped`; if only the extension worker exits, it changes its state to
-`manual`. This detects worker-launch failures after startup, but it is not a
-replacement for per-module runtime health interfaces.
+The supervisor also checks every worker process once per second. If the base
+localization worker exits, it stops all extensions and changes its state to
+`stopped`; if any expected extension exits, it stops the remaining extensions
+and changes its state to the configured fallback mode (default `manual`). This
+detects worker-launch failures after startup, but it is not a replacement for
+per-module runtime health interfaces.
 
 `bringup.result_timeout_seconds` controls how long the service waits for the
 final launch result. Values `<= 0` mean wait without a timeout.
@@ -502,7 +512,9 @@ The mode-specific order comes from `bringup.modes`:
 bringup:
   modes:
     add:
-      sequence: [nav_bridge, release_control, livox, slam, global_planner]
+      startup_control_action: acquire_control
+      control_action: release_control
+      sequence: [nav_bridge, acquire_control, release_control, livox, slam, global_planner]
 ```
 
 Invalid sequence entries are rejected by `/navigation_bringup/start` with a
