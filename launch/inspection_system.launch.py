@@ -738,6 +738,14 @@ def launch_setup(context):
                 "/navigation_bringup/start",
             )
         ),
+        "manual_map_switch_service_name": str(
+            config_value(
+                config,
+                "mqtt",
+                "manual_map_switch_service_name",
+                "/manual_switch_current_map",
+            )
+        ),
         "localization_map_parameter_name": str(
             config_value(config, "mqtt", "localization_map_parameter_name", "slam.prior_dir")
         ),

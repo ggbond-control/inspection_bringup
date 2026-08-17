@@ -20,6 +20,7 @@ mqtt:
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
   localization_set_parameters_service: /navigation_bringup/start
+  manual_map_switch_service_name: /manual_switch_current_map
   localization_map_parameter_name: slam.prior_dir
   localization_initial_map_parameter_name: global_planner.initial_map
   localization_set_parameter_timeout_sec: 60.0
