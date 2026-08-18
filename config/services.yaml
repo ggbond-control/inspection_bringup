@@ -11,7 +11,7 @@ service:
   environment:
     RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
     CYCLONEDDS_URI: file:///home/cat/Config/cyclonedds_large_message.xml
-    ROS_DOMAIN_ID: "26"
+    ROS_DOMAIN_ID: "77"
   ros_distro: jazzy
   ros_log_dir: /home/cat/inspection_logs
   install_dir: /opt/inspection_bringup

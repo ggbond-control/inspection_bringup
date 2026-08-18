@@ -12,11 +12,11 @@ modules:
 
 mqtt:
   sn: x30
-  host: 47.99.202.196
-  port: 1883
+  host: 111.77.141.65
+  port: 11883
   username: "jiangxi"
-  password: "123456"
-  topic_vendor_prefix: test
+  password: "Fhzn@1234"
+  topic_vendor_prefix: fh
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
   localization_set_parameters_service: /navigation_bringup/start
@@ -80,12 +80,12 @@ live_stream:
 task_hub:
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
-  algorithm_execute_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
-  algorithm_stop_url: "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
-  algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
-  algorithm_callback_url: "http://192.168.2.99:8081/api/v1/algorithm/result"
+  algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
+  algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
+  algorithm_visible_stream_url: ""
+  algorithm_callback_url: "http://47.99.202.196:20756/api/v1/algorithm/result"
   algorithm_callback_port: 8081
-  algorithm_http_timeout_seconds: 10.0
+  algorithm_http_timeout_seconds: 10
   passive_charge_arrival_battery_reserve_percent: 10
   stand_service_name: "/nav_bridge_node/stand"
   lie_service_name: "/nav_bridge_node/lie"

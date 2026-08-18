@@ -329,6 +329,9 @@ def launch_setup(context):
         "stand_service_name": str(
             config_value(config, "mqtt", "stand_service_name", "/nav_bridge_node/stand")
         ),
+        "robot_basic_state_topic": str(
+            config_value(config, "mqtt", "robot_basic_state_topic", "/robot_basic_state")
+        ),
         "lie_service_name": str(
             config_value(config, "mqtt", "lie_service_name", "/nav_bridge_node/lie")
         ),
