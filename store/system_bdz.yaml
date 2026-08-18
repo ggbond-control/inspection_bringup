@@ -11,12 +11,12 @@ modules:
   mqtt: true
 
 mqtt:
-  sn: x30
-  host: 111.77.141.65
-  port: 11883
-  username: "jiangxi"
-  password: "Fhzn@1234"
-  topic_vendor_prefix: fh
+  sn: x30-a
+  host: 47.99.202.196
+  port: 1883
+  username: "mdp"
+  password: "fhzn1234"
+  topic_vendor_prefix: test
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
   localization_set_parameters_service: /navigation_bringup/start
@@ -45,8 +45,6 @@ algorithm_mqtt:
 live_stream:
   config_path: ""
   request_on_startup: true
-  # true: 仅在任务执行期间推流；任务结束、取消或失败后自动停止。
-  task_scoped: true
   enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
@@ -93,12 +91,12 @@ live_stream:
 task_hub:
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
-  algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
-  algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
-  algorithm_visible_stream_url: ""
-  algorithm_callback_url: "http://47.99.202.196:20756/api/v1/algorithm/result"
-  algorithm_callback_port: 8081
-  algorithm_http_timeout_seconds: 10
+  algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
+  algorithm_command_topic: "/algorithm_transport/commands"
+  algorithm_session_event_topic: "/algorithm_transport/session_events"
+  algorithm_result_topic: "/algorithm_transport/results"
+  algorithm_ack_service: "/algorithm_transport/ack_result"
+  platform_current_bid_topic: "/platform/current_bid"
   passive_charge_arrival_battery_reserve_percent: 10
   stand_service_name: "/nav_bridge_node/stand"
   lie_service_name: "/nav_bridge_node/lie"

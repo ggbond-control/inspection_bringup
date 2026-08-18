@@ -111,6 +111,10 @@ def live_stream_params(config):
             as_bool(config_value(config, "live_stream", "request_on_startup", True)),
             value_type=bool,
         ),
+        "live_stream_task_scoped": ParameterValue(
+            as_bool(config_value(config, "live_stream", "task_scoped", False)),
+            value_type=bool,
+        ),
         "live_stream_enable_push": ParameterValue(
             as_bool(config_value(config, "live_stream", "enable_push", True)),
             value_type=bool,
@@ -346,12 +350,7 @@ def generate_launch_description():
             default_value="",
             description="Task hub runtime event log directory.",
         ),
-        DeclareLaunchArgument("algorithm_execute_url", default_value=""),
-        DeclareLaunchArgument("algorithm_stop_url", default_value=""),
         DeclareLaunchArgument("algorithm_visible_stream_url", default_value=""),
-        DeclareLaunchArgument("algorithm_callback_url", default_value=""),
-        DeclareLaunchArgument("algorithm_callback_port", default_value=""),
-        DeclareLaunchArgument("algorithm_http_timeout_seconds", default_value=""),
         DeclareLaunchArgument(
             "passive_charge_arrival_battery_reserve_percent",
             default_value="",
@@ -520,6 +519,21 @@ def launch_setup(context):
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
 
     task_hub_params = {
+        "algorithm_command_topic": str(config_value(
+            config, "task_hub", "algorithm_command_topic", "/algorithm_transport/commands"
+        )),
+        "algorithm_session_event_topic": str(config_value(
+            config, "task_hub", "algorithm_session_event_topic", "/algorithm_transport/session_events"
+        )),
+        "algorithm_result_topic": str(config_value(
+            config, "task_hub", "algorithm_result_topic", "/algorithm_transport/results"
+        )),
+        "algorithm_ack_service": str(config_value(
+            config, "task_hub", "algorithm_ack_service", "/algorithm_transport/ack_result"
+        )),
+        "platform_current_bid_topic": str(config_value(
+            config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
+        )),
         "default_route_config_path": os.path.expanduser(
             override_or_config(
                 context,
@@ -577,28 +591,8 @@ def launch_setup(context):
         "capture_action_name": override_or_config(
             context, "capture_action_name", config, "task_hub", "capture_action_name", "capture_media"
         ),
-        "algorithm_execute_url": override_or_config(
-            context, "algorithm_execute_url", config, "task_hub", "algorithm_execute_url",
-            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/execute"
-        ),
-        "algorithm_stop_url": override_or_config(
-            context, "algorithm_stop_url", config, "task_hub", "algorithm_stop_url",
-            "http://192.168.2.108:15680/openApi/gateway/algorithm/loop/stop"
-        ),
         "algorithm_visible_stream_url": override_or_config(
             context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
-        ),
-        "algorithm_callback_url": override_or_config(
-            context, "algorithm_callback_url", config, "task_hub", "algorithm_callback_url",
-            "http://192.168.2.99:8081/api/v1/algorithm/result"
-        ),
-        "algorithm_callback_port": ParameterValue(
-            override_or_config_typed(context, "algorithm_callback_port", config, "task_hub",
-                                      "algorithm_callback_port", 8081, int), value_type=int
-        ),
-        "algorithm_http_timeout_seconds": ParameterValue(
-            override_or_config_typed(context, "algorithm_http_timeout_seconds", config, "task_hub",
-                                      "algorithm_http_timeout_seconds", 10.0, float), value_type=float
         ),
         "passive_charge_arrival_battery_reserve_percent": ParameterValue(
             override_or_config_typed(
@@ -734,6 +728,9 @@ def launch_setup(context):
             context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "platform_current_bid_topic": str(config_value(
+            config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
+        )),
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),
@@ -743,6 +740,14 @@ def launch_setup(context):
                 "mqtt",
                 "localization_set_parameters_service",
                 "/navigation_bringup/start",
+            )
+        ),
+        "manual_map_switch_service_name": str(
+            config_value(
+                config,
+                "mqtt",
+                "manual_map_switch_service_name",
+                "/manual_switch_current_map",
             )
         ),
         "localization_map_parameter_name": str(
@@ -798,6 +803,43 @@ def launch_setup(context):
         prefix=["stdbuf -o L -e L"],
         condition=IfCondition(enable_mqtt),
         parameters=[platform_params],
+    )
+
+    algorithm_mqtt_params = {
+        "sn": str(config_value(config, "mqtt", "sn", "x30")),
+        "mqtt_host": str(config_value(config, "algorithm_mqtt", "host", "127.0.0.1")),
+        "mqtt_port": ParameterValue(
+            config_value(config, "algorithm_mqtt", "port", 1883), value_type=int
+        ),
+        "mqtt_username": str(config_value(config, "algorithm_mqtt", "username", "")),
+        "mqtt_password": str(config_value(config, "algorithm_mqtt", "password", "")),
+        "algorithm_topic_root": str(config_value(
+            config, "algorithm_mqtt", "topic_root", "algorithm/device"
+        )),
+        "database_path": os.path.expanduser(str(config_value(
+            config, "algorithm_mqtt", "database_path", "~/.ros/inspection_platform_bridge/algorithm_queue.db"
+        ))),
+        "max_attempts": ParameterValue(
+            config_value(config, "algorithm_mqtt", "max_attempts", 3), value_type=int
+        ),
+        "drain_timeout_seconds": ParameterValue(
+            config_value(config, "algorithm_mqtt", "result_drain_timeout_sec", 30.0),
+            value_type=float,
+        ),
+        "command_topic": task_hub_params["algorithm_command_topic"],
+        "session_event_topic": task_hub_params["algorithm_session_event_topic"],
+        "result_topic": task_hub_params["algorithm_result_topic"],
+        "ack_service": task_hub_params["algorithm_ack_service"],
+    }
+    algorithm_mqtt_bridge = Node(
+        package="inspection_platform_bridge",
+        executable="algorithm_mqtt_bridge_node",
+        name="algorithm_mqtt_bridge_node",
+        output="screen",
+        emulate_tty=True,
+        prefix=["stdbuf -o L -e L"],
+        condition=IfCondition(enable_mqtt),
+        parameters=[algorithm_mqtt_params],
     )
 
     gimbal_params_file = os.path.expanduser(
@@ -870,4 +912,5 @@ def launch_setup(context):
         ),
     )
     actions.append(platform_mqtt_bridge)
+    actions.append(algorithm_mqtt_bridge)
     return actions
