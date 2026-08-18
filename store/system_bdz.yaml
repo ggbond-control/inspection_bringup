@@ -1,0 +1,123 @@
+modules:
+  task_hub: true
+  gimbal: true
+  charge: true
+  sensors: true
+  alarm: true
+  light: true
+  gas: true
+  thermal: true
+  acoustic: true
+  mqtt: true
+
+mqtt:
+  sn: x30-a
+  host: 47.99.202.196
+  port: 1883
+  username: "mdp"
+  password: "fhzn1234"
+  topic_vendor_prefix: test
+  topic_root: device
+  map_root_directory: /home/cat/Workspace/Maps
+  localization_set_parameters_service: /navigation_bringup/start
+  manual_map_switch_service_name: /manual_switch_current_map
+  localization_map_parameter_name: slam.prior_dir
+  localization_initial_map_parameter_name: global_planner.initial_map
+  localization_set_parameter_timeout_sec: 60.0
+  localization_service_wait_timeout_sec: 5.0
+  acoustic_start_service_name: /monitor/acoustic/start
+  acoustic_stop_service_name: /monitor/acoustic/stop
+  stand_service_name: /nav_bridge_node/stand
+  lie_service_name: /nav_bridge_node/lie
+  soft_estop_service_name: /nav_bridge_node/soft_estop
+  manual_jog_max_duration_ms: 2500
+
+algorithm_mqtt:
+  host: 47.99.202.196
+  port: 1883
+  username: "jiangxi"
+  password: "123456"
+  topic_root: algorithm/device
+  database_path: "~/.ros/inspection_platform_bridge/algorithm_queue.db"
+  max_attempts: 3
+  result_drain_timeout_sec: 30.0
+
+live_stream:
+  config_path: ""
+  request_on_startup: true
+  enable_push: true
+  ffmpeg_bin: ffmpeg
+  restart_interval_sec: 1.0
+  gimbal:
+    enabled: true
+  acoustic:
+    enabled: true
+    stream_id: x30/acoustic
+    topic: /monitor/acoustic/overlay
+    status_topic: /platform/acoustic_sensor_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    video_codec: h264_rkmpp
+    output_format: flv
+    restart_interval_sec: 5.0
+  acoustic_camera:
+    enabled: false
+    stream_id: x30_acoustic_camera
+    topic: /monitor/acoustic/camera
+    status_topic: /platform/acoustic_camera_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    video_codec: h264_rkmpp
+    output_format: flv
+    restart_interval_sec: 5.0
+  acoustic_heatmap:
+    enabled: false
+    stream_id: x30_acoustic_heatmap
+    topic: /monitor/acoustic/heatmap
+    status_topic: /platform/acoustic_heatmap_stream/status
+    fps: 10.0
+    bitrate: 1500k
+    video_codec: h264_rkmpp
+    output_format: flv
+    restart_interval_sec: 5.0
+  ffmpeg:
+    loglevel: warning
+    realtime_input: false
+    rtsp_transport: tcp
+    video_codec: copy
+    audio_codec: copy
+    output_format: flv
+
+task_hub:
+  default_route_config_path: ""
+  runtime_log_directory: "~/runtime_logs"
+  algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
+  algorithm_command_topic: "/algorithm_transport/commands"
+  algorithm_session_event_topic: "/algorithm_transport/session_events"
+  algorithm_result_topic: "/algorithm_transport/results"
+  algorithm_ack_service: "/algorithm_transport/ack_result"
+  platform_current_bid_topic: "/platform/current_bid"
+  passive_charge_arrival_battery_reserve_percent: 10
+  stand_service_name: "/nav_bridge_node/stand"
+  lie_service_name: "/nav_bridge_node/lie"
+  set_gait_service_name: "/nav_bridge_node/set_gait"
+  navigation_action_name: "multi_map_navigate_to_pose"
+  gimbal_action_name: "follow_joint_trajectory"
+  capture_action_name: "capture_media"
+  navigation_validate_waypoints_service: "/validate_route_waypoints"
+  require_waypoint_validation_success: false
+  navigation_heartbeat_topic: "/inspection_task_hub/heartbeat/navigation"
+  gimbal_heartbeat_topic: "/inspection_task_hub/heartbeat/gimbal"
+  odometry_topic: "/odometry_multi_maps"
+  robot_basic_state_topic: "/robot_basic_state"
+  charge_manager_state_topic: "/charge_manager_state"
+  heartbeat_timeout_seconds: 3.0
+  robot_state_timeout_seconds: 3.0
+  trigger_service_timeout_seconds: 30.0
+  manual_mode_ready_timeout_seconds: 60.0
+
+gimbal:
+  params_file: ""
+  camera_backend: "gimbal_hk"
+  launch_post_waypoint_home_bridge: false
+  use_http_isapi_absolute_ptz: true
