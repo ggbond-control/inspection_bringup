@@ -72,6 +72,10 @@ def live_stream_params(config):
             as_bool(config_value(config, "live_stream", "request_on_startup", True)),
             value_type=bool,
         ),
+        "live_stream_task_scoped": ParameterValue(
+            as_bool(config_value(config, "live_stream", "task_scoped", False)),
+            value_type=bool,
+        ),
         "live_stream_enable_push": ParameterValue(
             as_bool(config_value(config, "live_stream", "enable_push", True)),
             value_type=bool,
