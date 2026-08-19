@@ -29,6 +29,7 @@ mqtt:
   stand_service_name: /nav_bridge_node/stand
   lie_service_name: /nav_bridge_node/lie
   soft_estop_service_name: /nav_bridge_node/soft_estop
+  charge_exit_service_name: /task_hub/charge_exit
   manual_jog_max_duration_ms: 2500
 
 algorithm_mqtt:
@@ -110,6 +111,7 @@ task_hub:
   odometry_topic: "/odometry_multi_maps"
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
+  charge_exit_executor_service_name: "/inspection_charge_executor/exit_charge"
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 30.0
