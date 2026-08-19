@@ -113,6 +113,7 @@ task_hub:
   odometry_topic: "/odometry_multi_maps"
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
+  charge_exit_service_name: "/nav_bridge_node/charge_command"
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 30.0

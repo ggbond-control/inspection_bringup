@@ -422,6 +422,11 @@ def generate_launch_description():
             description="Charge manager state topic for task hub work-state monitoring.",
         ),
         DeclareLaunchArgument(
+            "charge_exit_service_name",
+            default_value="",
+            description="Lower-level charge command service used to stop charging.",
+        ),
+        DeclareLaunchArgument(
             "heartbeat_timeout_seconds",
             default_value="",
             description="Heartbeat timeout threshold in seconds.",
@@ -640,6 +645,14 @@ def launch_setup(context):
             "task_hub",
             "charge_manager_state_topic",
             "/charge_manager_state",
+        ),
+        "charge_exit_service_name": override_or_config(
+            context,
+            "charge_exit_service_name",
+            config,
+            "task_hub",
+            "charge_exit_service_name",
+            "/nav_bridge_node/charge_command",
         ),
         "heartbeat_timeout_seconds": ParameterValue(
             override_or_config_typed(
