@@ -67,6 +67,14 @@ def mqtt_base_prefix(config):
 
 def live_stream_params(config):
     return {
+        "algorithm_visible_stream_url_topic": str(
+            config_value(
+                config,
+                "live_stream",
+                "algorithm_visible_stream_url_topic",
+                "/platform/live_stream/gimbal_vis/url",
+            )
+        ),
         "live_stream_config_path": str(config_value(config, "live_stream", "config_path", "")),
         "live_stream_request_on_startup": ParameterValue(
             as_bool(config_value(config, "live_stream", "request_on_startup", True)),

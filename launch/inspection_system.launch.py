@@ -106,6 +106,14 @@ def mqtt_base_prefix(config):
 
 def live_stream_params(config):
     return {
+        "algorithm_visible_stream_url_topic": str(
+            config_value(
+                config,
+                "live_stream",
+                "algorithm_visible_stream_url_topic",
+                "/platform/live_stream/gimbal_vis/url",
+            )
+        ),
         "live_stream_config_path": str(config_value(config, "live_stream", "config_path", "")),
         "live_stream_request_on_startup": ParameterValue(
             as_bool(config_value(config, "live_stream", "request_on_startup", True)),
@@ -598,6 +606,21 @@ def launch_setup(context):
         ),
         "algorithm_visible_stream_url": override_or_config(
             context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
+        ),
+        "algorithm_visible_stream_url_topic": str(config_value(
+            config,
+            "task_hub",
+            "algorithm_visible_stream_url_topic",
+            "/platform/live_stream/gimbal_vis/url",
+        )),
+        "algorithm_stream_url_wait_timeout_seconds": ParameterValue(
+            config_value(
+                config,
+                "task_hub",
+                "algorithm_stream_url_wait_timeout_seconds",
+                10.0,
+            ),
+            value_type=float,
         ),
         "passive_charge_arrival_battery_reserve_percent": ParameterValue(
             override_or_config_typed(

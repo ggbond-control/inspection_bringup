@@ -44,6 +44,7 @@ algorithm_mqtt:
 
 live_stream:
   config_path: ""
+  algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
   request_on_startup: true
   # true: 仅在任务执行期间推流；任务结束、取消或失败后自动停止。
   task_scoped: true
@@ -96,6 +97,8 @@ task_hub:
   algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
   algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
   algorithm_visible_stream_url: ""
+  algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
+  algorithm_stream_url_wait_timeout_seconds: 10.0
   algorithm_callback_url: "http://47.99.202.196:20756/api/v1/algorithm/result"
   algorithm_callback_port: 8081
   algorithm_http_timeout_seconds: 10
