@@ -607,6 +607,15 @@ def launch_setup(context):
         "algorithm_visible_stream_url": override_or_config(
             context, "algorithm_visible_stream_url", config, "task_hub", "algorithm_visible_stream_url", ""
         ),
+        "algorithm_dynamic_stream_url_enabled": ParameterValue(
+            as_bool(config_value(
+                config,
+                "task_hub",
+                "algorithm_dynamic_stream_url_enabled",
+                True,
+            )),
+            value_type=bool,
+        ),
         "algorithm_visible_stream_url_topic": str(config_value(
             config,
             "task_hub",
