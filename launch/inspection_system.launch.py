@@ -678,13 +678,13 @@ def launch_setup(context):
             "charge_manager_state_topic",
             "/charge_manager_state",
         ),
-        "charge_exit_service_name": override_or_config(
+        "charge_exit_executor_service_name": override_or_config(
             context,
-            "charge_exit_service_name",
+            "charge_exit_executor_service_name",
             config,
             "task_hub",
-            "charge_exit_service_name",
-            "/nav_bridge_node/charge_command",
+            "charge_exit_executor_service_name",
+            "/inspection_charge_executor/exit_charge",
         ),
         "heartbeat_timeout_seconds": ParameterValue(
             override_or_config_typed(
@@ -831,6 +831,9 @@ def launch_setup(context):
         ),
         "soft_estop_service_name": str(
             config_value(config, "mqtt", "soft_estop_service_name", "/nav_bridge_node/soft_estop")
+        ),
+        "charge_exit_service_name": str(
+            config_value(config, "mqtt", "charge_exit_service_name", "/task_hub/charge_exit")
         ),
         "manual_jog_max_duration_ms": ParameterValue(
             config_value(config, "mqtt", "manual_jog_max_duration_ms", 2500),

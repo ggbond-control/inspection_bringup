@@ -161,11 +161,30 @@ def config_sequence(config):
     if bringup.get("sequence") not in (None, ""):
         return config_list(config, "bringup", "sequence", [])
 
+    modes = bringup.get("modes", {})
+    mode = str(config.get("mode", "nav")).strip().lower()
+    if isinstance(modes, dict) and isinstance(modes.get(mode), dict):
+        mode_config = modes[mode]
+        if mode == "manual" and not str(config.get("slam", {}).get("prior_dir", "")).strip():
+            sequence = mode_config.get("bridge_only_sequence", [])
+        else:
+            sequence = mode_config.get("sequence", [])
+        if isinstance(sequence, list) and sequence:
+            return [str(item) for item in sequence]
+
     manual_sequence = config_list(config, "bringup", "manual_sequence", [])
     nav_extension_sequence = config_list(config, "bringup", "nav_extension_sequence", [])
     if manual_sequence or nav_extension_sequence:
         return manual_sequence + nav_extension_sequence
     return ["nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"]
+
+
+def action_config(config, action_name):
+    actions = config.get("bringup", {}).get("actions", {})
+    if not isinstance(actions, dict):
+        return {}
+    value = actions.get(action_name, {})
+    return value if isinstance(value, dict) else {}
 
 
 def sequence_module_enabled(context, override_name, sequence, module_name, use_launch_overrides=True):
@@ -279,6 +298,23 @@ def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout,
         name="wait_for_nav_bridge_ready",
         output="screen",
     )
+
+
+def trigger_action(name, service, timeout, failure_detail=None):
+    cmd = [
+        "python3",
+        readiness_script_path(),
+        "trigger",
+        "--name",
+        name,
+        "--service",
+        service,
+        "--timeout",
+        str(timeout),
+    ]
+    if failure_detail:
+        cmd.extend(["--failure-detail", failure_detail])
+    return ExecuteProcess(cmd=cmd, name=f"wait_for_{name}", output="screen")
 
 
 def localization_init_ready_action(
@@ -519,10 +555,12 @@ def append_navigation_group(
     run_id=None,
 ):
     if previous_wait is None:
-        actions.extend([launch_action, wait_action])
+        if launch_action is not None:
+            actions.append(launch_action)
+        actions.append(wait_action)
         return wait_action
 
-    next_actions = [launch_action, wait_action]
+    next_actions = ([launch_action] if launch_action is not None else []) + [wait_action]
     if delay_seconds > 0.0:
         next_actions = [TimerAction(period=delay_seconds, actions=next_actions)]
 
@@ -1097,6 +1135,25 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         ),
     }
 
+    actions_config = config.get("bringup", {}).get("actions", {})
+    if isinstance(actions_config, dict):
+        for action_name, action in actions_config.items():
+            if not isinstance(action, dict):
+                continue
+            action_type = str(action.get("type", "trigger_service")).strip().lower()
+            service = str(action.get("service", "")).strip()
+            timeout = float(action.get("timeout_seconds", 5.0))
+            failure_detail = detail_path(f"action_{action_name}")
+            if action_type != "trigger_service" or not service:
+                continue
+            navigation_groups[str(action_name)] = (
+                True,
+                None,
+                trigger_action(str(action_name), service, timeout, failure_detail),
+                f"action {action_name} failed: trigger service {service} did not return success {timeout_text_for_reason(timeout)}",
+                failure_detail,
+            )
+
     ordered_navigation_groups = []
     seen_group_names = set()
     for name in sequence:
@@ -1119,7 +1176,9 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         for enabled, launch_action, name, ready_action, _failure_reason, _failure_detail in ordered_navigation_groups:
             if enabled:
                 start_delay = delay * launch_index
-                if name == "nav_bridge" and module_readiness_type(config, name) == "nav_bridge":
+                if launch_action is None:
+                    actions.extend(delayed_actions(start_delay, [ready_action]))
+                elif name == "nav_bridge" and module_readiness_type(config, name) == "nav_bridge":
                     actions.extend(delayed_actions(start_delay, [launch_action, ready_action]))
                 else:
                     actions.append(delayed_include(start_delay, launch_action))
