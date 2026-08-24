@@ -206,7 +206,7 @@ def call_trigger_service(service, timeout, name, failure_detail=None):
     write_failure_detail(
         failure_detail,
         name,
-        f"trigger service timeout or failure: {service}",
+        f"trigger service timeout or failure: {service}; last output: {last_output}",
         service=service,
         timeout_seconds=timeout,
         last_output=last_output,
@@ -227,6 +227,10 @@ def run_nav_bridge(args):
     if not wait_for_topics(topics, args.topic_timeout, "nav_bridge", args.failure_detail):
         return False
     return call_trigger_service(args.stand_service, args.stand_timeout, "nav_bridge", args.failure_detail)
+
+
+def run_trigger(args):
+    return call_trigger_service(args.service, args.timeout, args.name, args.failure_detail)
 
 
 def diagnostic_level_name(level):
@@ -670,6 +674,20 @@ def main():
     )
     nav_bridge_parser.add_argument("--failure-detail", default="")
     nav_bridge_parser.set_defaults(func=run_nav_bridge)
+
+    trigger_parser = subparsers.add_parser(
+        "trigger", help="Call a std_srvs/srv/Trigger service and require success: true."
+    )
+    trigger_parser.add_argument("--name", required=True, help="Name used in logs and failure details.")
+    trigger_parser.add_argument("--service", required=True, help="Trigger service name.")
+    trigger_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=5.0,
+        help="Service wait and call timeout in seconds. Use 0 or a negative value to wait forever.",
+    )
+    trigger_parser.add_argument("--failure-detail", default="", help="YAML path for failure details.")
+    trigger_parser.set_defaults(func=run_trigger)
 
     localization_parser = subparsers.add_parser(
         "localization-init",

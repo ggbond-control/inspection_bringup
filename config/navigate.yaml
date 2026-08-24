@@ -4,16 +4,51 @@ bringup:
   start_mode: service
   start_service: /navigation_bringup/start
   result_timeout_seconds: 0.0
-  manual_without_map_sequence:
-    - nav_bridge
-  manual_sequence:
-    - nav_bridge
-    - livox
-    - slam
-  nav_extension_sequence:
-    - terrain
-    - local_planner
-    - global_planner
+  actions:
+    acquire_control:
+      type: trigger_service
+      service: /nav_bridge_node/stand
+      timeout_seconds: 30.0
+    release_control:
+      type: trigger_service
+      service: /nav_bridge_node/release_control
+      timeout_seconds: 5.0
+  modes:
+    manual:
+      control_action: acquire_control
+      bridge_only_sequence:
+        - nav_bridge
+        - acquire_control
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - livox
+        - slam
+    nav:
+      control_action: acquire_control
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - livox
+        - slam
+        - terrain
+        - local_planner
+        - global_planner
+    add:
+      # Cold start must acquire the session before explicitly releasing it.
+      # Warm switches use control_action only.
+      startup_control_action: acquire_control
+      control_action: release_control
+      required_parameters:
+        - slam.prior_dir
+        - global_planner.initial_map
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - release_control
+        - livox
+        - slam
+        - global_planner
   start_delay_seconds: 1.0
   wait_for_readiness: true
   shutdown_on_readiness_failure: true
@@ -21,12 +56,10 @@ bringup:
 
 nav_bridge:
   readiness:
-    type: nav_bridge
+    type: topics
     topics:
       - /battery/level
-    stand_service: /nav_bridge_node/stand
-    topic_timeout_seconds: 10.0
-    stand_timeout_seconds: 30.0
+    timeout_seconds: 10.0
 
 livox:
   model: mid360s

@@ -22,6 +22,7 @@ from rclpy.node import Node
 STOPPED = "stopped"
 MANUAL = "manual"
 NAV = "nav"
+ADD = "add"
 MANUAL_BRIDGE_ONLY = "bridge_only"
 MANUAL_LOCALIZED = "localized"
 MANUAL_WITHOUT_MAP_MODULES = ("nav_bridge",)
@@ -136,7 +137,7 @@ class NavigationSupervisor(Node):
         self.base_config = load_yaml(self.config_path)
         self.allowed_paths = flatten_leaves(self.base_config)
         self.module_names = SUPPORTED_MODULES
-        self.validate_layer_sequences(self.base_config)
+        self.validate_mode_sequences(self.base_config)
         self.current_state = STOPPED
         self.manual_profile = None
         self.active_config = None
@@ -145,7 +146,7 @@ class NavigationSupervisor(Node):
         self.busy_reason = ""
         self.request_lock = threading.Lock()
         self.state_lock = threading.Lock()
-        self.workers = {"base": None, "navigation": None}
+        self.workers = {"base": None, **{name: None for name in NAV_EXTENSION_MODULES}}
         os.makedirs(self.state_dir, exist_ok=True)
         self.service = self.create_service(
             SetParameters,
@@ -174,7 +175,7 @@ class NavigationSupervisor(Node):
                     return response
 
                 target_state = self.target_state(runtime_config)
-                self.validate_layer_sequences(runtime_config)
+                self.validate_mode_sequences(runtime_config)
                 manual_profile = self.validate_map_requirements(
                     runtime_config, target_state, provided_paths
                 )
@@ -220,8 +221,10 @@ class NavigationSupervisor(Node):
 
     def target_state(self, config):
         mode = str(get_by_path(config, "mode", NAV)).strip().lower()
-        if mode not in (MANUAL, NAV):
-            raise ValueError(f"unsupported navigation mode: {mode}; expected nav or manual")
+        modes = get_by_path(config, "bringup.modes", {})
+        if not isinstance(modes, dict) or mode not in modes:
+            available = ", ".join(sorted(modes)) if isinstance(modes, dict) else "none"
+            raise ValueError(f"unsupported navigation mode: {mode}; configured modes: {available}")
         return mode
 
     def validate_map_requirements(self, config, target_state, provided_paths):
@@ -231,6 +234,16 @@ class NavigationSupervisor(Node):
 
         if target_state == MANUAL and manual_profile == MANUAL_BRIDGE_ONLY:
             return manual_profile
+
+        explicit_parameters = get_by_path(
+            config, f"bringup.modes.{target_state}.required_parameters", []
+        )
+        if explicit_parameters:
+            if not isinstance(explicit_parameters, list):
+                raise ValueError(f"bringup.modes.{target_state}.required_parameters must be a list")
+            missing = [str(path) for path in explicit_parameters if str(path) not in provided_paths]
+            if missing:
+                raise ValueError(f"{target_state} mode requires explicit " + ", ".join(missing))
 
         if self.current_state == STOPPED and target_state == NAV:
             if not has_initial and "global_planner.initial_map" not in provided_paths:
@@ -251,12 +264,13 @@ class NavigationSupervisor(Node):
                     else "manual to nav requires explicit global_planner.initial_map; cached values are not trusted"
                 )
 
-        if not prior_dir:
-            raise ValueError("missing required map information: slam.prior_dir is empty")
-        if not os.path.isdir(os.path.expanduser(os.path.expandvars(prior_dir))):
-            raise ValueError(f"slam.prior_dir does not exist or is not a directory: {prior_dir}")
-
-        if target_state == NAV:
+        target_modules = set(self.mode_sequence(config, target_state, manual_profile))
+        if target_modules & {"slam", "global_planner"}:
+            if not prior_dir:
+                raise ValueError("missing required map information: slam.prior_dir is empty")
+            if not os.path.isdir(os.path.expanduser(os.path.expandvars(prior_dir))):
+                raise ValueError(f"slam.prior_dir does not exist or is not a directory: {prior_dir}")
+        if "global_planner" in target_modules:
             initial_map = str(get_by_path(config, "global_planner.initial_map", "")).strip()
             if not initial_map:
                 raise ValueError("missing required map information: global_planner.initial_map is empty")
@@ -276,44 +290,112 @@ class NavigationSupervisor(Node):
         elif not multi_map_dir:
             set_by_path(config, "global_planner.multi_map_dir", prior_dir)
 
-    def validate_layer_sequences(self, config):
-        self.layer_sequence(config, "manual_without_map")
-        manual_sequence = self.layer_sequence(config, "base")
-        navigation_sequence = self.layer_sequence(config, "navigation")
-        overlap = set(manual_sequence) & set(navigation_sequence)
-        if overlap:
-            raise ValueError(
-                "manual_sequence and nav_extension_sequence must not overlap: "
-                + ", ".join(sorted(overlap))
-            )
+    @staticmethod
+    def action_specs(config):
+        actions = get_by_path(config, "bringup.actions", {})
+        return actions if isinstance(actions, dict) else {}
 
-    def layer_sequence(self, config, layer):
-        sequence_info = {
-            "manual_without_map": ("manual_without_map_sequence", MANUAL_WITHOUT_MAP_MODULES),
-            "base": ("manual_sequence", MANUAL_MODULES),
-            "navigation": ("nav_extension_sequence", NAV_EXTENSION_MODULES),
-        }
-        key, expected_modules = sequence_info[layer]
-        sequence = get_by_path(config, f"bringup.{key}", [])
+    def mode_sequence(self, config, mode, manual_profile=MANUAL_LOCALIZED):
+        key = "bridge_only_sequence" if mode == MANUAL and manual_profile == MANUAL_BRIDGE_ONLY else "sequence"
+        sequence = get_by_path(config, f"bringup.modes.{mode}.{key}", [])
         if not isinstance(sequence, list) or not sequence:
-            raise ValueError(f"bringup.{key} must be a non-empty list")
-        names = [str(name) for name in sequence]
+            raise ValueError(f"bringup.modes.{mode}.{key} must be a non-empty list")
+        return tuple(str(name) for name in sequence)
+
+    def control_action(self, config, mode):
+        action = str(get_by_path(config, f"bringup.modes.{mode}.control_action", "")).strip()
+        return action
+
+    def startup_control_action(self, config, mode):
+        action = str(
+            get_by_path(
+                config,
+                f"bringup.modes.{mode}.startup_control_action",
+                self.control_action(config, mode),
+            )
+        ).strip()
+        return action
+
+    def validate_mode_sequences(self, config):
+        actions = self.action_specs(config)
+        if not actions:
+            raise ValueError("bringup.actions must define navigation control actions")
+        for name, spec in actions.items():
+            if not isinstance(spec, dict) or str(spec.get("type", "")).strip() != "trigger_service":
+                raise ValueError(f"bringup.actions.{name} must use type trigger_service")
+            if not str(spec.get("service", "")).strip():
+                raise ValueError(f"bringup.actions.{name}.service must be configured")
+
+        modes = get_by_path(config, "bringup.modes", {})
+        if not isinstance(modes, dict) or not modes:
+            raise ValueError("bringup.modes must define at least one mode")
+        for mode in modes:
+            profiles = (MANUAL_BRIDGE_ONLY, MANUAL_LOCALIZED) if mode == MANUAL else (MANUAL_LOCALIZED,)
+            for profile in profiles:
+                self.validate_mode_sequence(config, mode, profile, actions)
+
+    def validate_mode_sequence(self, config, mode, profile, actions):
+        names = self.mode_sequence(config, mode, profile)
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
-            raise ValueError(f"bringup.{key} contains duplicate modules: {', '.join(duplicates)}")
-        unknown = sorted(set(names) - set(self.module_names))
+            raise ValueError(f"bringup.modes.{mode} contains duplicate entries: {', '.join(duplicates)}")
+        modules = {name for name in names if name in self.module_names}
+        unknown = sorted(set(names) - modules - set(actions))
         if unknown:
-            raise ValueError(f"bringup.{key} contains unknown modules: {', '.join(unknown)}")
-        missing = sorted(set(expected_modules) - set(names))
-        misplaced = sorted(set(names) - set(expected_modules))
-        if missing or misplaced:
-            details = []
-            if missing:
-                details.append("missing " + ", ".join(missing))
-            if misplaced:
-                details.append("contains modules from the other layer: " + ", ".join(misplaced))
-            raise ValueError(f"bringup.{key} must contain exactly its required modules: " + "; ".join(details))
-        return tuple(names)
+            raise ValueError(f"bringup.modes.{mode} contains unknown entries: {', '.join(unknown)}")
+        control = self.control_action(config, mode)
+        startup_control = self.startup_control_action(config, mode)
+        for action_name, field_name in ((control, "control_action"), (startup_control, "startup_control_action")):
+            if action_name and action_name not in actions:
+                raise ValueError(f"bringup.modes.{mode}.{field_name} references unknown action {action_name}")
+        if startup_control:
+            if startup_control not in names:
+                raise ValueError(f"bringup.modes.{mode} must include startup control action {startup_control}")
+            if "nav_bridge" not in names or names.index("nav_bridge") + 1 != names.index(startup_control):
+                raise ValueError(
+                    f"bringup.modes.{mode} startup control action {startup_control} must immediately follow nav_bridge"
+                )
+        if control and control not in names:
+            raise ValueError(f"bringup.modes.{mode} must include control action {control}")
+        first_extension = next((index for index, name in enumerate(names) if name in NAV_EXTENSION_MODULES), len(names))
+        if any(name in MANUAL_MODULES or name in actions for name in names[first_extension + 1 :]):
+            raise ValueError(f"bringup.modes.{mode} must start all base modules and actions before extensions")
+
+    def layer_sequence(self, config, mode, manual_profile, layer):
+        sequence = self.mode_sequence(config, mode, manual_profile)
+        if layer == "base":
+            return tuple(name for name in sequence if name in MANUAL_MODULES or name in self.action_specs(config))
+        if layer == "navigation":
+            return tuple(name for name in sequence if name in NAV_EXTENSION_MODULES)
+        raise ValueError(f"unknown worker layer: {layer}")
+
+    def mode_has_navigation_layer(self):
+        if self.current_state == STOPPED or self.active_config is None:
+            return False
+        return bool(self.layer_sequence(self.active_config, self.current_state, self.manual_profile, "navigation"))
+
+    def active_extension_sequence(self):
+        if self.current_state == STOPPED or self.active_config is None:
+            return ()
+        configured = self.layer_sequence(
+            self.active_config, self.current_state, self.manual_profile, "navigation"
+        )
+        return tuple(name for name in configured if self.worker_alive(name))
+
+    def extension_failure_mode(self):
+        fallback = str(
+            get_by_path(
+                self.active_config,
+                f"bringup.modes.{self.current_state}.extension_failure_mode",
+                MANUAL,
+            )
+        ).strip()
+        modes = get_by_path(self.active_config, "bringup.modes", {})
+        if not isinstance(modes, dict) or fallback not in modes:
+            raise ValueError(f"invalid extension_failure_mode for {self.current_state}: {fallback}")
+        if self.layer_sequence(self.active_config, fallback, MANUAL_LOCALIZED, "navigation"):
+            raise ValueError(f"extension_failure_mode for {self.current_state} must not start navigation extensions")
+        return fallback
 
     def select_transition(self, config, target_state, provided_paths):
         if self.current_state == STOPPED:
@@ -331,30 +413,59 @@ class NavigationSupervisor(Node):
             return "full_restart"
         if self.current_state == target_state:
             return "noop"
-        if self.current_state == NAV and target_state == MANUAL:
-            return "disable_navigation"
-        if self.current_state == MANUAL and target_state == NAV:
-            return "enable_navigation"
-        raise RuntimeError(f"unsupported navigation transition: {self.current_state} -> {target_state}")
+        if self.current_state == MANUAL and self.manual_profile == MANUAL_BRIDGE_ONLY:
+            return "full_restart"
+        return "switch_mode"
 
     def execute_transition(self, config, target_state, transition, manual_profile):
         if transition == "noop":
             return True, f"navigation already running in {target_state} mode"
 
-        if transition == "disable_navigation":
-            self.stop_worker("navigation")
-            set_by_path(self.active_config, "mode", MANUAL)
-            self.current_state = MANUAL
-            self.manual_profile = MANUAL_LOCALIZED
-            return True, "switched navigation mode: nav -> manual; localization remains running"
-
-        if transition == "enable_navigation":
-            success, reason = self.start_layer("navigation", config)
+        if transition == "switch_mode":
+            previous_state = self.current_state
+            previous_profile = self.manual_profile
+            previous_config = copy.deepcopy(self.active_config)
+            previous_extensions = self.active_extension_sequence()
+            target_extensions = self.layer_sequence(config, target_state, manual_profile, "navigation")
+            stopped_extensions = tuple(
+                name for name in reversed(previous_extensions) if name not in target_extensions
+            )
+            for name in stopped_extensions:
+                self.stop_worker(name)
+            success, reason = self.run_control_action(config, target_state)
             if not success:
-                self.stop_worker("navigation")
-                return False, f"manual to nav failed: {reason}; localization remains running in manual mode"
-            self.commit_success(config, NAV, MANUAL_LOCALIZED)
-            return True, "switched navigation mode: manual -> nav"
+                rollback_success, rollback_reason = self.restore_previous_mode(
+                    previous_config, previous_state, previous_profile, previous_extensions
+                )
+                if rollback_success:
+                    return False, (
+                        f"control transition to {target_state} failed: {reason}; "
+                        f"restored {previous_state}: {rollback_reason}"
+                    )
+                return False, (
+                    f"control transition to {target_state} failed: {reason}; "
+                    f"rollback failed: {rollback_reason}; navigation stopped"
+                )
+            extensions_to_start = tuple(name for name in target_extensions if name not in previous_extensions)
+            if extensions_to_start:
+                success, reason = self.start_extensions(config, extensions_to_start)
+                if not success:
+                    for name in reversed(extensions_to_start):
+                        self.stop_worker(name)
+                    rollback_success, rollback_reason = self.restore_previous_mode(
+                        previous_config, previous_state, previous_profile, previous_extensions
+                    )
+                    if rollback_success:
+                        return False, (
+                            f"switch to {target_state} failed: {reason}; "
+                            f"restored {previous_state}: {rollback_reason}"
+                        )
+                    return False, (
+                        f"switch to {target_state} failed: {reason}; "
+                        f"rollback failed: {rollback_reason}; navigation stopped"
+                    )
+            self.commit_success(config, target_state, manual_profile)
+            return True, f"switched navigation mode: {previous_state} -> {target_state}"
 
         if transition == "full_restart":
             self.stop_all_workers()
@@ -362,7 +473,7 @@ class NavigationSupervisor(Node):
             self.manual_profile = None
             self.active_config = None
 
-        base_sequence = "manual_without_map" if manual_profile == MANUAL_BRIDGE_ONLY else "base"
+        base_sequence = self.layer_sequence(config, target_state, manual_profile, "base")
         success, reason = self.start_layer("base", config, base_sequence)
         if not success:
             self.stop_worker("base")
@@ -370,10 +481,11 @@ class NavigationSupervisor(Node):
                 return False, f"manual bridge-only startup failed: {reason}"
             return False, f"base localization startup failed: {reason}"
 
-        if target_state == NAV:
-            success, reason = self.start_layer("navigation", config)
+        navigation_sequence = self.layer_sequence(config, target_state, manual_profile, "navigation")
+        if navigation_sequence:
+            success, reason = self.start_extensions(config, navigation_sequence)
             if not success:
-                self.stop_worker("navigation")
+                self.stop_extensions(navigation_sequence)
                 self.stop_worker("base")
                 return False, f"navigation startup failed: {reason}"
 
@@ -393,25 +505,90 @@ class NavigationSupervisor(Node):
             if value:
                 self.map_context[path] = value
 
+    def restore_previous_mode(self, config, state, manual_profile, previous_extensions=None):
+        if config is None:
+            self.stop_worker("base")
+            self.current_state = STOPPED
+            self.manual_profile = None
+            self.active_config = None
+            return False, "previous runtime configuration is unavailable"
+
+        success, reason = self.run_control_action(config, state)
+        if not success:
+            self.stop_worker("base")
+            self.current_state = STOPPED
+            self.manual_profile = None
+            self.active_config = None
+            return False, f"failed to restore control: {reason}"
+
+        navigation_sequence = previous_extensions
+        if navigation_sequence is None:
+            navigation_sequence = self.layer_sequence(config, state, manual_profile, "navigation")
+        extensions_to_restore = tuple(
+            name for name in navigation_sequence if not self.worker_alive(name)
+        )
+        if extensions_to_restore:
+            success, reason = self.start_extensions(config, extensions_to_restore)
+            if not success:
+                self.stop_extensions(navigation_sequence)
+                self.stop_worker("base")
+                self.current_state = STOPPED
+                self.manual_profile = None
+                self.active_config = None
+                return False, f"failed to restore navigation extensions: {reason}"
+
+        self.commit_success(config, state, manual_profile)
+        return True, "previous mode restored"
+
     def apply_map_context(self, config):
         for path, value in self.map_context.items():
             if path in self.allowed_paths:
                 set_by_path(config, path, value)
 
-    def layer_config(self, config, layer):
+    def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
         runtime_config.setdefault("bringup", {})["start_mode"] = "immediate"
-        sequence = self.layer_sequence(runtime_config, layer)
+        # A service request cannot report success until module readiness and every
+        # configured control action have completed successfully.
+        runtime_config["bringup"]["wait_for_readiness"] = True
         runtime_config["bringup"]["sequence"] = list(sequence)
         return runtime_config
 
-    def start_layer(self, layer, config, sequence_layer=None):
+    def run_control_action(self, config, mode):
+        action_name = self.control_action(config, mode)
+        if not action_name:
+            return True, "no control action configured"
+        spec = self.action_specs(config)[action_name]
+        service = str(spec["service"])
+        timeout = float(spec.get("timeout_seconds", 5.0))
+        command = [
+            "python3",
+            os.path.join(os.path.dirname(__file__), "wait_for_ready.py"),
+            "trigger",
+            "--name",
+            action_name,
+            "--service",
+            service,
+            "--timeout",
+            str(timeout),
+        ]
+        self.get_logger().info(f"mode {mode}: running control action {action_name} ({service})")
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        output = completed.stdout.strip()
+        if output:
+            for line in output.splitlines():
+                self.get_logger().info(f"{action_name}: {line}")
+        if completed.returncode == 0:
+            return True, f"{action_name} succeeded"
+        return False, output or f"{action_name} failed with exit code {completed.returncode}"
+
+    def start_layer(self, layer, config, sequence):
         run_id = uuid.uuid4().hex
         worker_state_dir = os.path.join(self.state_dir, run_id, layer)
         resolved_config_path = os.path.join(worker_state_dir, "resolved.yaml")
         result_path = os.path.join(worker_state_dir, "result.yaml")
         os.makedirs(worker_state_dir, exist_ok=True)
-        write_yaml_atomic(resolved_config_path, self.layer_config(config, sequence_layer or layer))
+        write_yaml_atomic(resolved_config_path, self.layer_config(config, sequence))
 
         process = subprocess.Popen(
             [
@@ -430,6 +607,20 @@ class NavigationSupervisor(Node):
         self.get_logger().info(f"started {layer} worker pid={process.pid} run_id={run_id}")
         result = self.wait_for_result(worker)
         return bool(result.get("success", False)), str(result.get("reason", "worker result missing reason"))
+
+    def start_extensions(self, config, sequence):
+        for name in sequence:
+            if self.worker_alive(name):
+                continue
+            success, reason = self.start_layer(name, config, (name,))
+            if not success:
+                return False, f"{name} startup failed: {reason}"
+        return True, "navigation extensions started"
+
+    def stop_extensions(self, sequence=None):
+        names = tuple(sequence) if sequence is not None else NAV_EXTENSION_MODULES
+        for name in reversed(names):
+            self.stop_worker(name)
 
     def stop_worker(self, layer):
         worker = self.workers.get(layer)
@@ -462,7 +653,7 @@ class NavigationSupervisor(Node):
         self.workers[layer] = None
 
     def stop_all_workers(self):
-        self.stop_worker("navigation")
+        self.stop_extensions()
         self.stop_worker("base")
 
     def wait_for_result(self, worker):
@@ -486,20 +677,44 @@ class NavigationSupervisor(Node):
 
     def refresh_state(self):
         base_alive = self.worker_alive("base")
-        navigation_alive = self.worker_alive("navigation")
         if not base_alive:
-            if navigation_alive:
-                self.stop_worker("navigation")
+            self.stop_extensions()
             self.workers["base"] = None
             self.current_state = STOPPED
             self.manual_profile = None
             self.active_config = None
-        elif self.current_state == NAV and not navigation_alive:
-            self.workers["navigation"] = None
+        elif self.mode_has_navigation_layer():
+            expected_extensions = self.layer_sequence(
+                self.active_config, self.current_state, self.manual_profile, "navigation"
+            )
+            missing_extensions = tuple(
+                name for name in expected_extensions if not self.worker_alive(name)
+            )
+            if not missing_extensions:
+                return
+            self.get_logger().error(
+                "navigation extension worker exited: " + ", ".join(missing_extensions)
+            )
+            self.stop_extensions(expected_extensions)
+            fallback = self.extension_failure_mode()
             if self.active_config is not None:
-                set_by_path(self.active_config, "mode", MANUAL)
-            self.current_state = MANUAL
-            self.manual_profile = MANUAL_LOCALIZED
+                success, reason = self.run_control_action(self.active_config, fallback)
+                if not success:
+                    self.get_logger().error(
+                        f"extension worker exited and fallback control action failed: {reason}; stopping localization"
+                    )
+                    self.stop_worker("base")
+                    self.current_state = STOPPED
+                    self.manual_profile = None
+                    self.active_config = None
+                    return
+            set_by_path(self.active_config, "mode", fallback)
+            self.current_state = fallback
+            self.manual_profile = (
+                self.manual_profile_for(fallback, str(get_by_path(self.active_config, "slam.prior_dir", "")))
+                if fallback == MANUAL
+                else MANUAL_LOCALIZED
+            )
 
     def monitor_workers(self):
         # A worker can exit after startup has reported success. Keep the in-memory
@@ -508,10 +723,13 @@ class NavigationSupervisor(Node):
             if self.in_progress:
                 return
             base_alive = self.worker_alive("base")
-            navigation_alive = self.worker_alive("navigation")
+            expected_extensions = self.layer_sequence(
+                self.active_config, self.current_state, self.manual_profile, "navigation"
+            ) if self.active_config is not None and self.current_state != STOPPED else ()
+            missing_extensions = tuple(name for name in expected_extensions if not self.worker_alive(name))
             needs_cleanup = (
-                (not base_alive and (self.current_state != STOPPED or navigation_alive))
-                or (self.current_state == NAV and not navigation_alive)
+                (not base_alive and (self.current_state != STOPPED or any(self.worker_alive(name) for name in NAV_EXTENSION_MODULES)))
+                or bool(missing_extensions)
             )
             if not needs_cleanup:
                 return
@@ -533,9 +751,9 @@ class NavigationSupervisor(Node):
             self.get_logger().error(
                 "base localization worker exited; navigation state changed to stopped"
             )
-        elif previous_state == NAV and not navigation_alive:
+        elif self.current_state != previous_state and missing_extensions:
             self.get_logger().error(
-                "navigation extension worker exited; navigation state changed to manual"
+                "navigation extension worker exited; navigation state changed to fallback mode"
             )
 
     def worker_alive(self, layer):
