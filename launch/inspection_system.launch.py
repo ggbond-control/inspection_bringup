@@ -820,6 +820,18 @@ def launch_setup(context):
         "acoustic_stop_service_name": str(
             config_value(config, "mqtt", "acoustic_stop_service_name", "/monitor/acoustic/stop")
         ),
+        "thermal_start_service_name": str(
+            config_value(config, "mqtt", "thermal_start_service_name", "/monitor/thermal_camera/start")
+        ),
+        "thermal_stop_service_name": str(
+            config_value(config, "mqtt", "thermal_stop_service_name", "/monitor/thermal_camera/stop")
+        ),
+        "gas_start_service_name": str(
+            config_value(config, "mqtt", "gas_start_service_name", "/monitor/gas/start")
+        ),
+        "gas_stop_service_name": str(
+            config_value(config, "mqtt", "gas_stop_service_name", "/monitor/gas/stop")
+        ),
         "stand_service_name": str(
             config_value(config, "mqtt", "stand_service_name", "/nav_bridge_node/stand")
         ),
