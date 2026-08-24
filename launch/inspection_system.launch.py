@@ -430,6 +430,11 @@ def generate_launch_description():
             description="Charge manager state topic for task hub work-state monitoring.",
         ),
         DeclareLaunchArgument(
+            "charge_exit_executor_service_name",
+            default_value="",
+            description="Inspection charge executor service used by charge_exit tasks.",
+        ),
+        DeclareLaunchArgument(
             "charge_exit_service_name",
             default_value="",
             description="Lower-level charge command service used to stop charging.",
