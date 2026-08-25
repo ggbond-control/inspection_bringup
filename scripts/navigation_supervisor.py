@@ -412,12 +412,19 @@ class NavigationSupervisor(Node):
         if changed_paths:
             return "full_restart"
         if self.current_state == target_state:
+            if target_state == MANUAL:
+                return "refresh_control"
             return "noop"
         if self.current_state == MANUAL and self.manual_profile == MANUAL_BRIDGE_ONLY:
             return "full_restart"
         return "switch_mode"
 
     def execute_transition(self, config, target_state, transition, manual_profile):
+        if transition == "refresh_control":
+            success, reason = self.run_control_action(config, target_state)
+            if not success:
+                return False, f"failed to reacquire control for {target_state}: {reason}"
+            return True, f"navigation already running in {target_state} mode; control reacquired"
         if transition == "noop":
             return True, f"navigation already running in {target_state} mode"
 

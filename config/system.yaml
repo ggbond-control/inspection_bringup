@@ -32,6 +32,7 @@ mqtt:
   gas_start_service_name: /monitor/gas/start
   gas_stop_service_name: /monitor/gas/stop
   stand_service_name: /nav_bridge_node/stand
+  release_control_service_name: /nav_bridge_node/release_control
   lie_service_name: /nav_bridge_node/lie
   soft_estop_service_name: /nav_bridge_node/soft_estop
   charge_exit_service_name: /task_hub/charge_exit
