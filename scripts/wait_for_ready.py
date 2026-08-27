@@ -272,15 +272,45 @@ def wait_for_charge_clear(
     print(f"[nav_bridge] checking charge state on {state_topic}", flush=True)
     rclpy.init(args=None)
     node = rclpy.create_node("wait_for_nav_bridge_charge_clear")
-    latest = {"state": None}
+    latest = {"state": None, "sequence": 0}
     state_qos = QoSProfile(depth=10)
     state_qos.reliability = ReliabilityPolicy.BEST_EFFORT
     state_qos.durability = DurabilityPolicy.VOLATILE
-    state_sub = node.create_subscription(
-        Int32, state_topic, lambda msg: latest.update(state=int(msg.data)), state_qos
-    )
+    def on_charge_state(msg):
+        latest["state"] = int(msg.data)
+        latest["sequence"] += 1
+
+    state_sub = node.create_subscription(Int32, state_topic, on_charge_state, state_qos)
     client = node.create_client(SetParameters, command_service)
     active_states = {1, 2, 3}
+
+    # nav_bridge may publish an idle state briefly while the lower-level
+    # charger is still releasing control.  Require several observations over
+    # a short interval before allowing stand/mode switching to continue.
+    stable_idle_samples = 3
+
+    def wait_for_stable_idle(deadline, context):
+        idle_count = 0
+        last_sequence = latest["sequence"] - 1
+        while before_deadline(deadline):
+            rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+            if latest["sequence"] == last_sequence:
+                continue
+            last_sequence = latest["sequence"]
+            state = latest["state"]
+            if state == 0:
+                idle_count += 1
+                if idle_count >= stable_idle_samples:
+                    print(
+                        f"[nav_bridge] charge state is idle ({context}); "
+                        f"confirmed {stable_idle_samples} samples",
+                        flush=True,
+                    )
+                    return True
+            else:
+                idle_count = 0
+        return False
+
     try:
         while before_deadline(deadline):
             rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
@@ -288,8 +318,10 @@ def wait_for_charge_clear(
             if state is None:
                 continue
             if state == 0:
-                print("[nav_bridge] charge state is idle; proceeding to stand", flush=True)
-                return True
+                if wait_for_stable_idle(deadline, "already idle"):
+                    print("[nav_bridge] proceeding to stand", flush=True)
+                    return True
+                break
             if state not in active_states:
                 reason = f"charge state is not safe for stand: 0x{state:04X}"
                 print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
@@ -299,11 +331,8 @@ def wait_for_charge_clear(
             if state == 3:
                 print("[nav_bridge] charge exit is already in progress; waiting for idle", flush=True)
                 idle_deadline = deadline_from_timeout(exit_timeout)
-                while before_deadline(idle_deadline):
-                    rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
-                    if latest["state"] == 0:
-                        print("[nav_bridge] charge state returned to idle", flush=True)
-                        return True
+                if wait_for_stable_idle(idle_deadline, "exit in progress"):
+                    return True
                 reason = "charge exit was already active but did not reach idle before timeout"
                 print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
                 write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
@@ -339,11 +368,8 @@ def wait_for_charge_clear(
                 return False
 
             idle_deadline = deadline_from_timeout(exit_timeout)
-            while before_deadline(idle_deadline):
-                rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
-                if latest["state"] == 0:
-                    print("[nav_bridge] charge state returned to idle", flush=True)
-                    return True
+            if wait_for_stable_idle(idle_deadline, "stop command"):
+                return True
             reason = "charge state did not return to idle before timeout"
             print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
             write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
