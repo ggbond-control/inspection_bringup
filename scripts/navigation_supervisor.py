@@ -426,7 +426,10 @@ class NavigationSupervisor(Node):
                 return False, f"failed to reacquire control for {target_state}: {reason}"
             return True, f"navigation already running in {target_state} mode; control reacquired"
         if transition == "noop":
-            return True, f"navigation already running in {target_state} mode"
+            success, reason = self.run_control_action(config, target_state)
+            if not success:
+                return False, f"failed to refresh control for {target_state}: {reason}"
+            return True, f"navigation already running in {target_state} mode; control refreshed"
 
         if transition == "switch_mode":
             previous_state = self.current_state
@@ -565,6 +568,9 @@ class NavigationSupervisor(Node):
         action_name = self.control_action(config, mode)
         if not action_name:
             return True, "no control action configured"
+        success, reason = self.run_charge_precheck(config, mode)
+        if not success:
+            return False, reason
         spec = self.action_specs(config)[action_name]
         service = str(spec["service"])
         timeout = float(spec.get("timeout_seconds", 5.0))
@@ -588,6 +594,35 @@ class NavigationSupervisor(Node):
         if completed.returncode == 0:
             return True, f"{action_name} succeeded"
         return False, output or f"{action_name} failed with exit code {completed.returncode}"
+
+    def run_charge_precheck(self, config, mode):
+        readiness = get_by_path(config, "nav_bridge.readiness", {})
+        if not isinstance(readiness, dict) or not bool(readiness.get("charge_precheck", True)):
+            return True, "charge precheck disabled"
+        command = [
+            "python3",
+            os.path.join(os.path.dirname(__file__), "wait_for_ready.py"),
+            "charge_precheck",
+            "--charge-state-topic",
+            str(readiness.get("charge_state_topic", "/charge_manager_state")),
+            "--charge-command-service",
+            str(readiness.get("charge_command_service", "/nav_bridge_node/charge_command")),
+            "--charge-check-timeout",
+            str(float(readiness.get("charge_check_timeout_seconds", 10.0))),
+            "--charge-exit-timeout",
+            str(float(readiness.get("charge_exit_timeout_seconds", 30.0))),
+            "--charge-poll-interval",
+            str(float(readiness.get("charge_poll_interval_seconds", 0.5))),
+        ]
+        self.get_logger().info(f"mode {mode}: checking charge state before control action")
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        output = completed.stdout.strip()
+        if output:
+            for line in output.splitlines():
+                self.get_logger().info(f"charge_precheck: {line}")
+        if completed.returncode == 0:
+            return True, "charge state is idle"
+        return False, output or f"charge precheck failed with exit code {completed.returncode}"
 
     def start_layer(self, layer, config, sequence):
         run_id = uuid.uuid4().hex

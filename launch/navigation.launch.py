@@ -276,7 +276,19 @@ def wait_for_health_action(name, topic, timeout, failure_detail=None):
     )
 
 
-def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout, failure_detail=None):
+def nav_bridge_ready_action(
+    topics,
+    stand_service,
+    topic_timeout,
+    stand_timeout,
+    charge_precheck,
+    charge_state_topic,
+    charge_command_service,
+    charge_check_timeout,
+    charge_exit_timeout,
+    charge_poll_interval,
+    failure_detail=None,
+):
     topic_args = []
     for topic in topics:
         topic_args.extend(["--topic", topic])
@@ -292,6 +304,18 @@ def nav_bridge_ready_action(topics, stand_service, topic_timeout, stand_timeout,
             str(topic_timeout),
             "--stand-timeout",
             str(stand_timeout),
+            "--charge-state-topic",
+            charge_state_topic,
+            "--charge-command-service",
+            charge_command_service,
+            "--charge-check-timeout",
+            str(charge_check_timeout),
+            "--charge-exit-timeout",
+            str(charge_exit_timeout),
+            "--charge-poll-interval",
+            str(charge_poll_interval),
+            *( ["--charge-precheck"] if charge_precheck else [] ),
+            "--skip-stand",
             *( ["--failure-detail", failure_detail] if failure_detail else [] ),
             *topic_args,
         ],
@@ -455,6 +479,12 @@ def module_readiness_action_with_overrides(
                 float,
                 use_launch_overrides,
             ),
+            as_bool(readiness_value(config, section, "charge_precheck", True)),
+            str(readiness_value(config, section, "charge_state_topic", "/charge_manager_state")),
+            str(readiness_value(config, section, "charge_command_service", "/nav_bridge_node/charge_command")),
+            float(readiness_value(config, section, "charge_check_timeout_seconds", 10.0)),
+            float(readiness_value(config, section, "charge_exit_timeout_seconds", 30.0)),
+            float(readiness_value(config, section, "charge_poll_interval_seconds", 0.5)),
             failure_detail,
         )
 

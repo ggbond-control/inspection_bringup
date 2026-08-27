@@ -56,10 +56,18 @@ bringup:
 
 nav_bridge:
   readiness:
-    type: topics
+    type: nav_bridge
     topics:
       - /battery/level
-    timeout_seconds: 10.0
+    topic_timeout_seconds: 10.0
+    stand_service: /nav_bridge_node/stand
+    stand_timeout_seconds: 30.0
+    charge_precheck: true
+    charge_state_topic: /charge_manager_state
+    charge_command_service: /nav_bridge_node/charge_command
+    charge_check_timeout_seconds: 10.0
+    charge_exit_timeout_seconds: 30.0
+    charge_poll_interval_seconds: 0.5
 
 livox:
   model: mid360s

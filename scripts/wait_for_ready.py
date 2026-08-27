@@ -226,7 +226,139 @@ def run_nav_bridge(args):
     topics = args.topics or ["/battery/level"]
     if not wait_for_topics(topics, args.topic_timeout, "nav_bridge", args.failure_detail):
         return False
+    if args.charge_precheck:
+        if not wait_for_charge_clear(
+            args.charge_state_topic,
+            args.charge_command_service,
+            args.charge_check_timeout,
+            args.charge_exit_timeout,
+            args.charge_poll_interval,
+            args.failure_detail,
+        ):
+            return False
+    if args.skip_stand:
+        return True
     return call_trigger_service(args.stand_service, args.stand_timeout, "nav_bridge", args.failure_detail)
+
+
+def run_charge_precheck(args):
+    return wait_for_charge_clear(
+        args.charge_state_topic,
+        args.charge_command_service,
+        args.charge_check_timeout,
+        args.charge_exit_timeout,
+        args.charge_poll_interval,
+        args.failure_detail,
+    )
+
+
+def wait_for_charge_clear(
+    state_topic, command_service, check_timeout, exit_timeout, poll_interval, failure_detail=None
+):
+    """Ensure the robot is detached from the charger before calling stand."""
+    try:
+        import rclpy
+        from rcl_interfaces.msg import Parameter, ParameterType
+        from rcl_interfaces.srv import SetParameters
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+        from std_msgs.msg import Int32
+    except ImportError as exc:
+        reason = f"failed to import charge precheck dependencies: {exc}"
+        print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+        write_failure_detail(failure_detail, "nav_bridge", reason, category="IMPORT_ERROR")
+        return False
+
+    deadline = deadline_from_timeout(check_timeout)
+    print(f"[nav_bridge] checking charge state on {state_topic}", flush=True)
+    rclpy.init(args=None)
+    node = rclpy.create_node("wait_for_nav_bridge_charge_clear")
+    latest = {"state": None}
+    state_qos = QoSProfile(depth=10)
+    state_qos.reliability = ReliabilityPolicy.BEST_EFFORT
+    state_qos.durability = DurabilityPolicy.VOLATILE
+    state_sub = node.create_subscription(
+        Int32, state_topic, lambda msg: latest.update(state=int(msg.data)), state_qos
+    )
+    client = node.create_client(SetParameters, command_service)
+    active_states = {1, 2, 3}
+    try:
+        while before_deadline(deadline):
+            rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+            state = latest["state"]
+            if state is None:
+                continue
+            if state == 0:
+                print("[nav_bridge] charge state is idle; proceeding to stand", flush=True)
+                return True
+            if state not in active_states:
+                reason = f"charge state is not safe for stand: 0x{state:04X}"
+                print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
+                return False
+
+            if state == 3:
+                print("[nav_bridge] charge exit is already in progress; waiting for idle", flush=True)
+                idle_deadline = deadline_from_timeout(exit_timeout)
+                while before_deadline(idle_deadline):
+                    rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+                    if latest["state"] == 0:
+                        print("[nav_bridge] charge state returned to idle", flush=True)
+                        return True
+                reason = "charge exit was already active but did not reach idle before timeout"
+                print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
+                return False
+
+            if not client.wait_for_service(timeout_sec=min(0.5, max(0.1, poll_interval))):
+                continue
+            request = SetParameters.Request()
+            parameter = Parameter()
+            parameter.name = "charge_command"
+            parameter.value.type = ParameterType.PARAMETER_INTEGER
+            parameter.value.integer_value = 1
+            request.parameters.append(parameter)
+            future = client.call_async(request)
+            response_deadline = deadline_from_timeout(exit_timeout)
+            while before_deadline(response_deadline):
+                rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+                if future.done():
+                    response = future.result()
+                    if not response.results or not response.results[0].successful:
+                        reason = "charge stop command rejected"
+                        if response.results:
+                            reason = response.results[0].reason or reason
+                        print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                        write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
+                        return False
+                    print("[nav_bridge] charge stop accepted; waiting for idle", flush=True)
+                    break
+            else:
+                reason = "charge stop command response timeout"
+                print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
+                return False
+
+            idle_deadline = deadline_from_timeout(exit_timeout)
+            while before_deadline(idle_deadline):
+                rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+                if latest["state"] == 0:
+                    print("[nav_bridge] charge state returned to idle", flush=True)
+                    return True
+            reason = "charge state did not return to idle before timeout"
+            print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+            write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
+            return False
+    finally:
+        node.destroy_subscription(state_sub)
+        node.destroy_client(client)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+    reason = "charge state topic timeout"
+    print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+    write_failure_detail(failure_detail, "nav_bridge", reason)
+    return False
 
 
 def run_trigger(args):
@@ -672,8 +804,26 @@ def main():
         default=10.0,
         help="Trigger service timeout in seconds. Use 0 or a negative value to wait forever.",
     )
+    nav_bridge_parser.add_argument("--charge-precheck", action="store_true")
+    nav_bridge_parser.add_argument("--charge-state-topic", default="/charge_manager_state")
+    nav_bridge_parser.add_argument("--charge-command-service", default="/nav_bridge_node/charge_command")
+    nav_bridge_parser.add_argument("--charge-check-timeout", type=float, default=10.0)
+    nav_bridge_parser.add_argument("--charge-exit-timeout", type=float, default=30.0)
+    nav_bridge_parser.add_argument("--charge-poll-interval", type=float, default=0.5)
+    nav_bridge_parser.add_argument("--skip-stand", action="store_true")
     nav_bridge_parser.add_argument("--failure-detail", default="")
     nav_bridge_parser.set_defaults(func=run_nav_bridge)
+
+    charge_parser = subparsers.add_parser(
+        "charge_precheck", help="Exit charging when needed and require an idle charge state."
+    )
+    charge_parser.add_argument("--charge-state-topic", default="/charge_manager_state")
+    charge_parser.add_argument("--charge-command-service", default="/nav_bridge_node/charge_command")
+    charge_parser.add_argument("--charge-check-timeout", type=float, default=10.0)
+    charge_parser.add_argument("--charge-exit-timeout", type=float, default=30.0)
+    charge_parser.add_argument("--charge-poll-interval", type=float, default=0.5)
+    charge_parser.add_argument("--failure-detail", default="")
+    charge_parser.set_defaults(func=run_charge_precheck)
 
     trigger_parser = subparsers.add_parser(
         "trigger", help="Call a std_srvs/srv/Trigger service and require success: true."
