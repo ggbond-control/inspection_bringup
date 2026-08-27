@@ -355,6 +355,24 @@ def launch_setup(context):
         "charge_exit_service_name": str(
             config_value(config, "mqtt", "charge_exit_service_name", "/task_hub/charge_exit")
         ),
+        "manual_jog_linear_x_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_linear_x_speed", 1.0), value_type=float
+        ),
+        "manual_jog_linear_y_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_linear_y_speed", 0.6), value_type=float
+        ),
+        "manual_jog_angular_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_angular_speed", 1.2), value_type=float
+        ),
+        "manual_jog_max_linear_x_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_max_linear_x_speed", 1.0), value_type=float
+        ),
+        "manual_jog_max_linear_y_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_max_linear_y_speed", 0.6), value_type=float
+        ),
+        "manual_jog_max_angular_speed": ParameterValue(
+            config_value(config, "mqtt", "manual_jog_max_angular_speed", 1.2), value_type=float
+        ),
         "manual_jog_max_duration_ms": ParameterValue(
             config_value(config, "mqtt", "manual_jog_max_duration_ms", 2500),
             value_type=int,
