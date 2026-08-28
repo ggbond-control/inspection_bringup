@@ -284,6 +284,7 @@ def nav_bridge_ready_action(
     charge_precheck,
     charge_state_topic,
     charge_command_service,
+    charge_executor_exit_service,
     charge_check_timeout,
     charge_exit_timeout,
     charge_poll_interval,
@@ -308,6 +309,8 @@ def nav_bridge_ready_action(
             charge_state_topic,
             "--charge-command-service",
             charge_command_service,
+            "--charge-executor-exit-service",
+            charge_executor_exit_service,
             "--charge-check-timeout",
             str(charge_check_timeout),
             "--charge-exit-timeout",
@@ -482,6 +485,14 @@ def module_readiness_action_with_overrides(
             as_bool(readiness_value(config, section, "charge_precheck", True)),
             str(readiness_value(config, section, "charge_state_topic", "/charge_manager_state")),
             str(readiness_value(config, section, "charge_command_service", "/nav_bridge_node/charge_command")),
+            str(
+                readiness_value(
+                    config,
+                    section,
+                    "charge_executor_exit_service",
+                    "/inspection_charge_executor/exit_charge",
+                )
+            ),
             float(readiness_value(config, section, "charge_check_timeout_seconds", 10.0)),
             float(readiness_value(config, section, "charge_exit_timeout_seconds", 30.0)),
             float(readiness_value(config, section, "charge_poll_interval_seconds", 0.5)),

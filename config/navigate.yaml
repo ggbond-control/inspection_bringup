@@ -65,6 +65,7 @@ nav_bridge:
     charge_precheck: true
     charge_state_topic: /charge_manager_state
     charge_command_service: /nav_bridge_node/charge_command
+    charge_executor_exit_service: /inspection_charge_executor/exit_charge
     charge_check_timeout_seconds: 10.0
     charge_exit_timeout_seconds: 30.0
     charge_poll_interval_seconds: 0.5

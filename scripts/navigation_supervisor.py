@@ -607,6 +607,13 @@ class NavigationSupervisor(Node):
             str(readiness.get("charge_state_topic", "/charge_manager_state")),
             "--charge-command-service",
             str(readiness.get("charge_command_service", "/nav_bridge_node/charge_command")),
+            "--charge-executor-exit-service",
+            str(
+                readiness.get(
+                    "charge_executor_exit_service",
+                    "/inspection_charge_executor/exit_charge",
+                )
+            ),
             "--charge-check-timeout",
             str(float(readiness.get("charge_check_timeout_seconds", 10.0))),
             "--charge-exit-timeout",

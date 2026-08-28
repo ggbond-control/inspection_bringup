@@ -230,6 +230,7 @@ def run_nav_bridge(args):
         if not wait_for_charge_clear(
             args.charge_state_topic,
             args.charge_command_service,
+            args.charge_executor_exit_service,
             args.charge_check_timeout,
             args.charge_exit_timeout,
             args.charge_poll_interval,
@@ -245,6 +246,7 @@ def run_charge_precheck(args):
     return wait_for_charge_clear(
         args.charge_state_topic,
         args.charge_command_service,
+        args.charge_executor_exit_service,
         args.charge_check_timeout,
         args.charge_exit_timeout,
         args.charge_poll_interval,
@@ -253,13 +255,15 @@ def run_charge_precheck(args):
 
 
 def wait_for_charge_clear(
-    state_topic, command_service, check_timeout, exit_timeout, poll_interval, failure_detail=None
+    state_topic, command_service, executor_exit_service, check_timeout, exit_timeout, poll_interval,
+    failure_detail=None
 ):
     """Ensure the robot is detached from the charger before calling stand."""
     try:
         import rclpy
         from rcl_interfaces.msg import Parameter, ParameterType
         from rcl_interfaces.srv import SetParameters
+        from std_srvs.srv import Trigger
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from std_msgs.msg import Int32
     except ImportError as exc:
@@ -282,6 +286,7 @@ def wait_for_charge_clear(
 
     state_sub = node.create_subscription(Int32, state_topic, on_charge_state, state_qos)
     client = node.create_client(SetParameters, command_service)
+    executor_client = node.create_client(Trigger, executor_exit_service) if executor_exit_service else None
     active_states = {1, 2, 3}
 
     # nav_bridge may publish an idle state briefly while the lower-level
@@ -338,6 +343,51 @@ def wait_for_charge_clear(
                 write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
                 return False
 
+            # Prefer the inspection charge executor so its internal state is
+            # transitioned back to IDLE together with the lower-level charger.
+            # Fall back to the nav_bridge command for deployments where the
+            # executor is not running (for example, a minimal navigation stack).
+            if executor_client is not None and executor_client.wait_for_service(
+                timeout_sec=min(0.5, max(0.1, poll_interval))
+            ):
+                print(
+                    f"[nav_bridge] requesting charge executor exit: {executor_exit_service}",
+                    flush=True,
+                )
+                future = executor_client.call_async(Trigger.Request())
+                response_deadline = deadline_from_timeout(exit_timeout)
+                while before_deadline(response_deadline):
+                    rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
+                    if future.done():
+                        response = future.result()
+                        if response is not None and response.success:
+                            print(
+                                "[nav_bridge] charge executor exit accepted; waiting for idle",
+                                flush=True,
+                            )
+                            break
+                        reason = (
+                            response.message
+                            if response is not None and response.message
+                            else "charge executor exit rejected"
+                        )
+                        print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                        write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
+                        return False
+                else:
+                    reason = "charge executor exit response timeout"
+                    print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                    write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
+                    return False
+
+                idle_deadline = deadline_from_timeout(exit_timeout)
+                if wait_for_stable_idle(idle_deadline, "charge executor exit"):
+                    return True
+                reason = "charge state did not return to idle after executor exit"
+                print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
+                return False
+
             if not client.wait_for_service(timeout_sec=min(0.5, max(0.1, poll_interval))):
                 continue
             request = SetParameters.Request()
@@ -377,6 +427,8 @@ def wait_for_charge_clear(
     finally:
         node.destroy_subscription(state_sub)
         node.destroy_client(client)
+        if executor_client is not None:
+            node.destroy_client(executor_client)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
@@ -833,6 +885,7 @@ def main():
     nav_bridge_parser.add_argument("--charge-precheck", action="store_true")
     nav_bridge_parser.add_argument("--charge-state-topic", default="/charge_manager_state")
     nav_bridge_parser.add_argument("--charge-command-service", default="/nav_bridge_node/charge_command")
+    nav_bridge_parser.add_argument("--charge-executor-exit-service", default="/inspection_charge_executor/exit_charge")
     nav_bridge_parser.add_argument("--charge-check-timeout", type=float, default=10.0)
     nav_bridge_parser.add_argument("--charge-exit-timeout", type=float, default=30.0)
     nav_bridge_parser.add_argument("--charge-poll-interval", type=float, default=0.5)
@@ -845,6 +898,7 @@ def main():
     )
     charge_parser.add_argument("--charge-state-topic", default="/charge_manager_state")
     charge_parser.add_argument("--charge-command-service", default="/nav_bridge_node/charge_command")
+    charge_parser.add_argument("--charge-executor-exit-service", default="/inspection_charge_executor/exit_charge")
     charge_parser.add_argument("--charge-check-timeout", type=float, default=10.0)
     charge_parser.add_argument("--charge-exit-timeout", type=float, default=30.0)
     charge_parser.add_argument("--charge-poll-interval", type=float, default=0.5)
