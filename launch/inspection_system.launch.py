@@ -549,6 +549,15 @@ def launch_setup(context):
         "algorithm_ack_service": str(config_value(
             config, "task_hub", "algorithm_ack_service", "/algorithm_transport/ack_result"
         )),
+        "acoustic_start_service_name": str(config_value(
+            config, "task_hub", "acoustic_start_service_name", "/monitor/acoustic/start"
+        )),
+        "acoustic_stop_service_name": str(config_value(
+            config, "task_hub", "acoustic_stop_service_name", "/monitor/acoustic/stop"
+        )),
+        "acoustic_set_parameters_service_name": str(config_value(
+            config, "task_hub", "acoustic_set_parameters_service_name", "/monitor/acoustic/set_parameters"
+        )),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
         )),
@@ -830,6 +839,9 @@ def launch_setup(context):
         ),
         "thermal_stop_service_name": str(
             config_value(config, "mqtt", "thermal_stop_service_name", "/monitor/thermal_camera/stop")
+        ),
+        "thermal_detection_service_name": str(
+            config_value(config, "mqtt", "thermal_detection_service_name", "/task_hub/thermal_detection")
         ),
         "gas_start_service_name": str(
             config_value(config, "mqtt", "gas_start_service_name", "/monitor/gas/start")

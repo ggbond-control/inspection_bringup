@@ -29,6 +29,7 @@ mqtt:
   acoustic_stop_service_name: /monitor/acoustic/stop
   thermal_start_service_name: /monitor/thermal_camera/start
   thermal_stop_service_name: /monitor/thermal_camera/stop
+  thermal_detection_service_name: /task_hub/thermal_detection
   gas_start_service_name: /monitor/gas/start
   gas_stop_service_name: /monitor/gas/stop
   stand_service_name: /nav_bridge_node/stand
@@ -105,6 +106,9 @@ live_stream:
     output_format: flv
 
 task_hub:
+  acoustic_start_service_name: /monitor/acoustic/start
+  acoustic_stop_service_name: /monitor/acoustic/stop
+  acoustic_set_parameters_service_name: /monitor/acoustic/set_parameters
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
   algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
