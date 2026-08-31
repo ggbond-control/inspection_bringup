@@ -356,6 +356,7 @@ def wait_for_charge_clear(
                 )
                 future = executor_client.call_async(Trigger.Request())
                 response_deadline = deadline_from_timeout(exit_timeout)
+                executor_exit_accepted = False
                 while before_deadline(response_deadline):
                     rclpy.spin_once(node, timeout_sec=min(0.2, max(0.01, poll_interval)))
                     if future.done():
@@ -365,12 +366,24 @@ def wait_for_charge_clear(
                                 "[nav_bridge] charge executor exit accepted; waiting for idle",
                                 flush=True,
                             )
+                            executor_exit_accepted = True
                             break
                         reason = (
                             response.message
                             if response is not None and response.message
                             else "charge executor exit rejected"
                         )
+                        # The task-hub executor may not own a charge session
+                        # even while the lower-level nav_bridge reports an
+                        # active charger state. Fall through to the direct
+                        # nav_bridge command in that case.
+                        if "not charging" in reason.lower() or "charge state is unavailable" in reason.lower():
+                            print(
+                                f"[nav_bridge] charge executor has no active session ({reason}); "
+                                "falling back to nav_bridge charge command",
+                                flush=True,
+                            )
+                            break
                         print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
                         write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
                         return False
@@ -380,13 +393,14 @@ def wait_for_charge_clear(
                     write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=state)
                     return False
 
-                idle_deadline = deadline_from_timeout(exit_timeout)
-                if wait_for_stable_idle(idle_deadline, "charge executor exit"):
-                    return True
-                reason = "charge state did not return to idle after executor exit"
-                print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
-                write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
-                return False
+                if executor_exit_accepted:
+                    idle_deadline = deadline_from_timeout(exit_timeout)
+                    if wait_for_stable_idle(idle_deadline, "charge executor exit"):
+                        return True
+                    reason = "charge state did not return to idle after executor exit"
+                    print(f"[nav_bridge] {reason}", file=sys.stderr, flush=True)
+                    write_failure_detail(failure_detail, "nav_bridge", reason, charge_state=latest["state"])
+                    return False
 
             if not client.wait_for_service(timeout_sec=min(0.5, max(0.1, poll_interval))):
                 continue
