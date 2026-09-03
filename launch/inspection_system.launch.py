@@ -549,6 +549,17 @@ def launch_setup(context):
         "algorithm_ack_service": str(config_value(
             config, "task_hub", "algorithm_ack_service", "/algorithm_transport/ack_result"
         )),
+        "algorithm_media_upload_service": str(config_value(
+            config, "task_hub", "algorithm_media_upload_service", "/platform/media/upload"
+        )),
+        "algorithm_capture_timeout_seconds": ParameterValue(
+            config_value(config, "task_hub", "algorithm_capture_timeout_seconds", 20.0),
+            value_type=float,
+        ),
+        "algorithm_media_upload_timeout_seconds": ParameterValue(
+            config_value(config, "task_hub", "algorithm_media_upload_timeout_seconds", 30.0),
+            value_type=float,
+        ),
         "acoustic_start_service_name": str(config_value(
             config, "task_hub", "acoustic_start_service_name", "/monitor/acoustic/start"
         )),
@@ -787,6 +798,9 @@ def launch_setup(context):
             context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "media_upload_service_name": str(
+            config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
+        ),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
         )),

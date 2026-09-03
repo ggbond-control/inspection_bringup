@@ -302,6 +302,9 @@ def launch_setup(context):
             context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "media_upload_service_name": str(
+            config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
+        ),
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),

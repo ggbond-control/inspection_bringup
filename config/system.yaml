@@ -37,6 +37,8 @@ mqtt:
   lie_service_name: /nav_bridge_node/lie
   soft_estop_service_name: /nav_bridge_node/soft_estop
   charge_exit_service_name: /task_hub/charge_exit
+  # 供任务中枢上传单点算法输入图片。
+  media_upload_service_name: /platform/media/upload
   # 平台手操固定速度：前后/斜向 x、横移/斜向 y、原地转向角速度。
   manual_jog_linear_x_speed: 1.0
   manual_jog_linear_y_speed: 0.6
@@ -119,6 +121,10 @@ task_hub:
   algorithm_dynamic_stream_url_enabled: false
   algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
   algorithm_stream_url_wait_timeout_seconds: 10.0
+  # 单点算法先拍照并通过平台桥上传，再以 requestParams.imageUrl 调用算法中心。
+  algorithm_media_upload_service: "/platform/media/upload"
+  algorithm_capture_timeout_seconds: 20.0
+  algorithm_media_upload_timeout_seconds: 30.0
   algorithm_callback_url: "http://47.99.202.196:20756/api/v1/algorithm/result"
   algorithm_callback_port: 8081
   algorithm_http_timeout_seconds: 10
