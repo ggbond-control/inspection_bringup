@@ -324,6 +324,11 @@ def generate_launch_description():
             description="Start ROS 2 <-> MQTT platform bridge.",
         ),
         DeclareLaunchArgument(
+            "enable_robot_heartbeat",
+            default_value="",
+            description="Start the optional robot heartbeat publisher.",
+        ),
+        DeclareLaunchArgument(
             "sn",
             default_value="",
             description="Device serial number reported to the platform.",
@@ -508,6 +513,11 @@ def launch_setup(context):
         "config",
         "stub_params.yaml",
     )
+    default_device_status_path = os.path.join(
+        get_package_share_directory("inspection_platform_bridge"),
+        "platform",
+        "device_status.json",
+    )
 
     enable_task_hub = as_bool_text(override_or_config(
         context, "enable_task_hub", config, "modules", "task_hub", True
@@ -535,6 +545,9 @@ def launch_setup(context):
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
+    enable_robot_heartbeat = as_bool_text(override_or_config(
+        context, "enable_robot_heartbeat", config, "modules", "robot_heartbeat", False
+    ))
 
     task_hub_params = {
         "algorithm_command_topic": str(config_value(
@@ -548,6 +561,26 @@ def launch_setup(context):
         )),
         "algorithm_ack_service": str(config_value(
             config, "task_hub", "algorithm_ack_service", "/algorithm_transport/ack_result"
+        )),
+        "algorithm_media_upload_service": str(config_value(
+            config, "task_hub", "algorithm_media_upload_service", "/platform/media/upload"
+        )),
+        "algorithm_capture_timeout_seconds": ParameterValue(
+            config_value(config, "task_hub", "algorithm_capture_timeout_seconds", 20.0),
+            value_type=float,
+        ),
+        "algorithm_media_upload_timeout_seconds": ParameterValue(
+            config_value(config, "task_hub", "algorithm_media_upload_timeout_seconds", 30.0),
+            value_type=float,
+        ),
+        "acoustic_start_service_name": str(config_value(
+            config, "task_hub", "acoustic_start_service_name", "/monitor/acoustic/start"
+        )),
+        "acoustic_stop_service_name": str(config_value(
+            config, "task_hub", "acoustic_stop_service_name", "/monitor/acoustic/stop"
+        )),
+        "acoustic_set_parameters_service_name": str(config_value(
+            config, "task_hub", "acoustic_set_parameters_service_name", "/monitor/acoustic/set_parameters"
         )),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
@@ -778,6 +811,21 @@ def launch_setup(context):
             context, "mqtt_password", config, "mqtt", "password", ""
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
+        "robot_heartbeat_topic": str(config_value(
+            config, "robot_heartbeat", "heartbeat_topic", "/robot_heartbeat"
+        )),
+        "fleet_state_topic": str(config_value(
+            config, "robot_heartbeat", "fleet_state_topic", "/fleet/state"
+        )),
+        "fleet_heartbeat_mqtt_suffix": str(config_value(
+            config, "mqtt", "fleet_heartbeat_mqtt_suffix", "fleet/heartbeat"
+        )),
+        "fleet_state_mqtt_topic": str(config_value(
+            config, "mqtt", "fleet_state_mqtt_topic", "fh/fleet/state"
+        )),
+        "media_upload_service_name": str(
+            config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
+        ),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
         )),
@@ -830,6 +878,9 @@ def launch_setup(context):
         ),
         "thermal_stop_service_name": str(
             config_value(config, "mqtt", "thermal_stop_service_name", "/monitor/thermal_camera/stop")
+        ),
+        "thermal_detection_service_name": str(
+            config_value(config, "mqtt", "thermal_detection_service_name", "/task_hub/thermal_detection")
         ),
         "gas_start_service_name": str(
             config_value(config, "mqtt", "gas_start_service_name", "/monitor/gas/start")
@@ -983,4 +1034,31 @@ def launch_setup(context):
     )
     actions.append(platform_mqtt_bridge)
     actions.append(algorithm_mqtt_bridge)
+    if as_bool(enable_robot_heartbeat):
+        actions.append(Node(
+            package="robot_heartbeat",
+            executable="robot_heartbeat",
+            name="robot_heartbeat",
+            output="screen",
+            parameters=[{
+                "robot_id": str(config_value(
+                    config, "robot_heartbeat", "robot_id", config_value(config, "mqtt", "sn", "x30")
+                )),
+                "device_status_path": str(config_value(
+                    config, "robot_heartbeat", "device_status_path", default_device_status_path
+                )),
+                "heartbeat_topic": str(config_value(
+                    config, "robot_heartbeat", "heartbeat_topic", "/robot_heartbeat"
+                )),
+                "odometry_topic": str(config_value(
+                    config, "robot_heartbeat", "odometry_topic", "/odometry_multi_maps"
+                )),
+                "task_hub_status_service": str(config_value(
+                    config, "robot_heartbeat", "task_hub_status_service", "/get_status"
+                )),
+                "heartbeat_period_seconds": float(config_value(
+                    config, "robot_heartbeat", "heartbeat_period_seconds", 1.0
+                )),
+            }],
+        ))
     return actions
