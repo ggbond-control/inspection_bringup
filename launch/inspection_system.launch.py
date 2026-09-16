@@ -1073,6 +1073,12 @@ def launch_setup(context):
                 "map_root_directory": str(config_value(
                     config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps"
                 )),
+                "auto_execute": bool(config_value(
+                    config, "mission_execution_agent", "auto_execute", False
+                )),
+                "task_hub_start_service": str(config_value(
+                    config, "mission_execution_agent", "task_hub_start_service", "/start_route"
+                )),
             }],
         ))
     return actions
