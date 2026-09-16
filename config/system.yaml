@@ -1,12 +1,13 @@
 modules:
   task_hub: true
-  gimbal: true
+  gimbal: false
+  sensor_gimbal: true
   charge: true
   sensors: true
   alarm: true
   light: true
   gas: true
-  thermal: true
+  thermal: false
   acoustic: true
   mqtt: true
   robot_heartbeat: false

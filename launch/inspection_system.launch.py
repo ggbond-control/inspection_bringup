@@ -284,6 +284,11 @@ def generate_launch_description():
             description="Start gimbal control stub.",
         ),
         DeclareLaunchArgument(
+            "enable_sensor_gimbal",
+            default_value="",
+            description="Start shared gimbal and thermal camera process.",
+        ),
+        DeclareLaunchArgument(
             "enable_charge",
             default_value="",
             description="Start charge executor.",
@@ -525,6 +530,9 @@ def launch_setup(context):
     enable_gimbal = as_bool_text(override_or_config(
         context, "enable_gimbal", config, "modules", "gimbal", True
     ))
+    enable_sensor_gimbal = as_bool_text(override_or_config(
+        context, "enable_sensor_gimbal", config, "modules", "sensor_gimbal", False
+    ))
     enable_charge = as_bool_text(override_or_config(
         context, "enable_charge", config, "modules", "charge", True
     ))
@@ -541,6 +549,13 @@ def launch_setup(context):
     enable_thermal = as_bool_text(override_or_config(
         context, "enable_thermal", config, "modules", "thermal", True
     ))
+    if as_bool(enable_sensor_gimbal) and (
+        as_bool(enable_gimbal) or (as_bool(enable_sensors) and as_bool(enable_thermal))
+    ):
+        raise RuntimeError(
+            "sensor_gimbal cannot run alongside the legacy gimbal or thermal camera; "
+            "set enable_sensor_gimbal:=false to use legacy modules"
+        )
     enable_acoustic = as_bool_text(override_or_config(
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
@@ -968,6 +983,12 @@ def launch_setup(context):
             context, "gimbal_params_file", config, "gimbal", "params_file", default_gimbal_params_file
         )
     )
+    sensor_gimbal_params_file = os.path.expanduser(
+        override_or_config(
+            context, "gimbal_params_file", config, "gimbal", "params_file",
+            os.path.join(get_package_share_directory("sensor_gimbal"), "config", "stub_params.yaml"),
+        )
+    )
 
     actions = [task_hub_node]
     append_if_enabled(
@@ -1003,6 +1024,30 @@ def launch_setup(context):
                         True,
                     )
                 ),
+            },
+        ),
+    )
+    append_if_enabled(
+        actions,
+        enable_sensor_gimbal,
+        include_package_launch(
+            "sensor_gimbal",
+            "sensor_gimbal.launch.py",
+            None,
+            {
+                "gimbal_params_file": sensor_gimbal_params_file,
+                "camera_backend": override_or_config(
+                    context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"
+                ),
+                "launch_post_waypoint_home_bridge": as_bool_text(override_or_config_bool(
+                    context, "launch_post_waypoint_home_bridge", config, "gimbal",
+                    "launch_post_waypoint_home_bridge", False
+                )),
+                "inspection_route_config_path": task_hub_params["default_route_config_path"],
+                "gimbal_hk_use_http_isapi_absolute_ptz": as_bool_text(override_or_config_bool(
+                    context, "gimbal_hk_use_http_isapi_absolute_ptz", config, "gimbal",
+                    "use_http_isapi_absolute_ptz", True
+                )),
             },
         ),
     )
