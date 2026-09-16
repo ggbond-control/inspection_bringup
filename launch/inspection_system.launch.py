@@ -329,9 +329,9 @@ def generate_launch_description():
             description="Start ROS 2 <-> MQTT platform bridge.",
         ),
         DeclareLaunchArgument(
-            "enable_robot_heartbeat",
+            "enable_mission_execution_agent",
             default_value="",
-            description="Start the optional robot heartbeat publisher.",
+            description="Start the mission execution agent and local planner service.",
         ),
         DeclareLaunchArgument(
             "sn",
@@ -560,8 +560,8 @@ def launch_setup(context):
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
-    enable_robot_heartbeat = as_bool_text(override_or_config(
-        context, "enable_robot_heartbeat", config, "modules", "robot_heartbeat", False
+    enable_mission_execution_agent = as_bool_text(override_or_config(
+        context, "enable_mission_execution_agent", config, "modules", "mission_execution_agent", False
     ))
 
     task_hub_params = {
@@ -827,10 +827,10 @@ def launch_setup(context):
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
         "robot_heartbeat_topic": str(config_value(
-            config, "robot_heartbeat", "heartbeat_topic", "/robot_heartbeat"
+            config, "mission_execution_agent", "heartbeat_topic", "/mission_execution/heartbeat"
         )),
         "fleet_state_topic": str(config_value(
-            config, "robot_heartbeat", "fleet_state_topic", "/fleet/state"
+            config, "mission_execution_agent", "fleet_state_topic", "/fleet/state"
         )),
         "fleet_heartbeat_mqtt_suffix": str(config_value(
             config, "mqtt", "fleet_heartbeat_mqtt_suffix", "fleet/heartbeat"
@@ -1079,30 +1079,50 @@ def launch_setup(context):
     )
     actions.append(platform_mqtt_bridge)
     actions.append(algorithm_mqtt_bridge)
-    if as_bool(enable_robot_heartbeat):
+    if as_bool(enable_mission_execution_agent):
         actions.append(Node(
-            package="robot_heartbeat",
-            executable="robot_heartbeat",
-            name="robot_heartbeat",
+            package="capability_mission_planner",
+            executable="capability_mission_planner_node",
+            name="capability_mission_planner",
+            output="screen",
+        ))
+        actions.append(Node(
+            package="mission_execution_agent",
+            executable="mission_execution_agent_node",
+            name="mission_execution_agent",
             output="screen",
             parameters=[{
                 "robot_id": str(config_value(
-                    config, "robot_heartbeat", "robot_id", config_value(config, "mqtt", "sn", "x30")
+                    config, "mission_execution_agent", "robot_id", config_value(config, "mqtt", "sn", "x30")
                 )),
                 "device_status_path": str(config_value(
-                    config, "robot_heartbeat", "device_status_path", default_device_status_path
+                    config, "mission_execution_agent", "device_status_path", default_device_status_path
                 )),
                 "heartbeat_topic": str(config_value(
-                    config, "robot_heartbeat", "heartbeat_topic", "/robot_heartbeat"
+                    config, "mission_execution_agent", "heartbeat_topic", "/mission_execution/heartbeat"
                 )),
                 "odometry_topic": str(config_value(
-                    config, "robot_heartbeat", "odometry_topic", "/odometry_multi_maps"
+                    config, "mission_execution_agent", "odometry_topic", "/odometry_multi_maps"
                 )),
                 "task_hub_status_service": str(config_value(
-                    config, "robot_heartbeat", "task_hub_status_service", "/get_status"
+                    config, "mission_execution_agent", "task_hub_status_service", "/get_status"
                 )),
+                "planning_leader": bool(config_value(config, "mission_execution_agent", "planning_leader", False)),
+                "leader_epoch": int(config_value(config, "mission_execution_agent", "leader_epoch", 0)),
                 "heartbeat_period_seconds": float(config_value(
-                    config, "robot_heartbeat", "heartbeat_period_seconds", 1.0
+                    config, "mission_execution_agent", "heartbeat_period_seconds", 1.0
+                )),
+                "odometry_max_age_seconds": float(config_value(
+                    config, "mission_execution_agent", "odometry_max_age_seconds", 3.0
+                )),
+                "map_root_directory": str(config_value(
+                    config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps"
+                )),
+                "auto_execute": bool(config_value(
+                    config, "mission_execution_agent", "auto_execute", False
+                )),
+                "task_hub_start_service": str(config_value(
+                    config, "mission_execution_agent", "task_hub_start_service", "/start_route"
                 )),
             }],
         ))
