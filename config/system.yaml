@@ -12,6 +12,10 @@ modules:
   mqtt: true
   robot_heartbeat: false
 
+sensor_gimbal:
+  enable_gimbal: true
+  enable_thermal: true
+
 robot_heartbeat:
   robot_id: x30
   heartbeat_topic: /robot_heartbeat

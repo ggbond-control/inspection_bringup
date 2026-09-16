@@ -289,6 +289,16 @@ def generate_launch_description():
             description="Start shared gimbal and thermal camera process.",
         ),
         DeclareLaunchArgument(
+            "sensor_gimbal_enable_gimbal",
+            default_value="",
+            description="Enable gimbal control inside sensor_gimbal.",
+        ),
+        DeclareLaunchArgument(
+            "sensor_gimbal_enable_thermal",
+            default_value="",
+            description="Enable thermal monitoring inside sensor_gimbal.",
+        ),
+        DeclareLaunchArgument(
             "enable_charge",
             default_value="",
             description="Start charge executor.",
@@ -1036,6 +1046,14 @@ def launch_setup(context):
             None,
             {
                 "gimbal_params_file": sensor_gimbal_params_file,
+                "enable_gimbal": as_bool_text(override_or_config_bool(
+                    context, "sensor_gimbal_enable_gimbal", config,
+                    "sensor_gimbal", "enable_gimbal", True
+                )),
+                "enable_thermal": as_bool_text(override_or_config_bool(
+                    context, "sensor_gimbal_enable_thermal", config,
+                    "sensor_gimbal", "enable_thermal", True
+                )),
                 "camera_backend": override_or_config(
                     context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"
                 ),
