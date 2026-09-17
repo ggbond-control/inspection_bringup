@@ -183,3 +183,4 @@ gimbal:
 sensor_gimbal:
   enable_gimbal: true
   enable_thermal: true
+  enable_smoke: false
