@@ -10,26 +10,31 @@ modules:
   thermal: false
   acoustic: true
   mqtt: true
-  robot_heartbeat: false
+  mission_execution_agent: true
 
-sensor_gimbal:
-  enable_gimbal: true
-  enable_thermal: true
-  enable_smoke: true
 
-robot_heartbeat:
-  robot_id: x30
-  heartbeat_topic: /robot_heartbeat
+
+mission_execution_agent:
+  robot_id: x30-A
+  heartbeat_topic: /mission_execution/heartbeat
   fleet_state_topic: /fleet/state
   odometry_topic: /odometry_multi_maps
+  odometry_max_age_seconds: 3.0
   task_hub_status_service: /get_status
+  planning_leader: true
+  leader_epoch: 1
   heartbeat_period_seconds: 1.0
   device_status_path: ""
+  # Keep false until generated route YAML has been manually verified.
+  auto_execute: false
+  task_hub_start_service: /start_route
+  # All mission input, generated plans and route YAML stay with this package.
+  data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime
 
 mqtt:
-  sn: x30
-  host: 111.77.141.65
-  port: 11883
+  sn: x30-A
+  host: 47.99.202.196
+  port: 20402
   username: "jiangxi"
   password: "Fhzn@1234"
   fleet_heartbeat_mqtt_suffix: fleet/heartbeat
@@ -37,6 +42,8 @@ mqtt:
   topic_vendor_prefix: fh
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
+  # MQTT mission receive/publish audit, retained with the bridge package.
+  mission_record_directory: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/runtime/records
   localization_set_parameters_service: /navigation_bringup/start
   manual_map_switch_service_name: /manual_switch_current_map
   localization_map_parameter_name: slam.prior_dir
@@ -67,8 +74,8 @@ mqtt:
   manual_jog_max_duration_ms: 2500
 
 algorithm_mqtt:
-  host: 111.77.141.65
-  port: 11883
+  host: 47.99.202.196
+  port: 20402
   username: "jiangxi"
   password: "Fhzn@1234"
   topic_root: algorithm/device
@@ -172,3 +179,7 @@ gimbal:
   camera_backend: "gimbal_hk"
   launch_post_waypoint_home_bridge: false
   use_http_isapi_absolute_ptz: true
+
+sensor_gimbal:
+  enable_gimbal: true
+  enable_thermal: true

@@ -71,7 +71,7 @@ nav_bridge:
     charge_poll_interval_seconds: 0.5
 
 livox:
-  model: mid360s
+  model: mid360
   readiness:
     type: topics
     topics:

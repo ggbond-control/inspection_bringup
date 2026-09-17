@@ -856,6 +856,12 @@ def launch_setup(context):
         "fleet_state_mqtt_topic": str(config_value(
             config, "mqtt", "fleet_state_mqtt_topic", "fh/fleet/state"
         )),
+        "mission_record_directory": str(config_value(
+            config,
+            "mqtt",
+            "mission_record_directory",
+            "~/.ros/inspection_platform_bridge/records",
+        )),
         "media_upload_service_name": str(
             config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
         ),
@@ -1153,6 +1159,12 @@ def launch_setup(context):
                 )),
                 "task_hub_start_service": str(config_value(
                     config, "mission_execution_agent", "task_hub_start_service", "/start_route"
+                )),
+                "data_root": str(config_value(
+                    config,
+                    "mission_execution_agent",
+                    "data_root",
+                    "~/.ros/mission_execution_agent",
                 )),
             }],
         ))
