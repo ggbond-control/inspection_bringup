@@ -299,6 +299,11 @@ def generate_launch_description():
             description="Enable thermal monitoring inside sensor_gimbal.",
         ),
         DeclareLaunchArgument(
+            "sensor_gimbal_enable_smoke",
+            default_value="",
+            description="Enable smoke detection inside sensor_gimbal.",
+        ),
+        DeclareLaunchArgument(
             "enable_charge",
             default_value="",
             description="Start charge executor.",
@@ -606,6 +611,9 @@ def launch_setup(context):
         )),
         "acoustic_set_parameters_service_name": str(config_value(
             config, "task_hub", "acoustic_set_parameters_service_name", "/monitor/acoustic/set_parameters"
+        )),
+        "smoke_monitor_prefix": str(config_value(
+            config, "task_hub", "smoke_monitor_prefix", "/monitor/smoke"
         )),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
@@ -1053,6 +1061,10 @@ def launch_setup(context):
                 "enable_thermal": as_bool_text(override_or_config_bool(
                     context, "sensor_gimbal_enable_thermal", config,
                     "sensor_gimbal", "enable_thermal", True
+                )),
+                "enable_smoke": as_bool_text(override_or_config_bool(
+                    context, "sensor_gimbal_enable_smoke", config,
+                    "sensor_gimbal", "enable_smoke", False
                 )),
                 "camera_backend": override_or_config(
                     context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"

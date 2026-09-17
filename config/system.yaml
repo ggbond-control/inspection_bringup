@@ -15,6 +15,7 @@ modules:
 sensor_gimbal:
   enable_gimbal: true
   enable_thermal: true
+  enable_smoke: true
 
 robot_heartbeat:
   robot_id: x30
@@ -125,6 +126,7 @@ live_stream:
     output_format: flv
 
 task_hub:
+  smoke_monitor_prefix: "/monitor/smoke"
   acoustic_start_service_name: /monitor/acoustic/start
   acoustic_stop_service_name: /monitor/acoustic/stop
   acoustic_set_parameters_service_name: /monitor/acoustic/set_parameters
