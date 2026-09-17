@@ -279,11 +279,6 @@ def generate_launch_description():
             description="Start inspection task hub.",
         ),
         DeclareLaunchArgument(
-            "enable_gimbal",
-            default_value="",
-            description="Start gimbal control stub.",
-        ),
-        DeclareLaunchArgument(
             "enable_sensor_gimbal",
             default_value="",
             description="Start shared gimbal and thermal camera process.",
@@ -327,11 +322,6 @@ def generate_launch_description():
             "enable_gas",
             default_value="",
             description="Start gas monitor when sensors are enabled.",
-        ),
-        DeclareLaunchArgument(
-            "enable_thermal",
-            default_value="",
-            description="Start thermal camera monitor when sensors are enabled.",
         ),
         DeclareLaunchArgument(
             "enable_acoustic",
@@ -528,11 +518,6 @@ def launch_setup(context):
         "config",
         "routes.yaml",
     )
-    default_gimbal_params_file = os.path.join(
-        get_package_share_directory("gimbal_control_stub"),
-        "config",
-        "stub_params.yaml",
-    )
     default_device_status_path = os.path.join(
         get_package_share_directory("inspection_platform_bridge"),
         "platform",
@@ -541,9 +526,6 @@ def launch_setup(context):
 
     enable_task_hub = as_bool_text(override_or_config(
         context, "enable_task_hub", config, "modules", "task_hub", True
-    ))
-    enable_gimbal = as_bool_text(override_or_config(
-        context, "enable_gimbal", config, "modules", "gimbal", True
     ))
     enable_sensor_gimbal = as_bool_text(override_or_config(
         context, "enable_sensor_gimbal", config, "modules", "sensor_gimbal", False
@@ -561,16 +543,6 @@ def launch_setup(context):
         context, "enable_light", config, "modules", "light", True
     ))
     enable_gas = as_bool_text(override_or_config(context, "enable_gas", config, "modules", "gas", True))
-    enable_thermal = as_bool_text(override_or_config(
-        context, "enable_thermal", config, "modules", "thermal", True
-    ))
-    if as_bool(enable_sensor_gimbal) and (
-        as_bool(enable_gimbal) or (as_bool(enable_sensors) and as_bool(enable_thermal))
-    ):
-        raise RuntimeError(
-            "sensor_gimbal cannot run alongside the legacy gimbal or thermal camera; "
-            "set enable_sensor_gimbal:=false to use legacy modules"
-        )
     enable_acoustic = as_bool_text(override_or_config(
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
@@ -1002,55 +974,24 @@ def launch_setup(context):
         parameters=[algorithm_mqtt_params],
     )
 
-    gimbal_params_file = os.path.expanduser(
-        override_or_config(
-            context, "gimbal_params_file", config, "gimbal", "params_file", default_gimbal_params_file
+    sensor_gimbal_params_file = ""
+    if as_bool(enable_sensor_gimbal):
+        sensor_gimbal_params_file = os.path.expanduser(
+            override_or_config(
+                context,
+                "gimbal_params_file",
+                config,
+                "gimbal",
+                "params_file",
+                os.path.join(
+                    get_package_share_directory("sensor_gimbal"),
+                    "config",
+                    "stub_params.yaml",
+                ),
+            )
         )
-    )
-    sensor_gimbal_params_file = os.path.expanduser(
-        override_or_config(
-            context, "gimbal_params_file", config, "gimbal", "params_file",
-            os.path.join(get_package_share_directory("sensor_gimbal"), "config", "stub_params.yaml"),
-        )
-    )
 
     actions = [task_hub_node]
-    append_if_enabled(
-        actions,
-        enable_gimbal,
-        include_package_launch(
-            "gimbal_control_stub",
-            "gimbal_stub.launch.py",
-            None,
-            {
-                "params_file": gimbal_params_file,
-                "camera_backend": override_or_config(
-                    context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"
-                ),
-                "launch_post_waypoint_home_bridge": as_bool_text(
-                    override_or_config_bool(
-                        context,
-                        "launch_post_waypoint_home_bridge",
-                        config,
-                        "gimbal",
-                        "launch_post_waypoint_home_bridge",
-                        False,
-                    )
-                ),
-                "inspection_route_config_path": task_hub_params["default_route_config_path"],
-                "gimbal_hk_use_http_isapi_absolute_ptz": as_bool_text(
-                    override_or_config_bool(
-                        context,
-                        "gimbal_hk_use_http_isapi_absolute_ptz",
-                        config,
-                        "gimbal",
-                        "use_http_isapi_absolute_ptz",
-                        True,
-                    )
-                ),
-            },
-        ),
-    )
     append_if_enabled(
         actions,
         enable_sensor_gimbal,
@@ -1108,7 +1049,6 @@ def launch_setup(context):
                 "enable_alarm": enable_alarm,
                 "enable_light": enable_light,
                 "enable_gas": enable_gas,
-                "enable_thermal": enable_thermal,
                 "enable_acoustic": enable_acoustic,
             },
         ),

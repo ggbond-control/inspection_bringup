@@ -11,9 +11,9 @@ repositories:
   src/gas_monitor:
     type: git
     url: https://github.com/ggbond-control/gas_monitor.git
-  src/gimbal_stub_hub:
+  src/sensor_gimbal:
     type: git
-    url: https://github.com/ggbond-control/gimbal_stub_hub.git
+    url: https://github.com/ggbond-control/sensor_gimbal.git
   src/inspection_charge_executor:
     type: git
     url: https://github.com/ggbond-control/inspection_charge_executor.git
@@ -26,6 +26,3 @@ repositories:
   src/inspection_task_hub:
     type: git
     url: https://github.com/ggbond-control/inspection_task_hub.git
-  src/thermal_camera_monitor:
-    type: git
-    url: https://github.com/ggbond-control/thermal_camera_monitor.git

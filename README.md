@@ -139,12 +139,13 @@ Temporary command-line values override `config/system.yaml`:
 
 ```bash
 ros2 launch inspection_bringup inspection_system.launch.py \
-  enable_gimbal:=false \
+  enable_sensor_gimbal:=true \
+  sensor_gimbal_enable_gimbal:=true \
+  sensor_gimbal_enable_thermal:=true \
   enable_charge:=true \
   enable_sensors:=true \
   enable_alarm:=true \
   enable_gas:=true \
-  enable_thermal:=true \
   enable_mqtt:=true
 ```
 
