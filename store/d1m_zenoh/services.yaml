@@ -1,0 +1,53 @@
+service:
+  user: cat
+  workspace_root: /home/cat/Workspace/task_ws
+  setup_paths:
+    - /home/cat/Workspace/zenoh_ws/install/setup.bash
+    - /home/cat/Workspace/driver_ws/install/setup.bash
+    - /home/cat/Workspace/task_ws/install/setup.bash
+    - /home/cat/Workspace/algor_ws/install/setup.bash
+  library_paths:
+    - /home/cat/Workspace/driver_ws/third_party/install/lib
+    - /home/cat/Workspace/driver_ws/third_party/install/lib64
+  environment:
+    RMW_IMPLEMENTATION: rmw_zenoh_cpp
+    ZENOH_SESSION_CONFIG_URI: /home/cat/Workspace/zenoh_ws/session_config.json5
+    ZENOH_ROUTER_CHECK_ATTEMPTS: "30"
+    ROS_DOMAIN_ID: "24"
+  ros_distro: jazzy
+  ros_log_dir: /home/cat/inspection_logs
+  install_dir: /opt/inspection_bringup
+  restart: on-failure
+  restart_sec: 5
+  timeout_stop_sec: 30
+  sudo_default_password: cat
+
+navigation:
+  service_name: inspection-navigation.service
+  enabled_on_boot: true
+  systemd:
+    nice: -10
+    cpu_weight: 900
+    io_weight: 900
+    oom_score_adjust: -900
+  launch_args:
+    navigate_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/navigate.yaml
+
+hardware:
+  service_name: inspection-hardware.service
+  enabled_on_boot: true
+  restart: always
+  restart_sec: 2
+  processes:
+    - name: acoustic_monitor
+      command: /home/cat/Workspace/task_ws/src/acoustic_monitor/scripts/run_acoustic_monitor_agent.sh
+    - name: light_manager
+      command: /home/cat/Workspace/task_ws/src/light_manager/scripts/run_light_manager_agent.sh
+    - name: gas_monitor_pump
+      command: /home/cat/Workspace/task_ws/src/gas_monitor/scripts/run_gas_monitor_pump_agent.sh
+
+inspection_system:
+  service_name: inspection-system.service
+  enabled_on_boot: true
+  launch_args:
+    system_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/system.yaml
