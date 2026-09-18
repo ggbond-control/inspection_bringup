@@ -27,9 +27,8 @@ mission_execution_agent:
   # Keep false until generated route YAML has been manually verified.
   auto_execute: false
   task_hub_start_service: /start_route
-  task_hub_quiesce_service: /quiesce_route
+  task_hub_pause_service: /pause_route
   task_hub_cancel_service: /cancel_route
-  task_hub_event_topic: /inspection_task_hub/task_event
   task_event_topic: /mission_execution/task_event
   task_event_ack_topic: /mission_execution/task_event_ack
   mission_control_topic: /mission_execution/mission_control
@@ -178,7 +177,6 @@ task_hub:
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 30.0
-  quiesce_timeout_seconds: 30.0
   manual_mode_ready_timeout_seconds: 60.0
 
 gimbal:
