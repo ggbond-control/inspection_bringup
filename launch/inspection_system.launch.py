@@ -793,6 +793,10 @@ def launch_setup(context):
             ),
             value_type=float,
         ),
+        "quiesce_timeout_seconds": ParameterValue(
+            config_value(config, "task_hub", "quiesce_timeout_seconds", 30.0),
+            value_type=float,
+        ),
         "runtime_log_directory": os.path.expanduser(
             override_or_config(
                 context,
@@ -1116,6 +1120,35 @@ def launch_setup(context):
                 )),
                 "task_hub_start_service": str(config_value(
                     config, "mission_execution_agent", "task_hub_start_service", "/start_route"
+                )),
+                "task_hub_quiesce_service": str(config_value(
+                    config, "mission_execution_agent", "task_hub_quiesce_service", "/quiesce_route"
+                )),
+                "task_hub_cancel_service": str(config_value(
+                    config, "mission_execution_agent", "task_hub_cancel_service", "/cancel_route"
+                )),
+                "task_hub_event_topic": str(config_value(
+                    config, "mission_execution_agent", "task_hub_event_topic",
+                    "/inspection_task_hub/task_event"
+                )),
+                "task_event_topic": str(config_value(
+                    config, "mission_execution_agent", "task_event_topic",
+                    "/mission_execution/task_event"
+                )),
+                "task_event_ack_topic": str(config_value(
+                    config, "mission_execution_agent", "task_event_ack_topic",
+                    "/mission_execution/task_event_ack"
+                )),
+                "mission_control_topic": str(config_value(
+                    config, "mission_execution_agent", "mission_control_topic",
+                    "/mission_execution/mission_control"
+                )),
+                "mission_control_ack_topic": str(config_value(
+                    config, "mission_execution_agent", "mission_control_ack_topic",
+                    "/mission_execution/mission_control_ack"
+                )),
+                "task_event_resend_seconds": float(config_value(
+                    config, "mission_execution_agent", "task_event_resend_seconds", 2.0
                 )),
                 "data_root": str(config_value(
                     config,
