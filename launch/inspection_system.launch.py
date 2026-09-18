@@ -329,6 +329,11 @@ def generate_launch_description():
             description="Start acoustic monitor when sensors are enabled.",
         ),
         DeclareLaunchArgument(
+            "enable_sensor_atmospheric",
+            default_value="",
+            description="Start atmospheric sensor monitor when sensors are enabled.",
+        ),
+        DeclareLaunchArgument(
             "enable_mqtt",
             default_value="",
             description="Start ROS 2 <-> MQTT platform bridge.",
@@ -546,6 +551,10 @@ def launch_setup(context):
     enable_acoustic = as_bool_text(override_or_config(
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
+    enable_sensor_atmospheric = as_bool_text(override_or_config(
+        context, "enable_sensor_atmospheric", config,
+        "modules", "sensor_atmospheric", True
+    ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
     enable_mission_execution_agent = as_bool_text(override_or_config(
         context, "enable_mission_execution_agent", config, "modules", "mission_execution_agent", False
@@ -586,6 +595,13 @@ def launch_setup(context):
         )),
         "smoke_monitor_prefix": str(config_value(
             config, "task_hub", "smoke_monitor_prefix", "/monitor/smoke"
+        )),
+        "atmospheric_monitor_prefix": str(config_value(
+            config, "task_hub", "atmospheric_monitor_prefix", "/monitor/atmospheric"
+        )),
+        "atmospheric_properties_status_topic": str(config_value(
+            config, "task_hub", "atmospheric_properties_status_topic",
+            "/monitor/atmospheric/status"
         )),
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
@@ -1049,6 +1065,7 @@ def launch_setup(context):
                 "enable_alarm": enable_alarm,
                 "enable_light": enable_light,
                 "enable_gas": enable_gas,
+                "enable_sensor_atmospheric": enable_sensor_atmospheric,
                 "enable_acoustic": enable_acoustic,
             },
         ),

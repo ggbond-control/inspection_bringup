@@ -88,6 +88,11 @@ def generate_launch_description():
             default_value="",
             description="Start acoustic monitor.",
         ),
+        DeclareLaunchArgument(
+            "enable_sensor_atmospheric",
+            default_value="",
+            description="Start atmospheric sensor monitor.",
+        ),
     ]
 
     return LaunchDescription(
@@ -118,10 +123,19 @@ def launch_setup(context):
     enable_acoustic = as_bool_text(
         override_or_config(context, "enable_acoustic", config, "modules", "acoustic", True)
     )
+    enable_sensor_atmospheric = as_bool_text(
+        override_or_config(
+            context, "enable_sensor_atmospheric", config,
+            "modules", "sensor_atmospheric", True
+        )
+    )
 
     return [
         include_package_launch("alarm_manager", "alarm_manager.launch.py", enable_alarm),
         include_package_launch("light_manager", "light_manager.launch.py", enable_light),
         include_package_launch("gas_monitor", "gas_monitor.launch.py", enable_gas),
+        include_package_launch(
+            "sensor_atmospheric", "sensor_atmospheric.launch.py", enable_sensor_atmospheric
+        ),
         include_package_launch("acoustic_monitor", "acoustic_monitor.launch.py", enable_acoustic),
     ]

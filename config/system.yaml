@@ -6,6 +6,7 @@ modules:
   alarm: true
   light: true
   gas: true
+  sensor_atmospheric: true
   acoustic: true
   mqtt: true
   mission_execution_agent: true
@@ -132,6 +133,8 @@ live_stream:
 
 task_hub:
   smoke_monitor_prefix: "/monitor/smoke"
+  atmospheric_monitor_prefix: /monitor/atmospheric
+  atmospheric_properties_status_topic: /monitor/atmospheric/status
   acoustic_start_service_name: /monitor/acoustic/start
   acoustic_stop_service_name: /monitor/acoustic/stop
   acoustic_set_parameters_service_name: /monitor/acoustic/set_parameters
