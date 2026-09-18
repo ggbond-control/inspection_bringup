@@ -113,9 +113,6 @@ def live_stream_params(config):
                 "/platform/acoustic_overlay_stream/status",
             )
         ),
-        "acoustic_overlay_stream_id": str(
-            nested_config_value(config, "live_stream", "acoustic", "stream_id", "x30/acoustic")
-        ),
         "acoustic_overlay_stream_fps": ParameterValue(
             nested_config_value(config, "live_stream", "acoustic", "fps", 10.0),
             value_type=float,
@@ -149,9 +146,6 @@ def live_stream_params(config):
                 "/platform/acoustic_camera_stream/status",
             )
         ),
-        "acoustic_camera_stream_id": str(
-            nested_config_value(config, "live_stream", "acoustic_camera", "stream_id", "x30_acoustic_camera")
-        ),
         "acoustic_camera_stream_fps": ParameterValue(
             nested_config_value(config, "live_stream", "acoustic_camera", "fps", 10.0),
             value_type=float,
@@ -184,9 +178,6 @@ def live_stream_params(config):
                 "status_topic",
                 "/platform/acoustic_heatmap_stream/status",
             )
-        ),
-        "acoustic_heatmap_stream_id": str(
-            nested_config_value(config, "live_stream", "acoustic_heatmap", "stream_id", "x30_acoustic_heatmap")
         ),
         "acoustic_heatmap_stream_fps": ParameterValue(
             nested_config_value(config, "live_stream", "acoustic_heatmap", "fps", 10.0),

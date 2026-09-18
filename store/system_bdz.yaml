@@ -52,7 +52,6 @@ live_stream:
     enabled: true
   acoustic:
     enabled: true
-    stream_id: x30/acoustic
     topic: /monitor/acoustic/overlay
     status_topic: /platform/acoustic_sensor_stream/status
     fps: 10.0
@@ -62,7 +61,6 @@ live_stream:
     restart_interval_sec: 5.0
   acoustic_camera:
     enabled: false
-    stream_id: x30_acoustic_camera
     topic: /monitor/acoustic/camera
     status_topic: /platform/acoustic_camera_stream/status
     fps: 10.0
@@ -72,7 +70,6 @@ live_stream:
     restart_interval_sec: 5.0
   acoustic_heatmap:
     enabled: false
-    stream_id: x30_acoustic_heatmap
     topic: /monitor/acoustic/heatmap
     status_topic: /platform/acoustic_heatmap_stream/status
     fps: 10.0
