@@ -9,7 +9,7 @@ modules:
   sensor_atmospheric: true
   acoustic: true
   mqtt: true
-  mission_execution_agent: true
+  mission_execution_agent: false
 
 
 
