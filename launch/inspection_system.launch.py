@@ -826,6 +826,7 @@ def launch_setup(context):
         "robot_heartbeat_topic": str(config_value(
             config, "mission_execution_agent", "heartbeat_topic", "/mission_execution/heartbeat"
         )),
+        "enable_mission_execution_agent": as_bool(enable_mission_execution_agent),
         "fleet_state_topic": str(config_value(
             config, "mission_execution_agent", "fleet_state_topic", "/fleet/state"
         )),
