@@ -76,6 +76,9 @@ def live_stream_params(config):
             )
         ),
         "live_stream_config_path": str(config_value(config, "live_stream", "config_path", "")),
+        "live_stream_push_policy": str(
+            config_value(config, "live_stream", "push_policy", "")
+        ),
         "live_stream_request_on_startup": ParameterValue(
             as_bool(config_value(config, "live_stream", "request_on_startup", True)),
             value_type=bool,

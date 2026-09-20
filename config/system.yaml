@@ -92,10 +92,9 @@ algorithm_mqtt:
 live_stream:
   config_path: ""
   algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
+  # disabled | always | task_scoped. always keeps streams active without a task.
+  push_policy: always
   request_on_startup: true
-  # true: 仅在任务执行期间推流；任务结束、取消或失败后自动停止。
-  task_scoped: false
-  enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
   gimbal:

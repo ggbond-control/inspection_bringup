@@ -103,8 +103,8 @@ mqtt:
 
 live_stream:
   config_path: ""
+  push_policy: always  # disabled | always | task_scoped
   request_on_startup: true
-  enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 5.0
   gimbal:

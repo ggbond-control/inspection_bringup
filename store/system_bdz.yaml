@@ -44,8 +44,9 @@ algorithm_mqtt:
 
 live_stream:
   config_path: ""
+  # disabled | always | task_scoped. always keeps streams active without a task.
+  push_policy: always
   request_on_startup: true
-  enable_push: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
   gimbal:
