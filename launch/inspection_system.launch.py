@@ -979,6 +979,25 @@ def launch_setup(context):
         parameters=[platform_params],
     )
 
+    algorithm_transport = str(
+        config_value(config, "algorithm", "transport", "mqtt")
+    ).strip().lower()
+    if algorithm_transport not in ("mqtt", "http"):
+        raise RuntimeError(
+            "algorithm.transport must be 'mqtt' or 'http', "
+            f"got {algorithm_transport!r}"
+        )
+    algorithm_transport_enabled = as_bool(
+        config_value(config, "modules", "algorithm_transport", True)
+    )
+    # Keep platform MQTT and algorithm transport independently switchable.
+    algorithm_mqtt_enabled = "true" if (
+        algorithm_transport == "mqtt" and as_bool(enable_mqtt) and algorithm_transport_enabled
+    ) else "false"
+    algorithm_http_enabled = "true" if (
+        algorithm_transport == "http" and algorithm_transport_enabled
+    ) else "false"
+
     algorithm_mqtt_params = {
         "sn": str(config_value(config, "mqtt", "sn", "x30")),
         "mqtt_host": str(config_value(config, "algorithm_mqtt", "host", "127.0.0.1")),
@@ -1012,8 +1031,54 @@ def launch_setup(context):
         output="screen",
         emulate_tty=True,
         prefix=["stdbuf -o L -e L"],
-        condition=IfCondition(enable_mqtt),
+        condition=IfCondition(algorithm_mqtt_enabled),
         parameters=[algorithm_mqtt_params],
+    )
+
+    algorithm_http_params = {
+        "execute_url": str(config_value(config, "algorithm_http", "execute_url", "")),
+        "database_path": os.path.expanduser(str(config_value(
+            config,
+            "algorithm_http",
+            "database_path",
+            "~/.ros/inspection_platform_bridge/algorithm_http_queue.db",
+        ))),
+        "connect_timeout_seconds": ParameterValue(
+            config_value(config, "algorithm_http", "connect_timeout_seconds", 3.0),
+            value_type=float,
+        ),
+        "request_timeout_seconds": ParameterValue(
+            config_value(config, "algorithm_http", "request_timeout_seconds", 30.0),
+            value_type=float,
+        ),
+        "max_response_bytes": ParameterValue(
+            config_value(config, "algorithm_http", "max_response_bytes", 8388608),
+            value_type=int,
+        ),
+        "auth_token": str(config_value(config, "algorithm_http", "auth_token", "")),
+        "max_attempts": ParameterValue(
+            config_value(config, "algorithm_http", "max_attempts", 3), value_type=int
+        ),
+        "retry_intervals_seconds": config_value(
+            config, "algorithm_http", "retry_intervals_seconds", [1.0, 2.0, 5.0]
+        ),
+        "worker_threads": ParameterValue(
+            config_value(config, "algorithm_http", "worker_threads", 2), value_type=int
+        ),
+        "command_topic": task_hub_params["algorithm_command_topic"],
+        "session_event_topic": task_hub_params["algorithm_session_event_topic"],
+        "result_topic": task_hub_params["algorithm_result_topic"],
+        "ack_service": task_hub_params["algorithm_ack_service"],
+    }
+    algorithm_http_bridge = Node(
+        package="inspection_platform_bridge",
+        executable="algorithm_http_bridge_node",
+        name="algorithm_http_bridge_node",
+        output="screen",
+        emulate_tty=True,
+        prefix=["stdbuf -o L -e L"],
+        condition=IfCondition(algorithm_http_enabled),
+        parameters=[algorithm_http_params],
     )
 
     sensor_gimbal_params_file = ""
@@ -1098,6 +1163,7 @@ def launch_setup(context):
     )
     actions.append(platform_mqtt_bridge)
     actions.append(algorithm_mqtt_bridge)
+    actions.append(algorithm_http_bridge)
     if as_bool(enable_mission_execution_agent):
         actions.append(Node(
             package="capability_mission_planner",

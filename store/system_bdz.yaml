@@ -9,6 +9,7 @@ modules:
   thermal: true
   acoustic: true
   mqtt: true
+  algorithm_transport: true
 
 mqtt:
   sn: x30-a
@@ -41,6 +42,21 @@ algorithm_mqtt:
   database_path: "~/.ros/inspection_platform_bridge/algorithm_queue.db"
   max_attempts: 3
   result_drain_timeout_sec: 30.0
+
+# Set algorithm.transport to http to use the standalone HTTP bridge below.
+algorithm:
+  transport: mqtt
+
+algorithm_http:
+  execute_url: ""
+  database_path: "~/.ros/inspection_platform_bridge/algorithm_http_queue.db"
+  connect_timeout_seconds: 3.0
+  request_timeout_seconds: 30.0
+  max_response_bytes: 8388608
+  auth_token: ""
+  max_attempts: 3
+  retry_intervals_seconds: [1.0, 2.0, 5.0]
+  worker_threads: 2
 
 live_stream:
   config_path: ""
