@@ -23,7 +23,7 @@ mission_execution_agent:
   planning_leader: true
   leader_epoch: 1
   heartbeat_period_seconds: 1.0
-  device_status_path: ""
+  device_status_path: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/platform/device_status.json
   # Keep false until generated route YAML has been manually verified.
   auto_execute: false
   task_hub_start_service: /start_route
