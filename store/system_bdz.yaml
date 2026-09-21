@@ -89,6 +89,9 @@ live_stream:
 task_hub:
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
+  inspection_report_enabled: true
+  inspection_report_name: "常规巡检"
+  inspection_report_copy_local_media: true
   algorithm_visible_stream_url: "rtsp://192.168.2.100:554/live/x30/gimbal/vis"
   algorithm_command_topic: "/algorithm_transport/commands"
   algorithm_session_event_topic: "/algorithm_transport/session_events"

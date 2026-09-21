@@ -147,6 +147,11 @@ task_hub:
   acoustic_set_parameters_service_name: /monitor/acoustic/set_parameters
   default_route_config_path: ""
   runtime_log_directory: "~/runtime_logs"
+  # 每条巡检路线结束后，在 runtime_log_directory 下生成 Markdown 报告和异常图片副本。
+  # 图片与 Markdown 文件平铺在同一个 inspection_<...> 目录中。
+  inspection_report_enabled: true
+  inspection_report_name: "常规巡检"
+  inspection_report_copy_local_media: true
   algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
   algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
   # Fixed input stream consumed by the algorithm center. This is independent

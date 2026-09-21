@@ -1,3 +1,5 @@
+import json
+import math
 import os
 
 import yaml
@@ -33,6 +35,17 @@ def load_system_config(path):
 
     with open(expanded_path, "r", encoding="utf-8") as config_file:
         return yaml.safe_load(config_file) or {}
+
+
+def load_battery_rated_capacity(path):
+    try:
+        with open(path, "r", encoding="utf-8") as config_file:
+            capacity = float(json.load(config_file)["Battery_RC"])
+        if not math.isfinite(capacity) or capacity <= 0.0:
+            return 0.0
+        return capacity
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return 0.0
 
 
 def config_value(config, section, key, fallback):
@@ -522,6 +535,7 @@ def launch_setup(context):
         "platform",
         "device_status.json",
     )
+    battery_rated_capacity = load_battery_rated_capacity(default_device_status_path)
 
     enable_task_hub = as_bool_text(override_or_config(
         context, "enable_task_hub", config, "modules", "task_hub", True
@@ -797,6 +811,22 @@ def launch_setup(context):
                 "~/runtime_logs",
             )
         ),
+        "inspection_report_enabled": ParameterValue(
+            as_bool(config_value(config, "task_hub", "inspection_report_enabled", True)),
+            value_type=bool,
+        ),
+        "inspection_report_name": str(
+            config_value(config, "task_hub", "inspection_report_name", "常规巡检")
+        ),
+        "inspection_report_device_sn": str(config_value(config, "mqtt", "sn", "unknown")),
+        "inspection_report_battery_capacity_ah": ParameterValue(
+            battery_rated_capacity,
+            value_type=float,
+        ),
+        "inspection_report_copy_local_media": ParameterValue(
+            config_value(config, "task_hub", "inspection_report_copy_local_media", True),
+            value_type=bool,
+        ),
     }
 
     task_hub_node = Node(
@@ -851,6 +881,7 @@ def launch_setup(context):
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
         )),
+        "device_status_config_path": default_device_status_path,
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),
