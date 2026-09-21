@@ -6,7 +6,7 @@ modules:
   alarm: true
   light: true
   gas: true
-  sensor_atmospheric: true
+  sensor_rs485: true
   acoustic: true
   mqtt: true
   mission_execution_agent: false

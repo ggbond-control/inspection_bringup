@@ -11,9 +11,9 @@ repositories:
   src/gas_monitor:
     type: git
     url: https://github.com/ggbond-control/gas_monitor.git
-  src/sensor_atmospheric:
+  src/sensor_rs485:
     type: git
-    url: https://github.com/ggbond-control/sensor_atmospheric.git
+    url: https://github.com/ggbond-control/sensor_rs485.git
   src/sensor_gimbal:
     type: git
     url: https://github.com/ggbond-control/sensor_gimbal.git

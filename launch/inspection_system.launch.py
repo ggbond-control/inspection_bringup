@@ -336,9 +336,9 @@ def generate_launch_description():
             description="Start acoustic monitor when sensors are enabled.",
         ),
         DeclareLaunchArgument(
-            "enable_sensor_atmospheric",
+            "enable_sensor_rs485",
             default_value="",
-            description="Start atmospheric sensor monitor when sensors are enabled.",
+            description="Start the shared atmospheric and ultrahigh-frequency RS485 sensor node.",
         ),
         DeclareLaunchArgument(
             "enable_mqtt",
@@ -559,9 +559,9 @@ def launch_setup(context):
     enable_acoustic = as_bool_text(override_or_config(
         context, "enable_acoustic", config, "modules", "acoustic", True
     ))
-    enable_sensor_atmospheric = as_bool_text(override_or_config(
-        context, "enable_sensor_atmospheric", config,
-        "modules", "sensor_atmospheric", True
+    enable_sensor_rs485 = as_bool_text(override_or_config(
+        context, "enable_sensor_rs485", config,
+        "modules", "sensor_rs485", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
     enable_mission_execution_agent = as_bool_text(override_or_config(
@@ -1156,7 +1156,7 @@ def launch_setup(context):
                 "enable_alarm": enable_alarm,
                 "enable_light": enable_light,
                 "enable_gas": enable_gas,
-                "enable_sensor_atmospheric": enable_sensor_atmospheric,
+                "enable_sensor_rs485": enable_sensor_rs485,
                 "enable_acoustic": enable_acoustic,
             },
         ),

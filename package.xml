@@ -14,7 +14,7 @@
   <exec_depend>acoustic_monitor</exec_depend>
   <exec_depend>gas_monitor</exec_depend>
   <exec_depend>sensor_gimbal</exec_depend>
-  <exec_depend>sensor_atmospheric</exec_depend>
+  <exec_depend>sensor_rs485</exec_depend>
   <exec_depend>inspection_charge_executor</exec_depend>
   <exec_depend>inspection_interfaces</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
