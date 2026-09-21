@@ -33,6 +33,10 @@ mission_execution_agent:
   task_event_ack_topic: /mission_execution/task_event_ack
   mission_control_topic: /mission_execution/mission_control
   mission_control_ack_topic: /mission_execution/mission_control_ack
+  task_addition_topic: /mission_execution/task_addition
+  task_addition_status_topic: /mission_execution/task_addition_status
+  task_addition_retry_seconds: 2.0
+  task_addition_response_timeout_seconds: 60.0
   task_event_resend_seconds: 2.0
   # All mission input, generated plans and route YAML stay with this package.
   data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime

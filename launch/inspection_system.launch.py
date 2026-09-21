@@ -1134,6 +1134,20 @@ def launch_setup(context):
                     config, "mission_execution_agent", "mission_control_ack_topic",
                     "/mission_execution/mission_control_ack"
                 )),
+                "task_addition_topic": str(config_value(
+                    config, "mission_execution_agent", "task_addition_topic",
+                    "/mission_execution/task_addition"
+                )),
+                "task_addition_status_topic": str(config_value(
+                    config, "mission_execution_agent", "task_addition_status_topic",
+                    "/mission_execution/task_addition_status"
+                )),
+                "task_addition_retry_seconds": float(config_value(
+                    config, "mission_execution_agent", "task_addition_retry_seconds", 2.0
+                )),
+                "task_addition_response_timeout_seconds": float(config_value(
+                    config, "mission_execution_agent", "task_addition_response_timeout_seconds", 60.0
+                )),
                 "task_event_resend_seconds": float(config_value(
                     config, "mission_execution_agent", "task_event_resend_seconds", 2.0
                 )),
