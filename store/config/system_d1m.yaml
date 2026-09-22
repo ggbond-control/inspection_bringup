@@ -6,7 +6,7 @@ modules:
   alarm: true
   light: true
   gas: true
-  sensor_rs485: true
+  sensor_atmospheric: true
   acoustic: true
   mqtt: true
   algorithm_transport: true
@@ -16,7 +16,7 @@ algorithm:
   transport: http
 
 mission_execution_agent:
-  robot_id: x30-A
+  robot_id: D1M-A
   heartbeat_topic: /mission_execution/heartbeat
   fleet_state_topic: /fleet/state
   odometry_topic: /odometry_multi_maps
@@ -44,7 +44,7 @@ mission_execution_agent:
   data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime
 
 mqtt:
-  sn: x30-A
+  sn: D1M-A
   host: 47.99.202.196
   port: 20402
   username: "jiangxi"
@@ -93,16 +93,6 @@ algorithm_http:
   max_attempts: 3
   retry_intervals_seconds: [1.0, 2.0, 5.0]
   worker_threads: 2
-
-# When S3/MinIO is unavailable, expose single-image algorithm inputs from cat.
-# The algorithm center reaches cat through its wired network address.
-media_upload:
-  mode: "local_http"
-  local_http_root_directory: "~/.ros/inspection_platform_bridge/algorithm_images"
-  local_http_public_base_url: "http://192.168.168.111:18081"
-  local_http_bind_address: "0.0.0.0"
-  local_http_port: 18081
-  local_http_retention_seconds: 3600.0
 
 algorithm_mqtt:
   host: 47.99.202.196

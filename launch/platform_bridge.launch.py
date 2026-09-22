@@ -299,6 +299,17 @@ def launch_setup(context):
         "media_upload_service_name": str(
             config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
         ),
+        "media_upload_mode": str(config_value(config, "media_upload", "mode", "s3")),
+        "local_media_http_root_directory": str(config_value(
+            config, "media_upload", "local_http_root_directory", "~/.ros/inspection_platform_bridge/algorithm_images")),
+        "local_media_http_public_base_url": str(config_value(
+            config, "media_upload", "local_http_public_base_url", "")),
+        "local_media_http_bind_address": str(config_value(
+            config, "media_upload", "local_http_bind_address", "0.0.0.0")),
+        "local_media_http_port": ParameterValue(config_value(
+            config, "media_upload", "local_http_port", 18081), value_type=int),
+        "local_media_http_retention_seconds": ParameterValue(config_value(
+            config, "media_upload", "local_http_retention_seconds", 3600.0), value_type=float),
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),

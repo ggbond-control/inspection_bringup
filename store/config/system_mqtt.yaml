@@ -6,14 +6,12 @@ modules:
   alarm: true
   light: true
   gas: true
-  sensor_rs485: true
+  sensor_atmospheric: true
   acoustic: true
   mqtt: true
-  algorithm_transport: true
   mission_execution_agent: false
 
-algorithm:
-  transport: http
+
 
 mission_execution_agent:
   robot_id: x30-A
@@ -84,25 +82,6 @@ mqtt:
   manual_jog_max_linear_y_speed: 0.6
   manual_jog_max_angular_speed: 1.2
   manual_jog_max_duration_ms: 2500
-
-algorithm_http:
-  execute_url: "http://192.168.168.100:25682/algorithm/execute"
-  database_path: "~/.ros/inspection_platform_bridge/algorithm_http_queue.db"
-  connect_timeout_seconds: 3.0
-  request_timeout_seconds: 90.0
-  max_attempts: 3
-  retry_intervals_seconds: [1.0, 2.0, 5.0]
-  worker_threads: 2
-
-# When S3/MinIO is unavailable, expose single-image algorithm inputs from cat.
-# The algorithm center reaches cat through its wired network address.
-media_upload:
-  mode: "local_http"
-  local_http_root_directory: "~/.ros/inspection_platform_bridge/algorithm_images"
-  local_http_public_base_url: "http://192.168.168.111:18081"
-  local_http_bind_address: "0.0.0.0"
-  local_http_port: 18081
-  local_http_retention_seconds: 3600.0
 
 algorithm_mqtt:
   host: 47.99.202.196
