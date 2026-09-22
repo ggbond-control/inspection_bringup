@@ -827,6 +827,22 @@ def launch_setup(context):
             config_value(config, "task_hub", "inspection_report_copy_local_media", True),
             value_type=bool,
         ),
+        "algorithm_result_image_save_enabled": ParameterValue(
+            as_bool(
+                config_value(
+                    config, "task_hub", "algorithm_result_image_save_enabled", True
+                )
+            ),
+            value_type=bool,
+        ),
+        "algorithm_input_image_report_enabled": ParameterValue(
+            as_bool(
+                config_value(
+                    config, "task_hub", "algorithm_input_image_report_enabled", False
+                )
+            ),
+            value_type=bool,
+        ),
     }
 
     task_hub_node = Node(

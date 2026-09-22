@@ -173,6 +173,10 @@ task_hub:
   inspection_report_enabled: true
   inspection_report_name: "常规巡检"
   inspection_report_copy_local_media: true
+  # 保存算法中心返回的结果图片，并复制到巡检报告目录中展示。
+  algorithm_result_image_save_enabled: true
+  # 算法调用前拍摄的输入图片默认只用于算法，不在巡检报告中重复展示。
+  algorithm_input_image_report_enabled: false
   algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
   algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
   # Fixed input stream consumed by the algorithm center. This is independent
