@@ -6,12 +6,14 @@ modules:
   alarm: true
   light: true
   gas: true
-  sensor_atmospheric: true
+  sensor_rs485: true
   acoustic: true
   mqtt: true
+  algorithm_transport: true
   mission_execution_agent: false
 
-
+algorithm:
+  transport: mqtt
 
 mission_execution_agent:
   robot_id: x30-A
@@ -83,6 +85,25 @@ mqtt:
   manual_jog_max_angular_speed: 1.2
   manual_jog_max_duration_ms: 2500
 
+algorithm_http:
+  execute_url: "http://192.168.168.100:25682/algorithm/execute"
+  database_path: "~/.ros/inspection_platform_bridge/algorithm_http_queue.db"
+  connect_timeout_seconds: 3.0
+  request_timeout_seconds: 90.0
+  max_attempts: 3
+  retry_intervals_seconds: [1.0, 2.0, 5.0]
+  worker_threads: 2
+
+# When S3/MinIO is unavailable, expose single-image algorithm inputs from cat.
+# The algorithm center reaches cat through its wired network address.
+media_upload:
+  mode: "local_http"
+  local_http_root_directory: "~/.ros/inspection_platform_bridge/algorithm_images"
+  local_http_public_base_url: "http://192.168.168.111:18081"
+  local_http_bind_address: "0.0.0.0"
+  local_http_port: 18081
+  local_http_retention_seconds: 3600.0
+
 algorithm_mqtt:
   host: 47.99.202.196
   port: 20402
@@ -152,6 +173,10 @@ task_hub:
   inspection_report_enabled: true
   inspection_report_name: "常规巡检"
   inspection_report_copy_local_media: true
+  # 保存算法中心返回的结果图片，并复制到巡检报告目录中展示。
+  algorithm_result_image_save_enabled: true
+  # 算法调用前拍摄的输入图片默认只用于算法，不在巡检报告中重复展示。
+  algorithm_input_image_report_enabled: false
   algorithm_execute_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/execute"
   algorithm_stop_url: "http://111.77.141.65:15680/openApi/gateway/algorithm/loop/stop"
   # Fixed input stream consumed by the algorithm center. This is independent

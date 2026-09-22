@@ -13,7 +13,7 @@ modules:
   mission_execution_agent: false
 
 algorithm:
-  transport: http
+  transport: mqtt
 
 mission_execution_agent:
   robot_id: x30-A

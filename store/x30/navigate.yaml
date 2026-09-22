@@ -22,12 +22,14 @@ bringup:
       sequence:
         - nav_bridge
         - acquire_control
+        - livox
         - slam
     nav:
       control_action: acquire_control
       sequence:
         - nav_bridge
         - acquire_control
+        - livox
         - slam
         - terrain
         - local_planner
@@ -44,6 +46,7 @@ bringup:
         - nav_bridge
         - acquire_control
         - release_control
+        - livox
         - slam
         - global_planner
   start_delay_seconds: 1.0
@@ -66,6 +69,14 @@ nav_bridge:
     charge_check_timeout_seconds: 10.0
     charge_exit_timeout_seconds: 30.0
     charge_poll_interval_seconds: 0.5
+
+livox:
+  model: mid360
+  readiness:
+    type: topics
+    topics:
+      - /livox/lidar
+    timeout_seconds: 10.0
 
 slam:
   relocal: true
