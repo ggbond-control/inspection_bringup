@@ -1192,6 +1192,24 @@ def launch_setup(context):
     actions.append(algorithm_mqtt_bridge)
     actions.append(algorithm_http_bridge)
     if as_bool(enable_mission_execution_agent):
+        if as_bool(config_value(config, "modules", "fleet_leader_election", False)):
+            actions.append(Node(
+                package="fleet_leader_election",
+                executable="fleet_leader_election_node",
+                name="fleet_leader_election",
+                output="screen",
+                parameters=[{
+                    "robot_id": str(config_value(config, "mission_execution_agent", "robot_id", config_value(config, "mqtt", "sn", "x30"))),
+                    "cluster_id": str(config_value(config, "fleet_leader_election", "cluster_id", "inspection-fleet")),
+                    "robot_ids": list(config_value(config, "fleet_leader_election", "robot_ids", [])),
+                    "data_root": str(config_value(config, "fleet_leader_election", "data_root", "~/fleet_leader_election/runtime")),
+                    "heartbeat_interval_seconds": float(config_value(config, "fleet_leader_election", "heartbeat_interval_seconds", 0.25)),
+                    "election_timeout_seconds": float(config_value(config, "fleet_leader_election", "election_timeout_seconds", 1.0)),
+                    "election_timeout_step_seconds": float(config_value(config, "fleet_leader_election", "election_timeout_step_seconds", 0.15)),
+                    "quorum_timeout_seconds": float(config_value(config, "fleet_leader_election", "quorum_timeout_seconds", 0.75)),
+                    "recovery_observation_seconds": float(config_value(config, "fleet_leader_election", "recovery_observation_seconds", 0.5)),
+                }],
+            ))
         actions.append(Node(
             package="capability_mission_planner",
             executable="capability_mission_planner_node",

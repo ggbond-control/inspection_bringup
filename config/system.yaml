@@ -11,6 +11,7 @@ modules:
   mqtt: true
   algorithm_transport: true
   mission_execution_agent: false
+  fleet_leader_election: false
 
 algorithm:
   transport: mqtt
@@ -22,12 +23,10 @@ mission_execution_agent:
   odometry_topic: /odometry_multi_maps
   odometry_max_age_seconds: 3.0
   task_hub_status_service: /get_status
-  planning_leader: true
-  leader_epoch: 1
   heartbeat_period_seconds: 1.0
   device_status_path: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/platform/device_status.json
   # Keep false until generated route YAML has been manually verified.
-  auto_execute: false
+  auto_execute: true
   task_hub_start_service: /start_route
   task_hub_pause_service: /pause_route
   task_hub_cancel_service: /cancel_route
@@ -42,6 +41,16 @@ mission_execution_agent:
   task_event_resend_seconds: 2.0
   # All mission input, generated plans and route YAML stay with this package.
   data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime
+
+fleet_leader_election:
+  cluster_id: company2-fleet
+  robot_ids: [x30-A, x30-B]
+  data_root: /home/cat/Workspace/task_ws/src/fleet_leader_election/runtime
+  heartbeat_interval_seconds: 0.25
+  election_timeout_seconds: 1.0
+  election_timeout_step_seconds: 0.15
+  quorum_timeout_seconds: 0.75
+  recovery_observation_seconds: 0.5
 
 mqtt:
   sn: x30-A
