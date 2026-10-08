@@ -1145,7 +1145,7 @@ def launch_setup(context):
                 )),
                 "enable_smoke": as_bool_text(override_or_config_bool(
                     context, "sensor_gimbal_enable_smoke", config,
-                    "sensor_gimbal", "enable_smoke", False
+                    "sensor_gimbal", "enable_smoke", True
                 )),
                 "camera_backend": override_or_config(
                     context, "camera_backend", config, "gimbal", "camera_backend", "gimbal_hk"
