@@ -108,7 +108,7 @@ global_planner:
   initial_map: ""
   multi_map_dir: ""
   use_fake_cmdvel: true
-  params_file: "new_local"
+  params_file: "straight_local"
   waypoint_dwell_time: 1.0
   patrol_loops: 1
   readiness:
