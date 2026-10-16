@@ -215,7 +215,8 @@ task_hub:
   odometry_topic: "/odometry_multi_maps"
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
-  charge_exit_executor_service_name: "/inspection_charge_executor/exit_charge"
+  charge_exit_executor_service_name: "/inspection_charge_executor/undock"
+  charge_exit_timeout_seconds: 300.0  # 包含旧调用收尾、脱桩确认及 ready；超时仍阻挡导航
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 30.0

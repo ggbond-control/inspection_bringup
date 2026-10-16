@@ -462,9 +462,9 @@ def generate_launch_description():
             description="Inspection charge executor service used by charge_exit tasks.",
         ),
         DeclareLaunchArgument(
-            "charge_exit_service_name",
+            "charge_exit_timeout_seconds",
             default_value="",
-            description="Lower-level charge command service used to stop charging.",
+            description="Timeout for confirmed undock and ready before navigation handoff.",
         ),
         DeclareLaunchArgument(
             "heartbeat_timeout_seconds",
@@ -751,7 +751,19 @@ def launch_setup(context):
             config,
             "task_hub",
             "charge_exit_executor_service_name",
-            "/inspection_charge_executor/exit_charge",
+            "/inspection_charge_executor/undock",
+        ),
+        "charge_exit_timeout_seconds": ParameterValue(
+            override_or_config_typed(
+                context,
+                "charge_exit_timeout_seconds",
+                config,
+                "task_hub",
+                "charge_exit_timeout_seconds",
+                300.0,
+                float,
+            ),
+            value_type=float,
         ),
         "heartbeat_timeout_seconds": ParameterValue(
             override_or_config_typed(
