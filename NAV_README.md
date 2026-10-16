@@ -261,6 +261,18 @@ then explicitly released.
 
 ### 状态转换表
 
+导航首次启动或切换模式需要运动准备时，会先等待
+`/inspection_charge_executor/undock` 完成，再执行 `stand` 或释放控制权。
+因此需先启动 system 中的充电执行器；执行器不可用、拒绝或超时均阻止继续启动，
+不会回退到 STOP 或仅凭 `/charge_manager_state=0` 放行。
+退出等待默认 300 秒，MQTT 地图/导航启动等待默认 600 秒；重定位仍可能需要人工处理，
+外层超时不表示后台操作已停止。
+
+导航启动允许主动退出充电。首点的 `charge_exit` 若随后执行，则复用有效的完成确认，
+不再脱桩、ready 或改变步态；同时请求会等待同一次退出的结果。
+退出接口不自行返航。重复请求已经运行的 `nav` 模式且地图参数未变时直接成功，
+不重复取控、站立或退出充电；manual 模式保留显式重新取控行为。
+
 | 当前状态 | 调用目标 | 必填输入 | 执行动作 | 返回结果 |
 | --- | --- | --- | --- | --- |
 | `stopped`，无地图缓存 | `manual` | 无 | 启动 `nav_bridge`，进入 `manual/bridge_only` | 成功；说明定位因无地图被跳过 |
@@ -432,10 +444,14 @@ bringup:
 
 nav_bridge:
   readiness:
-    type: topics
+    type: nav_bridge
     topics:
       - /battery/level
-    timeout_seconds: 10.0
+    topic_timeout_seconds: 10.0
+    charge_precheck: true
+    charge_executor_exit_service: /inspection_charge_executor/undock
+    charge_check_timeout_seconds: 10.0
+    charge_exit_timeout_seconds: 300.0
 
 livox:
   model: mid360
@@ -566,6 +582,7 @@ It has subcommands for the supported readiness checks:
 ```bash
 python3 scripts/wait_for_ready.py topics --name livox --timeout 10.0 /livox/lidar
 python3 scripts/wait_for_ready.py topics --name battery --timeout 10.0 /battery/level
+python3 scripts/wait_for_ready.py charge_precheck --charge-executor-exit-service /inspection_charge_executor/undock --charge-exit-timeout 300.0
 python3 scripts/wait_for_ready.py trigger --name acquire_control --service /nav_bridge_node/stand --timeout 30.0
 python3 scripts/wait_for_ready.py trigger --name release_control --service /nav_bridge_node/release_control --timeout 5.0
 python3 scripts/wait_for_ready.py localization-init --status-topic /localization_init_status --timeout 0.0 --release-control-on-blocked

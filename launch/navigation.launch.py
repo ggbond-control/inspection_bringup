@@ -490,11 +490,11 @@ def module_readiness_action_with_overrides(
                     config,
                     section,
                     "charge_executor_exit_service",
-                    "/inspection_charge_executor/exit_charge",
+                    "/inspection_charge_executor/undock",
                 )
             ),
             float(readiness_value(config, section, "charge_check_timeout_seconds", 10.0)),
-            float(readiness_value(config, section, "charge_exit_timeout_seconds", 30.0)),
+            float(readiness_value(config, section, "charge_exit_timeout_seconds", 300.0)),
             float(readiness_value(config, section, "charge_poll_interval_seconds", 0.5)),
             failure_detail,
         )

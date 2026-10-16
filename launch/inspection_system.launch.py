@@ -952,7 +952,7 @@ def launch_setup(context):
             )
         ),
         "localization_set_parameter_timeout_sec": ParameterValue(
-            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 60.0),
+            config_value(config, "mqtt", "localization_set_parameter_timeout_sec", 600.0),
             value_type=float,
         ),
         "localization_service_wait_timeout_sec": ParameterValue(

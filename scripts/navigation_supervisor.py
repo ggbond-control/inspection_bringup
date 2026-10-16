@@ -426,10 +426,9 @@ class NavigationSupervisor(Node):
                 return False, f"failed to reacquire control for {target_state}: {reason}"
             return True, f"navigation already running in {target_state} mode; control reacquired"
         if transition == "noop":
-            success, reason = self.run_control_action(config, target_state)
-            if not success:
-                return False, f"failed to refresh control for {target_state}: {reason}"
-            return True, f"navigation already running in {target_state} mode; control refreshed"
+            # Repeated map/start requests must not overwrite a task-selected
+            # gait or interfere with charging on an already running stack.
+            return True, f"navigation already running in {target_state} mode"
 
         if transition == "switch_mode":
             previous_state = self.current_state
@@ -611,13 +610,13 @@ class NavigationSupervisor(Node):
             str(
                 readiness.get(
                     "charge_executor_exit_service",
-                    "/inspection_charge_executor/exit_charge",
+                    "/inspection_charge_executor/undock",
                 )
             ),
             "--charge-check-timeout",
             str(float(readiness.get("charge_check_timeout_seconds", 10.0))),
             "--charge-exit-timeout",
-            str(float(readiness.get("charge_exit_timeout_seconds", 30.0))),
+            str(float(readiness.get("charge_exit_timeout_seconds", 300.0))),
             "--charge-poll-interval",
             str(float(readiness.get("charge_poll_interval_seconds", 0.5))),
         ]
@@ -628,7 +627,7 @@ class NavigationSupervisor(Node):
             for line in output.splitlines():
                 self.get_logger().info(f"charge_precheck: {line}")
         if completed.returncode == 0:
-            return True, "charge state is idle"
+            return True, "charge handoff completed"
         return False, output or f"charge precheck failed with exit code {completed.returncode}"
 
     def start_layer(self, layer, config, sequence):

@@ -11,6 +11,7 @@ modules:
   mqtt: true
   algorithm_transport: true
   mission_execution_agent: false
+  fleet_leader_election: false
 
 algorithm:
   transport: http
@@ -22,12 +23,10 @@ mission_execution_agent:
   odometry_topic: /odometry_multi_maps
   odometry_max_age_seconds: 3.0
   task_hub_status_service: /get_status
-  planning_leader: true
-  leader_epoch: 1
   heartbeat_period_seconds: 1.0
   device_status_path: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/platform/device_status.json
   # Keep false until generated route YAML has been manually verified.
-  auto_execute: false
+  auto_execute: true
   task_hub_start_service: /start_route
   task_hub_pause_service: /pause_route
   task_hub_cancel_service: /cancel_route
@@ -43,6 +42,16 @@ mission_execution_agent:
   # All mission input, generated plans and route YAML stay with this package.
   data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime
 
+fleet_leader_election:
+  cluster_id: company2-fleet
+  robot_ids: [x30-A, x30-B]
+  data_root: /home/cat/Workspace/task_ws/src/fleet_leader_election/runtime
+  heartbeat_interval_seconds: 0.25
+  election_timeout_seconds: 1.0
+  election_timeout_step_seconds: 0.15
+  quorum_timeout_seconds: 0.75
+  recovery_observation_seconds: 0.5
+
 mqtt:
   sn: D1M-A
   host: 47.99.202.196
@@ -51,7 +60,7 @@ mqtt:
   password: "Fhzn@1234"
   fleet_heartbeat_mqtt_suffix: fleet/heartbeat
   fleet_state_mqtt_topic: fh/fleet/state
-  topic_vendor_prefix: fh
+  topic_vendor_prefix: guquan
   topic_root: device
   map_root_directory: /home/cat/Workspace/Maps
   # MQTT mission receive/publish audit, retained with the bridge package.
@@ -60,7 +69,7 @@ mqtt:
   manual_map_switch_service_name: /manual_switch_current_map
   localization_map_parameter_name: slam.prior_dir
   localization_initial_map_parameter_name: global_planner.initial_map
-  localization_set_parameter_timeout_sec: 60.0
+  localization_set_parameter_timeout_sec: 600.0
   localization_service_wait_timeout_sec: 5.0
   acoustic_start_service_name: /monitor/acoustic/start
   acoustic_stop_service_name: /monitor/acoustic/stop
@@ -118,7 +127,7 @@ live_stream:
   config_path: ""
   algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
   # disabled | always | task_scoped. always keeps streams active without a task.
-  push_policy: always
+  push_policy: disabled
   request_on_startup: true
   ffmpeg_bin: ffmpeg
   restart_interval_sec: 1.0
@@ -206,7 +215,8 @@ task_hub:
   odometry_topic: "/odometry_multi_maps"
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
-  charge_exit_executor_service_name: "/inspection_charge_executor/exit_charge"
+  charge_exit_executor_service_name: "/inspection_charge_executor/undock"
+  charge_exit_timeout_seconds: 300.0  # 包含旧调用收尾、脱桩确认及 ready；超时仍阻挡导航
   heartbeat_timeout_seconds: 3.0
   robot_state_timeout_seconds: 3.0
   trigger_service_timeout_seconds: 30.0
