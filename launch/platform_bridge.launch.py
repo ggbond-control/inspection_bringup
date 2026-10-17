@@ -1,8 +1,6 @@
 import os
+import sys
 
-import yaml
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import IfCondition
@@ -10,22 +8,12 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-
-def default_system_config_path():
-    return os.path.join(
-        get_package_share_directory("inspection_bringup"),
-        "config",
-        "system.yaml",
-    )
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
+from bringup_config import load_config as load_bringup_config
 
 
 def load_system_config(path):
-    expanded_path = os.path.expanduser(os.path.expandvars(path))
-    if not expanded_path or not os.path.exists(expanded_path):
-        return {}
-
-    with open(expanded_path, "r", encoding="utf-8") as config_file:
-        return yaml.safe_load(config_file) or {}
+    return load_bringup_config("system", path)
 
 
 def config_value(config, section, key, fallback):
@@ -225,8 +213,8 @@ def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument(
             "system_config_path",
-            default_value=default_system_config_path(),
-            description="Bringup system configuration YAML path.",
+            default_value="",
+            description="Standalone system YAML; empty selects defaults + model + robot.yaml.",
         ),
         DeclareLaunchArgument(
             "enable_mqtt",
@@ -286,7 +274,7 @@ def launch_setup(context):
             context, "mqtt_host", config, "mqtt", "host", "127.0.0.1"
         ),
         "mqtt_port": ParameterValue(
-            override_or_config(context, "mqtt_port", config, "mqtt", "port", 1883),
+            int(override_or_config(context, "mqtt_port", config, "mqtt", "port", 1883)),
             value_type=int,
         ),
         "mqtt_username": override_or_config(

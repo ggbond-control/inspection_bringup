@@ -1,0 +1,7 @@
+# Only shared D1M differences belong here; individual identity is robot.yaml.
+algorithm:
+  transport: http
+mqtt:
+  topic_vendor_prefix: guquan
+live_stream:
+  push_policy: disabled

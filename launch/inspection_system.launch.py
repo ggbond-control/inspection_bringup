@@ -1,8 +1,7 @@
 import json
 import math
 import os
-
-import yaml
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -19,22 +18,12 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
-
-def default_system_config_path():
-    return os.path.join(
-        get_package_share_directory("inspection_bringup"),
-        "config",
-        "system.yaml",
-    )
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
+from bringup_config import file_path, load_config as load_bringup_config
 
 
 def load_system_config(path):
-    expanded_path = os.path.expanduser(os.path.expandvars(path))
-    if not expanded_path or not os.path.exists(expanded_path):
-        return {}
-
-    with open(expanded_path, "r", encoding="utf-8") as config_file:
-        return yaml.safe_load(config_file) or {}
+    return load_bringup_config("system", path)
 
 
 def load_battery_rated_capacity(path):
@@ -277,8 +266,8 @@ def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument(
             "system_config_path",
-            default_value=default_system_config_path(),
-            description="Bringup system configuration YAML path.",
+            default_value="",
+            description="Standalone system YAML; empty selects defaults + model + robot.yaml.",
         ),
         DeclareLaunchArgument(
             "enable_task_hub",
@@ -344,6 +333,10 @@ def generate_launch_description():
             "enable_mqtt",
             default_value="",
             description="Start ROS 2 <-> MQTT platform bridge.",
+        ),
+        DeclareLaunchArgument(
+            "enable_algorithm_transport", default_value="",
+            description="Start the configured algorithm HTTP or MQTT transport.",
         ),
         DeclareLaunchArgument(
             "enable_mission_execution_agent",
@@ -1026,8 +1019,8 @@ def launch_setup(context):
             "algorithm.transport must be 'mqtt' or 'http', "
             f"got {algorithm_transport!r}"
         )
-    algorithm_transport_enabled = as_bool(
-        config_value(config, "modules", "algorithm_transport", True)
+    algorithm_transport_enabled = override_or_config_bool(
+        context, "enable_algorithm_transport", config, "modules", "algorithm_transport", True
     )
     # Keep platform MQTT and algorithm transport independently switchable.
     algorithm_mqtt_enabled = "true" if (
@@ -1122,7 +1115,7 @@ def launch_setup(context):
 
     sensor_gimbal_params_file = ""
     if as_bool(enable_sensor_gimbal):
-        sensor_gimbal_params_file = os.path.expanduser(
+        sensor_gimbal_params_file = file_path(
             override_or_config(
                 context,
                 "gimbal_params_file",
@@ -1134,7 +1127,7 @@ def launch_setup(context):
                     "config",
                     "stub_params.yaml",
                 ),
-            )
+            ), "sensor_gimbal", "config", "gimbal_params_file"
         )
 
     actions = [task_hub_node]

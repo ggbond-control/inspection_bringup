@@ -4,10 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRINGUP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_ROOT="$(cd "${BRINGUP_DIR}/../.." && pwd)"
-DEFAULT_CONFIG="${BRINGUP_DIR}/config/system.yaml"
 
 SESSION_NAME="inspection"
-CONFIG_PATH="${DEFAULT_CONFIG}"
+CONFIG_PATH=""
 ATTACH=1
 KILL_EXISTING=0
 DRY_RUN=0
@@ -18,14 +17,14 @@ Usage: start_inspection_tmux.sh [options]
 
 Options:
   --session NAME       tmux session name. Default: inspection
-  --config PATH        Bringup system YAML. Default: inspection_bringup/config/system.yaml
+  --config PATH        Standalone system YAML; bypass robot.yaml. Default: automatic config.
   --kill-existing      Kill an existing session with the same name before starting.
   --no-attach          Start the session but do not attach or switch to it.
   --dry-run            Print planned tmux windows and commands without starting them.
   -h, --help           Show this help.
 
 Behavior:
-  Starts enabled modules from config/system.yaml in separate tmux windows.
+  Starts enabled modules from the effective system configuration in separate tmux windows.
   The original ROS 2 launch files are preserved and reused.
 EOF
 }
@@ -77,9 +76,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CONFIG_PATH="$(realpath -m "${CONFIG_PATH}")"
+if [[ -n "${CONFIG_PATH}" ]]; then
+  CONFIG_PATH="$(realpath -m "${CONFIG_PATH}")"
+fi
 
-if [[ ! -f "${CONFIG_PATH}" ]]; then
+if [[ -n "${CONFIG_PATH}" && ! -f "${CONFIG_PATH}" ]]; then
   echo "error: config file not found: ${CONFIG_PATH}" >&2
   exit 2
 fi
@@ -94,17 +95,14 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 127
 fi
 
-readarray -t WINDOW_SPECS < <(
-  python3 - "${CONFIG_PATH}" <<'PY'
+CONFIG_ROOT="$(python3 "${SCRIPT_DIR}/bringup_config.py" root)"
+WINDOW_OUTPUT="$(
+  python3 - "${CONFIG_PATH}" "${SCRIPT_DIR}" <<'PYCODE'
 import sys
+sys.path.insert(0, sys.argv[2])
+from bringup_config import load_config
 
-import yaml
-
-config_path = sys.argv[1]
-
-with open(config_path, "r", encoding="utf-8") as stream:
-    config = yaml.safe_load(stream) or {}
-
+config = load_config("system", sys.argv[1])
 modules = config.get("modules", {})
 
 
@@ -115,26 +113,29 @@ def enabled(name, default=True):
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
-windows = []
-if enabled("task_hub", True):
-    windows.append(("task_hub", "system", "enable_task_hub:=true enable_gimbal:=false enable_charge:=false enable_sensors:=false enable_mqtt:=false"))
-if enabled("gimbal", True):
-    windows.append(("gimbal", "system", "enable_task_hub:=false enable_gimbal:=true enable_charge:=false enable_sensors:=false enable_mqtt:=false"))
-if enabled("charge", True):
-    windows.append(("charge", "system", "enable_task_hub:=false enable_gimbal:=false enable_charge:=true enable_sensors:=false enable_mqtt:=false"))
-if enabled("sensors", True) and enabled("alarm", True):
-    windows.append(("alarm", "sensors", "enable_alarm:=true enable_gas:=false enable_thermal:=false"))
-if enabled("sensors", True) and enabled("gas", True):
-    windows.append(("gas", "sensors", "enable_alarm:=false enable_gas:=true enable_thermal:=false"))
-if enabled("sensors", True) and enabled("thermal", True):
-    windows.append(("thermal", "sensors", "enable_alarm:=false enable_gas:=false enable_thermal:=true"))
-if enabled("mqtt", True):
-    windows.append(("mqtt", "platform_bridge", "enable_mqtt:=true"))
-
-for name, launch_kind, args in windows:
-    print(f"{name}\t{launch_kind}\t{args}")
-PY
-)
+system_modules = ("task_hub", "sensor_gimbal", "charge", "sensors", "mqtt", "algorithm_transport",
+                  "mission_execution_agent")
+for module in ("task_hub", "sensor_gimbal", "charge", "mission_execution_agent"):
+    if enabled(module, module not in ("mission_execution_agent", "sensor_gimbal")):
+        args = " ".join(f"enable_{name}:={'true' if name == module else 'false'}"
+                        for name in system_modules)
+        print(f"{module}\tsystem\t{args}")
+if enabled("sensors"):
+    for module in ("alarm", "light", "gas", "sensor_rs485", "acoustic"):
+        if enabled(module):
+            args = " ".join(f"enable_{name}:={'true' if name == module else 'false'}"
+                            for name in ("alarm", "light", "gas", "sensor_rs485", "acoustic"))
+            print(f"{module}\tsensors\t{args}")
+if enabled("mqtt") or enabled("algorithm_transport"):
+    args = " ".join(f"enable_{name}:={'true' if name in ('mqtt', 'algorithm_transport') and enabled(name) else 'false'}"
+                    for name in system_modules)
+    print(f"platform\tsystem\t{args}")
+PYCODE
+)"
+WINDOW_SPECS=()
+if [[ -n "${WINDOW_OUTPUT}" ]]; then
+  readarray -t WINDOW_SPECS <<<"${WINDOW_OUTPUT}"
+fi
 
 if [[ "${#WINDOW_SPECS[@]}" -eq 0 ]]; then
   echo "error: no modules are enabled in ${CONFIG_PATH}" >&2
@@ -185,13 +186,17 @@ build_command() {
   printf "export RCUTILS_CONSOLE_OUTPUT_FORMAT='[{time}] [{severity}] [{name}]: {message}'; "
   printf "export RCUTILS_COLORIZED_OUTPUT=1; "
   printf "export RCUTILS_LOGGING_BUFFERED_STREAM=0; "
-  printf "exec ros2 launch inspection_bringup %s system_config_path:=%s %s" \
-    "${launch_file}" "$(quote "${CONFIG_PATH}")" "${launch_args}"
+  printf "export INSPECTION_CONFIG_DIR=%s; " "$(quote "${CONFIG_ROOT}")"
+  printf "exec ros2 launch inspection_bringup %s " "${launch_file}"
+  if [[ -n "${CONFIG_PATH}" ]]; then
+    printf "system_config_path:=%s " "$(quote "${CONFIG_PATH}")"
+  fi
+  printf "%s" "${launch_args}"
 }
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "[tmux] session: ${SESSION_NAME}"
-  echo "[tmux] config: ${CONFIG_PATH}"
+  echo "[tmux] config: ${CONFIG_PATH:-${CONFIG_ROOT} (automatic)}"
   for spec in "${WINDOW_SPECS[@]}"; do
     IFS=$'\t' read -r window_name launch_kind launch_args <<<"${spec}"
     echo

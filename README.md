@@ -2,6 +2,11 @@
 
 Unified bringup launch files for the inspection task system.
 
+For multiple robots, keep shared defaults in `config/*.yaml`, model differences
+in `config/models/<model>/`, and machine identity/overrides in the Git-ignored
+`config/robot.yaml`. See [配置与多机器人部署](CONFIGURATION.md) for examples,
+path resolution, and compatibility with standalone configuration files.
+
 ## Build
 
 ```bash

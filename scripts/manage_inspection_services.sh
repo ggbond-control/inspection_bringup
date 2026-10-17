@@ -3,11 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRINGUP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-DEFAULT_CONFIG="${BRINGUP_DIR}/config/services.yaml"
 TEMPLATE_DIR="${BRINGUP_DIR}/systemd"
 SYSTEMD_DIR="/etc/systemd/system"
 
-CONFIG_PATH="${DEFAULT_CONFIG}"
+CONFIG_PATH=""
 DEFAULT_SUDO_PASSWORD="cat"
 
 usage() {
@@ -27,7 +26,7 @@ Commands:
   render              Render files to a temporary directory without installing.
 
 Options:
-  --config PATH       Service configuration YAML. Default: config/services.yaml
+  --config PATH       Standalone service YAML; bypass robot.yaml. Default: automatic config.
   -h, --help          Show this help.
 
 The script tries sudo with the default endpoint password from services.yaml
@@ -68,9 +67,11 @@ if [[ -z "${COMMAND}" ]]; then
   exit 2
 fi
 
-CONFIG_PATH="$(realpath -m "${CONFIG_PATH}")"
+if [[ -n "${CONFIG_PATH}" ]]; then
+  CONFIG_PATH="$(realpath -m "${CONFIG_PATH}")"
+fi
 
-if [[ ! -f "${CONFIG_PATH}" ]]; then
+if [[ -n "${CONFIG_PATH}" && ! -f "${CONFIG_PATH}" ]]; then
   echo "error: config file not found: ${CONFIG_PATH}" >&2
   exit 2
 fi
@@ -79,6 +80,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "error: python3 is not installed or not in PATH" >&2
   exit 127
 fi
+
+# One effective snapshot for the entire management command. Generated service
+# wrappers continue reading the original configuration root at runtime.
+RESOLVED_CONFIG="$(mktemp /tmp/inspection-services.XXXXXX.yaml)"
+trap 'rm -f -- "${RESOLVED_CONFIG}"' EXIT
+python3 "${SCRIPT_DIR}/bringup_config.py" services --config "${CONFIG_PATH}" --output "${RESOLVED_CONFIG}"
+CONFIG_PATH="${RESOLVED_CONFIG}"
 
 CONFIG_VALUE_SCRIPT='
 import sys

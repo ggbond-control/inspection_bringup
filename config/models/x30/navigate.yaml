@@ -1,0 +1,8 @@
+nav_bridge:
+  robot_type: x30
+slam:
+  config: mid360.yaml
+local_planner:
+  config: x30.yaml
+global_planner:
+  params_file: new_local

@@ -1,0 +1,39 @@
+# Only D1M differences; omitted fields inherit config/navigate.yaml.
+bringup:
+  modes:
+    manual:
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - slam
+    nav:
+      # Inherit control_action: acquire_control; start_control_action is invalid.
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - slam
+        - terrain
+        - local_planner
+        - global_planner
+    add:
+      # An omitted/commented field would inherit release_control on warm switches.
+      # Cold starts retain the inherited startup_control_action: acquire_control.
+      control_action: ""
+      sequence:
+        - nav_bridge
+        - acquire_control
+        - release_control
+        - slam
+        - terrain
+        - local_planner
+        - global_planner
+  start_delay_seconds: 0.0
+
+nav_bridge:
+  robot_type: d1_max
+slam:
+  config: mid360.yaml
+local_planner:
+  config: d1m.yaml
+global_planner:
+  params_file: straight_local

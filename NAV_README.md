@@ -3,6 +3,15 @@
 This document describes the standalone navigation bringup in
 `inspection_bringup`.
 
+For model selection and per-robot configuration, see
+[配置与多机器人部署](CONFIGURATION.md). The default launch now reads the shared,
+model, and robot layers when `robot.yaml` exists. An explicit
+`navigate_config_path` continues to load that standalone YAML only.
+Child parameter file paths use the owning ROS package's configuration directory
+for all relative paths (including `./`); absolute paths select external files.
+For example, `terrain.params_file: gridmapper_local.yaml` selects the existing
+`gridmapper/config/gridmapper_local.yaml`. See the linked guide for each package.
+
 The navigation stack is intentionally decoupled from
 `inspection_system.launch.py`. Use `inspection_system.launch.py` for the
 inspection task modules, and use `navigation.launch.py` for the robot

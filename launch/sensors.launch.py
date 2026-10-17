@@ -1,8 +1,6 @@
 import os
+import sys
 
-import yaml
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import IfCondition
@@ -10,22 +8,12 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
-
-def default_system_config_path():
-    return os.path.join(
-        get_package_share_directory("inspection_bringup"),
-        "config",
-        "system.yaml",
-    )
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
+from bringup_config import load_config as load_bringup_config
 
 
 def load_system_config(path):
-    expanded_path = os.path.expanduser(os.path.expandvars(path))
-    if not expanded_path or not os.path.exists(expanded_path):
-        return {}
-
-    with open(expanded_path, "r", encoding="utf-8") as config_file:
-        return yaml.safe_load(config_file) or {}
+    return load_bringup_config("system", path)
 
 
 def config_value(config, section, key, fallback):
@@ -52,12 +40,13 @@ def override_or_config(context, name, config, section, key, fallback):
     return str(config_value(config, section, key, fallback))
 
 
-def include_package_launch(package_name, launch_file, enabled):
+def include_package_launch(package_name, launch_file, enabled, launch_arguments=None):
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare(package_name), "launch", launch_file])
         ),
         condition=IfCondition(enabled),
+        launch_arguments=(launch_arguments or {}).items(),
     )
 
 
@@ -65,8 +54,8 @@ def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument(
             "system_config_path",
-            default_value=default_system_config_path(),
-            description="Bringup system configuration YAML path.",
+            default_value="",
+            description="Standalone system YAML; empty selects defaults + model + robot.yaml.",
         ),
         DeclareLaunchArgument(
             "enable_alarm",
@@ -133,7 +122,11 @@ def launch_setup(context):
     return [
         include_package_launch("alarm_manager", "alarm_manager.launch.py", enable_alarm),
         include_package_launch("light_manager", "light_manager.launch.py", enable_light),
-        include_package_launch("gas_monitor", "gas_monitor.launch.py", enable_gas),
-        include_package_launch("sensor_rs485", "sensor_rs485.launch.py", enable_sensor_rs485),
+        include_package_launch("gas_monitor", "gas_monitor.launch.py", enable_gas,
+                              {"gas_params_file": config["gas"]["params_file"]}
+                              if config.get("gas", {}).get("params_file") else {}),
+        include_package_launch("sensor_rs485", "sensor_rs485.launch.py", enable_sensor_rs485,
+                              {"params_file": config["sensor_rs485"]["params_file"]}
+                              if config.get("sensor_rs485", {}).get("params_file") else {}),
         include_package_launch("acoustic_monitor", "acoustic_monitor.launch.py", enable_acoustic),
     ]

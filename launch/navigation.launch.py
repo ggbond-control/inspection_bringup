@@ -1,10 +1,11 @@
+import copy
 import hashlib
 import os
+import sys
 import time
 
 import yaml
 
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -23,13 +24,88 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
+from bringup_config import (
+    apply_module_switches, default_config_dir,
+    load_config as load_bringup_config, resolve_files, write_snapshot,
+)
+
+
+# Optional child-launch inputs. Unset values are not forwarded, preserving
+# each child package's existing defaults and old deployments.
+MODULE_ARGUMENTS = (
+    ("nav_bridge_robot_type", "nav_bridge", "robot_type", "robot_type"),
+    ("nav_bridge_params_file", "nav_bridge", "params_file", "params_file"),
+    ("nav_bridge_cyclonedds_config", "nav_bridge", "cyclonedds_config", "cyclonedds_config"),
+    ("livox_user_config_path", "livox", "user_config_path", "user_config_path"),
+    ("slam_config", "slam", "config", "config"),
+    ("terrain_params_file", "terrain", "params_file", "params_file"),
+    ("local_planner_config", "local_planner", "config", "config"),
+    ("global_params_path", "global_planner", "params_path", "params_path"),
+)
+
+
+def optional_module_arguments(context, config, section, use_launch_overrides):
+    arguments = {}
+    for name, module, key, child_name in MODULE_ARGUMENTS:
+        if module != section:
+            continue
+        value = override_or_config(context, name, config, module, key, "", use_launch_overrides)
+        if value:
+            arguments[child_name] = value
+    return arguments
+
+
+def apply_launch_overrides(context, config):
+    """Resolve CLI values before the service-mode supervisor receives a snapshot."""
+    config = copy.deepcopy(config)
+    specs = [(name, section + "." + key, str) for name, section, key, _ in MODULE_ARGUMENTS]
+    specs += [
+        ("livox_launch_file", "livox.launch_file", str),
+        ("livox_model", "livox.model", str),
+        ("navigation_start_delay_seconds", "bringup.start_delay_seconds", float),
+        ("nav_bridge_wait_topics", "nav_bridge.readiness.topics", split_list_text),
+        ("nav_bridge_stand_service", "nav_bridge.readiness.stand_service", str),
+        ("nav_bridge_topic_timeout_seconds", "nav_bridge.readiness.topic_timeout_seconds", float),
+        ("nav_bridge_stand_timeout_seconds", "nav_bridge.readiness.stand_timeout_seconds", float),
+        ("slam_relocal", "slam.relocal", as_bool),
+        ("slam_prior_dir", "slam.prior_dir", str),
+        ("slam_rviz", "slam.rviz", as_bool),
+        ("slam_pgo", "slam.pgo", as_bool),
+        ("slam_odom_imu", "slam.odom_imu", as_bool),
+        ("slam_use_sim_time", "slam.use_sim_time", as_bool),
+        ("terrain_rviz", "terrain.rviz", as_bool),
+        ("terrain_use_gpu", "terrain.use_gpu", as_bool),
+        ("local_planner_use_sim_time", "local_planner.use_sim_time", as_bool),
+        ("local_planner_start_rviz", "local_planner.start_rviz", as_bool),
+        ("global_initial_map", "global_planner.initial_map", str),
+        ("global_multi_map_dir", "global_planner.multi_map_dir", str),
+        ("global_use_fake_cmdvel", "global_planner.use_fake_cmdvel", as_bool),
+        ("global_params_file", "global_planner.params_file", str),
+        ("global_waypoint_dwell_time", "global_planner.waypoint_dwell_time", float),
+        ("global_patrol_loops", "global_planner.patrol_loops", int),
+    ]
+    for name, dotted, cast in specs:
+        value = LaunchConfiguration(name).perform(context)
+        if value == "":
+            continue
+        parts = dotted.split(".")
+        cursor = config
+        for key in parts[:-1]:
+            cursor = cursor.setdefault(key, {})
+        cursor[parts[-1]] = cast(value)
+    switches = {}
+    for module in ("nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"):
+        value = LaunchConfiguration("enable_" + module).perform(context)
+        if value != "":
+            switches[module] = as_bool(value)
+    if switches:
+        config["launch_module_switches"] = switches
+    return resolve_files(config, "navigation", "navigation launch arguments")
+
 
 def default_navigate_config_path():
-    return os.path.join(
-        get_package_share_directory("inspection_bringup"),
-        "config",
-        "navigate.yaml",
-    )
+    return str(default_config_dir() / "navigate.yaml")
 
 
 def readiness_script_path():
@@ -52,12 +128,7 @@ def navigation_state_dir(config_path):
 
 
 def load_config(path):
-    expanded_path = os.path.expanduser(os.path.expandvars(path))
-    if not expanded_path or not os.path.exists(expanded_path):
-        return {}
-
-    with open(expanded_path, "r", encoding="utf-8") as config_file:
-        return yaml.safe_load(config_file) or {}
+    return load_bringup_config("navigation", path)
 
 
 def write_yaml_atomic(path, data):
@@ -696,10 +767,13 @@ def append_final_result_handler(
 
 def generate_launch_description():
     declared_arguments = [
+        *(DeclareLaunchArgument(name, default_value="", description=f"Optional {section}.{key} override.")
+          for name, section, key, _ in MODULE_ARGUMENTS),
+        DeclareLaunchArgument("livox_launch_file", default_value="", description="Livox launch filename."),
         DeclareLaunchArgument(
             "navigate_config_path",
-            default_value=default_navigate_config_path(),
-            description="Navigation configuration YAML path.",
+            default_value="",
+            description="Standalone navigation YAML; empty selects defaults + model + robot.yaml.",
         ),
         DeclareLaunchArgument(
             "navigation_state_dir",
@@ -805,17 +879,18 @@ def generate_launch_description():
 
 def launch_setup(context):
     navigate_config_path = LaunchConfiguration("navigate_config_path").perform(context)
-    config = load_config(navigate_config_path)
+    config = apply_launch_overrides(context, load_config(navigate_config_path))
     start_mode = str(config_value(config, "bringup", "start_mode", "immediate")).strip().lower()
     if start_mode == "service":
-        state_dir = navigation_state_dir(navigate_config_path)
+        state_dir = navigation_state_dir(navigate_config_path or default_navigate_config_path())
+        snapshot_path = write_snapshot(config)
         supervisor = ExecuteProcess(
             cmd=[
                 "python3",
                 supervisor_script_path(),
                 "node",
                 "--config",
-                navigate_config_path,
+                snapshot_path,
                 "--service-name",
                 str(config_value(config, "bringup", "start_service", "/navigation_bringup/start")),
                 "--state-dir",
@@ -826,7 +901,13 @@ def launch_setup(context):
             name="navigation_supervisor",
             output="screen",
         )
-        return [supervisor]
+        def cleanup_snapshot(_event, _context):
+            try:
+                os.unlink(snapshot_path)
+            except FileNotFoundError:
+                pass
+
+        return [RegisterEventHandler(OnProcessExit(target_action=supervisor, on_exit=cleanup_snapshot)), supervisor]
 
     state_dir = LaunchConfiguration("navigation_state_dir").perform(context).strip()
     run_id = LaunchConfiguration("navigation_run_id").perform(context).strip()
@@ -837,6 +918,8 @@ def launch_setup(context):
         config,
         state_dir=state_dir or None,
         run_id=run_id or None,
+        # CLI values (including file origins) are already resolved above.
+        use_launch_overrides=False,
     )
 
 
@@ -857,7 +940,7 @@ def load_failure_reason(state_dir, run_id, section):
 
 
 def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
-    sequence = config_sequence(config)
+    sequence = apply_module_switches(config_sequence(config), config.get("launch_module_switches", {}))
     delay = override_or_config_typed(
         context,
         "navigation_start_delay_seconds",
@@ -885,6 +968,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "nav_bridge",
         "nav_bridge.launch.py",
         "true",
+        optional_module_arguments(context, config, "nav_bridge", use_launch_overrides),
     )
     nav_bridge_enabled = sequence_module_enabled(
         context, "enable_nav_bridge", sequence, "nav_bridge", use_launch_overrides
@@ -892,9 +976,10 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
 
     livox_launch = include_package_launch(
         "livox_ros_driver2",
-        "msg_multi_MID360_launch.py",
+        str(config_value(config, "livox", "launch_file", "msg_multi_MID360_launch.py")),
         "true",
         {
+            **optional_module_arguments(context, config, "livox", use_launch_overrides),
             "model": override_or_config(
                 context, "livox_model", config, "livox", "model", "mid360", use_launch_overrides
             ),
@@ -908,6 +993,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "slam.launch.py",
         "true",
         {
+            **optional_module_arguments(context, config, "slam", use_launch_overrides),
             "relocal": as_bool_text(
                 override_or_config_bool(
                     context, "slam_relocal", config, "slam", "relocal", True, use_launch_overrides
@@ -946,6 +1032,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "local.launch.py",
         "true",
         {
+            **optional_module_arguments(context, config, "terrain", use_launch_overrides),
             "rviz": as_bool_text(
                 override_or_config_bool(
                     context, "terrain_rviz", config, "terrain", "rviz", False, use_launch_overrides
@@ -966,6 +1053,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "local_planner.launch.py",
         "true",
         {
+            **optional_module_arguments(context, config, "local_planner", use_launch_overrides),
             "use_sim_time": as_bool_text(
                 override_or_config_bool(
                     context,
@@ -998,6 +1086,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "multi_map_nav.launch.py",
         "true",
         {
+            **optional_module_arguments(context, config, "global_planner", use_launch_overrides),
             "multi_map_dir": os.path.expanduser(
                 os.path.expandvars(
                     override_or_config(

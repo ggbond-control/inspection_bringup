@@ -11,6 +11,9 @@ import uuid
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bringup_config import apply_module_switches, load_config, resolve_files
+
 import rclpy
 from rcl_interfaces.msg import ParameterType, SetParametersResult
 from rcl_interfaces.srv import SetParameters
@@ -52,9 +55,7 @@ def split_list_text(value):
 
 
 def load_yaml(path):
-    expanded = os.path.expanduser(os.path.expandvars(path))
-    with open(expanded, "r", encoding="utf-8") as stream:
-        return yaml.safe_load(stream) or {}
+    return load_config("navigation", path)
 
 
 def write_yaml_atomic(path, data):
@@ -217,7 +218,7 @@ class NavigationSupervisor(Node):
                 results.append(self.result(True, f"accepted {parameter.name}"))
             except Exception as exc:
                 results.append(self.result(False, str(exc)))
-        return config, provided_paths, results
+        return resolve_files(config, "navigation", "navigation request"), provided_paths, results
 
     def target_state(self, config):
         mode = str(get_by_path(config, "mode", NAV)).strip().lower()
@@ -300,7 +301,9 @@ class NavigationSupervisor(Node):
         sequence = get_by_path(config, f"bringup.modes.{mode}.{key}", [])
         if not isinstance(sequence, list) or not sequence:
             raise ValueError(f"bringup.modes.{mode}.{key} must be a non-empty list")
-        return tuple(str(name) for name in sequence)
+        return tuple(apply_module_switches(
+            [str(name) for name in sequence], config.get("launch_module_switches", {})
+        ))
 
     def control_action(self, config, mode):
         action = str(get_by_path(config, f"bringup.modes.{mode}.control_action", "")).strip()
@@ -556,6 +559,7 @@ class NavigationSupervisor(Node):
 
     def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
+        runtime_config.pop("launch_module_switches", None)
         runtime_config.setdefault("bringup", {})["start_mode"] = "immediate"
         # A service request cannot report success until module readiness and every
         # configured control action have completed successfully.

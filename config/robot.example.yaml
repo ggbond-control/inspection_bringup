@@ -1,0 +1,18 @@
+# Copy to robot.yaml once and edit the two required fields. No init script.
+# robot.yaml is ignored by Git; all other settings remain inherited live.
+model: d1m
+robot_id: D1M-001
+
+# Optional per-robot overrides; dictionary merge, lists replace.
+# system:
+#   mqtt:
+#     host: mqtt.example.com
+#     username: ""
+#     password: ""
+# navigation:
+#   terrain:
+#     params_file: gridmapper_local.yaml  # gridmapper/config/; existing default file
+# External calibration files must use an absolute path to an existing file.
+# services:
+#   service:
+#     workspace_root: /home/cat/Workspace/task_ws
