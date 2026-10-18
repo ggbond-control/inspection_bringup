@@ -130,11 +130,24 @@ settings:
 GTSAM and Livox-SDK2 remain native CMake projects and receive the equivalent
 Release and compile-command options.
 
+All stages run sequentially: GTSAM, Livox-SDK2, driver packages, then algorithm
+packages. ROS packages use `--executor sequential`. Each package/project defaults
+to one build job (`-j1`); use `-j4`, `-j 4`, `--jobs 4`, or `--jobs=4` to increase
+jobs within each package/project without running multiple packages concurrently.
+`BUILD_JOBS=4` is also supported; an explicit jobs option takes precedence. Job
+counts must be positive integers. Both `MAKEFLAGS` and
+`CMAKE_BUILD_PARALLEL_LEVEL` are set explicitly so colcon does not replace the
+requested job count with the CPU count.
+
 Useful commands:
 
 ```bash
 # Clone missing repositories, then build managed third-party, driver, and algor packages.
 task_ws/src/inspection_bringup/scripts/build_navigation.sh \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+
+# Use four build jobs within each package/project (default is one).
+task_ws/src/inspection_bringup/scripts/build_navigation.sh -j4 \
   --interface-underlay ~/Workspace/task_ws/install/setup.bash
 
 # Use a different deployment root.

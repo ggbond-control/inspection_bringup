@@ -11,7 +11,7 @@ ALGOR_WS=""
 DRIVER_WS=""
 REPOS_FILE="${DEFAULT_REPOS_FILE}"
 INTERFACE_UNDERLAY=""
-BUILD_JOBS="${BUILD_JOBS:-4}"
+BUILD_JOBS="${BUILD_JOBS:-1}"
 FETCH_ONLY=0
 BUILD_ONLY=0
 THIRD_PARTY_ONLY=0
@@ -26,6 +26,7 @@ usage() {
 Usage: build_navigation.sh [options]
 
 Options:
+  -j N, -jN, --jobs N       Build jobs per package (positive integer, default: 1).
   --fetch-only              Clone missing repositories and exit.
   --build-only              Skip repository cloning.
   --third-party-only        Build only local third-party libraries.
@@ -42,6 +43,8 @@ Options:
   -h, --help                Show this help.
 
 Build behavior:
+  Builds all CMake projects in Release mode, one package/project at a time.
+  Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
   Clones missing repositories with git clone --depth 1.
   Existing repositories are skipped without pull, checkout, or reset.
   Builds GTSAM and Livox-SDK2 into driver_ws/third_party/install.
@@ -52,6 +55,22 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -j|--jobs)
+      if [[ $# -lt 2 ]]; then
+        echo "error: $1 requires a positive integer" >&2
+        exit 2
+      fi
+      BUILD_JOBS="$2"
+      shift 2
+      ;;
+    -j*)
+      BUILD_JOBS="${1#-j}"
+      shift
+      ;;
+    --jobs=*)
+      BUILD_JOBS="${1#--jobs=}"
+      shift
+      ;;
     --fetch-only)
       FETCH_ONLY=1
       shift
@@ -129,7 +148,7 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --*)
+    -*)
       echo "error: unknown option '$1'" >&2
       usage >&2
       exit 2
@@ -141,6 +160,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: build jobs must be a positive integer: '${BUILD_JOBS}'" >&2
+  exit 2
+fi
 
 if [[ "${FETCH_ONLY}" -eq 1 && "${BUILD_ONLY}" -eq 1 ]]; then
   echo "error: --fetch-only and --build-only cannot be used together" >&2
@@ -516,7 +540,8 @@ build_cmake_project() {
   echo "[third_party] configure ${name}"
   cmake -S "${src_dir}" -B "${build_dir}" "$@"
   echo "[third_party] build ${name}"
-  cmake --build "${build_dir}" -j"${BUILD_JOBS}"
+  MAKEFLAGS="-j${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" \
+    cmake --build "${build_dir}" -j"${BUILD_JOBS}"
   echo "[third_party] install ${name}"
   cmake --install "${build_dir}"
 }
@@ -592,6 +617,8 @@ fi
 prepare_ros_environment
 source_required /opt/ros/jazzy/setup.bash "ROS 2 Jazzy"
 
+echo "[build] mode: Release; packages: sequential; jobs per package: ${BUILD_JOBS}"
+
 if [[ "${SKIP_THIRD_PARTY}" -eq 0 ]]; then
   build_third_party
 fi
@@ -608,10 +635,11 @@ if [[ "${SKIP_DRIVER_BUILD}" -eq 0 ]]; then
   mapfile -t DRIVER_PACKAGES < <(managed_workspace_packages driver_ws "${DRIVER_WS}/src")
   echo "[build] managed driver_ws packages: ${DRIVER_PACKAGES[*]}"
   cd "${DRIVER_WS}"
-  CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build \
+  # MAKEFLAGS prevents colcon from adding its own CPU-count-based -j option.
+  MAKEFLAGS="-j${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" colcon build \
     --packages-select "${DRIVER_PACKAGES[@]}" \
     --symlink-install \
-    --parallel-workers "${BUILD_JOBS}" \
+    --executor sequential \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
@@ -636,10 +664,10 @@ if [[ "${SKIP_ALGOR_BUILD}" -eq 0 ]]; then
 
   echo "[build] managed algor_ws packages: ${ALGOR_PACKAGES[*]}"
   cd "${ALGOR_WS}"
-  CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build \
+  MAKEFLAGS="-j${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" colcon build \
     --packages-select "${ALGOR_PACKAGES[@]}" \
     --symlink-install \
-    --parallel-workers "${BUILD_JOBS}" \
+    --executor sequential \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \

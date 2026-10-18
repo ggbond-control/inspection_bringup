@@ -10,7 +10,7 @@ FETCH_ONLY=0
 BUILD_ONLY=0
 RUN_ROSDEP=0
 REPOS_FILE="${DEFAULT_REPOS_FILE}"
-BUILD_JOBS="${BUILD_JOBS:-4}"
+BUILD_JOBS="${BUILD_JOBS:-1}"
 CHECK_BRANCHES=1
 CHECK_UPDATES=0
 UPDATE_CURRENT_BRANCH=0
@@ -21,6 +21,7 @@ usage() {
 Usage: build_inspection.sh [options] [target_package]
 
 Options:
+  -j N, -jN, --jobs N   Build jobs per package (positive integer, default: 1).
   --fetch-only          Clone missing repositories and exit.
   --build-only          Skip repository cloning.
   --rosdep             Run rosdep install before building.
@@ -36,7 +37,8 @@ Options:
 Build behavior:
   Uses only: colcon build --packages-up-to <target> --symlink-install
   It never runs a bare global colcon build.
-  Limits build parallelism with BUILD_JOBS, default: 4.
+  Builds all CMake packages in Release mode, one package at a time.
+  Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
   Missing repositories are cloned from their remote default branch.
   Existing repositories are skipped without branch checks or checkout changes.
   Managed repository branches are printed by default without checkout changes.
@@ -50,6 +52,22 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -j|--jobs)
+      if [[ $# -lt 2 ]]; then
+        echo "error: $1 requires a positive integer" >&2
+        exit 2
+      fi
+      BUILD_JOBS="$2"
+      shift 2
+      ;;
+    -j*)
+      BUILD_JOBS="${1#-j}"
+      shift
+      ;;
+    --jobs=*)
+      BUILD_JOBS="${1#--jobs=}"
+      shift
+      ;;
     --fetch-only)
       FETCH_ONLY=1
       shift
@@ -94,7 +112,7 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --*)
+    -*)
       echo "error: unknown option '$1'" >&2
       usage >&2
       exit 2
@@ -105,6 +123,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: build jobs must be a positive integer: '${BUILD_JOBS}'" >&2
+  exit 2
+fi
 
 if [[ "${FETCH_ONLY}" -eq 1 && "${BUILD_ONLY}" -eq 1 ]]; then
   echo "error: --fetch-only and --build-only cannot be used together" >&2
@@ -444,15 +467,17 @@ if [[ "${RUN_ROSDEP}" -eq 1 ]]; then
 fi
 
 echo "[build] target package: ${TARGET_PACKAGE}"
-echo "[build] parallel jobs: ${BUILD_JOBS}"
+echo "[build] mode: Release; packages: sequential; jobs per package: ${BUILD_JOBS}"
 cd "${WORKSPACE_ROOT}"
-if ! MAKEFLAGS="-j${BUILD_JOBS}" colcon build \
+# MAKEFLAGS prevents colcon from adding its own CPU-count-based -j option.
+if ! MAKEFLAGS="-j${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" colcon build \
     --packages-up-to "${TARGET_PACKAGE}" \
     --symlink-install \
-    --parallel-workers "${BUILD_JOBS}" \
+    --executor sequential \
     --cmake-force-configure \
     --cmake-args \
       -Wno-dev \
+      -DCMAKE_BUILD_TYPE=Release \
       --no-warn-unused-cli \
       -DPython3_EXECUTABLE=/usr/bin/python3 \
       -DPYTHON_EXECUTABLE=/usr/bin/python3 \

@@ -20,18 +20,27 @@ The build helper downloads missing managed repositories from
 builds only with:
 
 ```bash
-colcon build --packages-up-to <target> --symlink-install
+MAKEFLAGS=-j1 CMAKE_BUILD_PARALLEL_LEVEL=1 colcon build \
+  --packages-up-to <target> --symlink-install --executor sequential \
+  --cmake-force-configure --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
 It does not run a bare global `colcon build`. `nav_bridge` is intentionally not
 listed in the managed dependency file because it is not owned by task hub
 bringup.
 
-Build parallelism is limited to 4 jobs by default. Override it when needed:
+All CMake packages are explicitly built in Release mode. Packages are built one
+at a time, with one build job per package by default (`-j1`). Increase jobs within
+each package when needed; packages still run sequentially:
 
 ```bash
-BUILD_JOBS=2 src/inspection_bringup/scripts/build_inspection.sh
+src/inspection_bringup/scripts/build_inspection.sh -j4
+src/inspection_bringup/scripts/build_inspection.sh -j 4
 ```
+
+`--jobs 4` and `--jobs=4` are also supported. `BUILD_JOBS=4` remains supported as
+an environment default; an explicit command-line jobs option takes precedence.
+Job counts must be positive integers.
 
 Missing repositories are cloned from each remote's default branch, typically
 `main` or `master`. Existing repositories are not pulled, checked out, or
