@@ -199,7 +199,7 @@ class LaunchConfiguration(unittest.TestCase):
             navigation.build_navigation_actions(context, config, use_launch_overrides=False)
         self.assertEqual(captured['nav_bridge'][1]['robot_type'], 'd1_max')
         self.assertEqual(captured['nav_bridge'][1]['params_file'], str(external))
-        self.assertEqual(captured['faster_lio'][1]['config'], self.package_file('faster_lio', 'mid360.yaml'))
+        self.assertEqual(captured['faster_lio'][1]['config'], self.package_file('faster_lio', 'airy.yaml'))
         self.assertEqual(captured['gridmapper'][1]['params_file'], str(external))
         self.assertEqual(captured['local_planner'][1]['config'], self.package_file('local_planner', 'd1m.yaml'))
         self.assertEqual(captured['multi_map_nav'][1]['params_file'], 'straight_local')

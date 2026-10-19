@@ -106,7 +106,7 @@ class Configuration(unittest.TestCase):
         # Retain inherited Livox settings, but no D1M sequence starts its driver.
         expected['livox'] = cfg.read_yaml(self.root / 'navigate.yaml')['livox']
         expected['nav_bridge']['robot_type'] = 'd1_max'
-        expected['slam']['config'] = self.package_file('faster_lio', 'mid360.yaml')
+        expected['slam']['config'] = self.package_file('faster_lio', 'airy.yaml')
         expected['local_planner']['config'] = self.package_file('local_planner', 'd1m.yaml')
         self.assertEqual(cfg.load_config('navigation'), expected)
 
@@ -171,7 +171,7 @@ class Configuration(unittest.TestCase):
     def test_file_names_resolve_but_legacy_global_selector_remains_plain(self):
         self.robot()
         value = cfg.load_config('navigation')
-        self.assertEqual(value['slam']['config'], self.package_file('faster_lio', 'mid360.yaml'))
+        self.assertEqual(value['slam']['config'], self.package_file('faster_lio', 'airy.yaml'))
         self.assertEqual(value['global_planner']['params_file'], 'straight_local')
 
     def test_explicit_file_bypasses_robot_even_if_it_is_the_default_path(self):
@@ -222,6 +222,15 @@ class Configuration(unittest.TestCase):
         self.assertNotIn('navigate_config_path', value['navigation']['launch_args'])
         self.assertNotIn('system_config_path', value['inspection_system']['launch_args'])
 
+    def test_d1m_services_matches_stored_deployment_without_editing_defaults(self):
+        self.robot()
+        expected = cfg.read_yaml(ROOT / 'store/d1m_zenoh/services.yaml')
+        expected['navigation']['launch_args'].pop('navigate_config_path')
+        expected['inspection_system']['launch_args'].pop('system_config_path')
+        expected['service']['environment']['CYCLONEDDS_URI'] = ''
+        expected['service']['environment']['INSPECTION_CONFIG_DIR'] = str(self.root)
+        self.assertEqual(cfg.load_config('services'), expected)
+
     def test_services_explicit_launch_paths_use_bringup_config_directory(self):
         self.write('models/d1m/services.yaml',
                    {'navigation': {'launch_args': {'navigate_config_path': './navigate.yaml'}}})
@@ -242,6 +251,10 @@ class Configuration(unittest.TestCase):
             self.assertIn('export INSPECTION_CONFIG_DIR=', content)
             self.assertIn(str(self.root), content)
             self.assertNotIn('_config_path:=', content)
+            self.assertIn('source /home/cat/Workspace/zenoh_ws/install/setup.bash', content)
+            self.assertIn('export RMW_IMPLEMENTATION=rmw_zenoh_cpp', content)
+            self.assertIn('export ROS_DOMAIN_ID=24', content)
+            self.assertIn("export CYCLONEDDS_URI=''", content)
             check = subprocess.run(['bash', '-n', str(path)], capture_output=True, text=True)
             self.assertEqual(check.returncode, 0, check.stderr)
 

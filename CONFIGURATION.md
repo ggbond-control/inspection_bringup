@@ -13,7 +13,8 @@ config/
 │   │   └── navigate.yaml
 │   └── d1m/
 │       ├── system.yaml
-│       └── navigate.yaml
+│       ├── navigate.yaml
+│       └── services.yaml         # D1M 的 Zenoh 服务环境与 workspace 列表
 ├── robot.example.yaml           # 可提交的填写示例
 ├── robot.yaml                   # 本机文件，Git 忽略
 └── calibration/                 # 可选本机标定文件，Git 忽略
@@ -249,6 +250,16 @@ services:
 
 更换账户、工作区或中间件时，按实际情况修改 `service.user`、`workspace_root`、
 `setup_paths`、`library_paths` 和 `environment` 等字段；这些字段不相互推导。
+
+D1M 的 `models/d1m/services.yaml` 已包含 Zenoh workspace、中间件、session
+配置和 Domain 24，公共 `services.yaml` 保留原有默认值。字典合并会继承公共
+环境变量，因此 D1M 将 `CYCLONEDDS_URI` 显式设为空字符串。单机需要其他
+Domain 时，用上述 `robot.yaml` 的 `services` 字段覆盖即可。
+
+现场迁移时，先备份公共配置中的修改，确认差异已归入机型或本机层，再恢复
+公共文件。导航使用 `control_action`；`start_control_action` 是无效字段。
+D1M 的 nav 模式继承公共 `control_action: acquire_control`，add 模式通过
+`control_action: ""` 显式取消热切换动作；不应靠删除或注释字段取消继承。
 
 修改 system/navigation 配置后重启对应服务；修改 services 中的环境、进程或
 启动参数后，需要重新执行 service `install` 再重启。仓库更新不会覆盖

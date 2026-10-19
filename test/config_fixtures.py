@@ -7,7 +7,7 @@ def package_prefix(directory):
     prefix = Path(directory) / 'packages'
     files = {
         'nav_bridge': ['config/d1_max_params.yaml', 'config/cyvet_cyclonedds.xml'],
-        'faster_lio': ['config/mid360.yaml'],
+        'faster_lio': ['config/mid360.yaml', 'config/airy.yaml'],
         'local_planner': ['config/d1m.yaml', 'config/x30.yaml'],
         'gridmapper': ['config/gridmapper_local.yaml'],
         'multi_map_nav': ['params/straight_local.yaml'],

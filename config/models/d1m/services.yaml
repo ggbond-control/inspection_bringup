@@ -1,0 +1,15 @@
+# D1M deployment differences; other settings inherit config/services.yaml.
+service:
+  # Lists replace the public list, so retain every required workspace.
+  setup_paths:
+    - /home/cat/Workspace/zenoh_ws/install/setup.bash
+    - /home/cat/Workspace/driver_ws/install/setup.bash
+    - /home/cat/Workspace/task_ws/install/setup.bash
+    - /home/cat/Workspace/algor_ws/install/setup.bash
+  environment:
+    RMW_IMPLEMENTATION: rmw_zenoh_cpp
+    # Clear the inherited CycloneDDS file path when selecting Zenoh.
+    CYCLONEDDS_URI: ""
+    ZENOH_SESSION_CONFIG_URI: /home/cat/Workspace/zenoh_ws/session_config.json5
+    ZENOH_ROUTER_CHECK_ATTEMPTS: "30"
+    ROS_DOMAIN_ID: "24"
