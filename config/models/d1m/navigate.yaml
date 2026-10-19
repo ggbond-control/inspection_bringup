@@ -32,7 +32,7 @@ bringup:
 nav_bridge:
   robot_type: d1_max
 slam:
-  config: mid360.yaml
+  config: airy.yaml
 local_planner:
   config: d1m.yaml
 global_planner:

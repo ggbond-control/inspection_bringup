@@ -1,7 +1,7 @@
 # Copy to robot.yaml once and edit the two required fields. No init script.
 # robot.yaml is ignored by Git; all other settings remain inherited live.
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 
 # Optional per-robot overrides; dictionary merge, lists replace.
 # system:
