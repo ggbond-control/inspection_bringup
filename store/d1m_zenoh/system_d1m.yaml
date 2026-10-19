@@ -13,6 +13,10 @@ modules:
   mission_execution_agent: false
   fleet_leader_election: false
 
+charge:
+  # 90 s pile connection + 60 s charge confirmation + SDK command margin.
+  charge_command_timeout_sec: 120.0
+
 algorithm:
   transport: http
 

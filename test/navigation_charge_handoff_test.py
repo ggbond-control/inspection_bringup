@@ -83,8 +83,9 @@ class ChargePrecheck(unittest.TestCase):
         return subprocess.run([
             sys.executable, str(ROOT / 'scripts/wait_for_ready.py'), 'charge_precheck',
             '--charge-executor-exit-service', service,
-            '--charge-check-timeout', '1', '--charge-exit-timeout', '1'],
-            capture_output=True, text=True, timeout=8)
+            # Allow DDS discovery on embedded boards before checking the handoff result.
+            '--charge-check-timeout', '3', '--charge-exit-timeout', '3'],
+            capture_output=True, text=True, timeout=12)
 
     def test_idle_with_missing_executor_cannot_fall_back_to_stop(self):
         result = self.run_check('/missing_undock')

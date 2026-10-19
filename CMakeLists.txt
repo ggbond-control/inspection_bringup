@@ -25,6 +25,9 @@ if(BUILD_TESTING)
   add_test(NAME navigation_charge_handoff_test
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/navigation_charge_handoff_test.py)
   set_tests_properties(navigation_charge_handoff_test PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  add_test(NAME service_shutdown_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/service_shutdown_test.py)
+  set_tests_properties(service_shutdown_test PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()
 
 ament_package()

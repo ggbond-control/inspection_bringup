@@ -286,6 +286,19 @@ class LaunchConfiguration(unittest.TestCase):
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
             self.assertEqual(params[0]['sn'], 'D1M-TEST')
 
+    def test_only_d1m_extends_charge_command_timeout(self):
+        for model, expected in [('x30', {}), ('d1m', {'charge_command_timeout_sec': '180.0'})]:
+            with self.subTest(model=model):
+                self.robot['model'] = model
+                self.write_robot()
+                context = context_for(system)
+                with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                        patch.object(system, 'include_package_launch', wraps=system.include_package_launch) as include:
+                    system.launch_setup(context)
+                call = next(call for call in include.call_args_list
+                            if call.args[0] == 'inspection_charge_executor')
+                self.assertEqual(call.args[3], expected)
+
     def test_all_tmux_generated_arguments_are_declared(self):
         output = __import__('subprocess').run(
             ['bash', str(ROOT / 'scripts/start_inspection_tmux.sh'), '--dry-run'],

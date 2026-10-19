@@ -388,7 +388,10 @@ class Configuration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         output = Path(result.stdout.strip())
         self.addCleanup(shutil.rmtree, output)
-        for name in ('run_navigation.sh', 'run_inspection_system.sh'):
+        for unit in (output / 'systemd').glob('*.service'):
+            self.assertIn('KillMode=mixed\n', unit.read_text())
+        for name in ('run_navigation.sh', 'run_inspection_system.sh',
+                     'run_inspection_hardware.sh'):
             path = output / 'wrappers' / name
             content = path.read_text()
             self.assertIn('export INSPECTION_CONFIG_DIR=', content)

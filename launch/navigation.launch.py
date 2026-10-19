@@ -909,6 +909,8 @@ def launch_setup(context):
             ],
             name="navigation_supervisor",
             output="screen",
+            sigterm_timeout="22",
+            sigkill_timeout="3",
         )
         def cleanup_snapshot(_event, _context):
             try:

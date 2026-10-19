@@ -164,24 +164,35 @@ service_for_target() {
   esac
 }
 
+run_service_action() {
+  local action="$1"
+  local service="$2"
+  local started="${SECONDS}"
+  local result=0
+  echo "[service] ${action} ${service} ..."
+  sudo_run systemctl "${action}" "${service}" || result=$?
+  echo "[service] ${action} ${service}: exit=${result}, elapsed=$((SECONDS - started))s"
+  return "${result}"
+}
+
 systemctl_for_target() {
   local action="$1"
   local target="${2:-}"
 
   require_sudo
   if [[ -n "${target}" ]]; then
-    sudo_run systemctl "${action}" "$(service_for_target "${target}")"
+    run_service_action "${action}" "$(service_for_target "${target}")"
     return
   fi
 
   if [[ "${action}" == "start" || "${action}" == "restart" ]]; then
-    sudo_run systemctl "${action}" "${NAV_SERVICE}"
-    sudo_run systemctl "${action}" "${HARDWARE_SERVICE}"
-    sudo_run systemctl "${action}" "${SYSTEM_SERVICE}"
+    run_service_action "${action}" "${NAV_SERVICE}"
+    run_service_action "${action}" "${HARDWARE_SERVICE}"
+    run_service_action "${action}" "${SYSTEM_SERVICE}"
   elif [[ "${action}" == "stop" ]]; then
-    sudo_run systemctl "${action}" "${SYSTEM_SERVICE}" || true
-    sudo_run systemctl "${action}" "${HARDWARE_SERVICE}" || true
-    sudo_run systemctl "${action}" "${NAV_SERVICE}" || true
+    run_service_action "${action}" "${SYSTEM_SERVICE}" || true
+    run_service_action "${action}" "${HARDWARE_SERVICE}" || true
+    run_service_action "${action}" "${NAV_SERVICE}" || true
   else
     sudo_run systemctl "${action}" "${NAV_SERVICE}" "${HARDWARE_SERVICE}" "${SYSTEM_SERVICE}"
   fi
@@ -282,7 +293,7 @@ def library_path_export():
     return f'export LD_LIBRARY_PATH={prefix}"${{LD_LIBRARY_PATH:+:${{LD_LIBRARY_PATH}}}}"'
 
 
-def wrapper_content(kind, launch_file, args):
+def workspace_setup_block():
     setup_lines = []
     for setup_path in setup_paths:
         quoted_path = shlex.quote(setup_path)
@@ -294,7 +305,10 @@ fi
 source {quoted_path}
 """
         )
-    setup_block = "\n".join(setup_lines)
+    return "\n".join(setup_lines)
+
+
+def wrapper_content(kind, launch_file, args):
     environment_lines = []
     for key, value in environment.items():
         if not key:
@@ -306,7 +320,7 @@ set -eo pipefail
 
 source /opt/ros/{shlex.quote(ros_distro)}/setup.bash
 
-{setup_block}
+{workspace_setup_block()}
 
 set -u
 
@@ -345,7 +359,12 @@ def hardware_wrapper_content(processes):
         environment_lines.append(f"export {key}={shlex.quote(str(value))}")
 
     return f"""#!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
+
+source /opt/ros/{shlex.quote(ros_distro)}/setup.bash
+{workspace_setup_block()}
+
+set -u
 
 export WORKSPACE_ROOT={shlex.quote(workspace_root)}
 export ROS_SETUP=/opt/ros/{shlex.quote(ros_distro)}/setup.bash
@@ -361,11 +380,26 @@ stop_children() {{
     return
   fi
   stopping=1
-  trap - SIGINT SIGTERM
+  trap '' SIGINT SIGTERM
   for pid in "${{pids[@]}}"; do
     kill -TERM "${{pid}}" 2>/dev/null || true
   done
+  local deadline=$((SECONDS + 10))
+  local running=1
+  while [[ "${{running}}" -eq 1 && "${{SECONDS}}" -lt "${{deadline}}" ]]; do
+    running=0
+    for pid in "${{pids[@]}}"; do
+      if kill -0 "${{pid}}" 2>/dev/null; then
+        running=1
+      fi
+    done
+    [[ "${{running}}" -eq 0 ]] || sleep 0.1
+  done
   for pid in "${{pids[@]}}"; do
+    if kill -0 "${{pid}}" 2>/dev/null; then
+      echo "[hardware] process pid=${{pid}} did not exit; sending SIGKILL" >&2
+      kill -KILL "${{pid}}" 2>/dev/null || true
+    fi
     wait "${{pid}}" 2>/dev/null || true
   done
 }}

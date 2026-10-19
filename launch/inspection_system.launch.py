@@ -1167,6 +1167,7 @@ def launch_setup(context):
             },
         ),
     )
+    charge_timeout = config_value(config, "charge", "charge_command_timeout_sec", None)
     append_if_enabled(
         actions,
         enable_charge,
@@ -1174,6 +1175,7 @@ def launch_setup(context):
             "inspection_charge_executor",
             "inspection_charge_executor.launch.py",
             None,
+            {"charge_command_timeout_sec": str(charge_timeout)} if charge_timeout is not None else {},
         ),
     )
     append_if_enabled(

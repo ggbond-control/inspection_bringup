@@ -12,6 +12,7 @@ Environment=HOME=@HOME_DIR@
 ExecStart=@INSTALL_DIR@/run_inspection_system.sh
 Restart=@RESTART@
 RestartSec=@RESTART_SEC@
+KillMode=mixed
 KillSignal=SIGINT
 TimeoutStopSec=@TIMEOUT_STOP_SEC@
 @SYSTEMD_OPTIONS@

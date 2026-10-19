@@ -338,6 +338,23 @@ D1M 的 nav 模式继承公共 `control_action: acquire_control`，add 模式通
 启动参数后，需要重新执行 service `install` 再重启。仓库更新不会覆盖
 Git 忽略的本机文件；重新克隆或替换整个源码目录前，需要备份本机配置和标定。
 
+服务退出由各自的主进程负责转发信号，systemd 使用 `KillMode=mixed` 在超时后
+清理整个服务进程组。navigation 停止时同时通知各 worker，按统一的时间预算
+等待退出；停止期间的重复信号不会打断清理。hardware 的 agent 退出等待也有
+上限。节点就绪检查直接读取 ROS 图，不会启动 ROS CLI daemon。
+hardware 与 system/navigation 一样按 `service.setup_paths` 顺序加载工作区，
+确保 agent 能使用配置指定的 ROS 中间件（例如 Zenoh）。
+
+使用 `rmw_zenoh_cpp 0.2.9` 时，还需修复该仓库
+`src/detail/rmw_context_impl_s.cpp` 中 `Data::shutdown()` 的锁顺序：锁内标记
+关闭并取出图订阅，锁外注销订阅和关闭 session。否则图回调与订阅注销可能
+互相等待，表现为不同节点偶发退出超时。该修复需要单独编译安装
+`rmw_zenoh_cpp`；bringup 的 service `install` 不会更新中间件。
+
+管理脚本会显示每个服务动作的耗时。`restart navigation` 返回表示 systemd
+已经重新启动服务；service 模式下还需要后续导航启动请求，才会加载地图和启动
+导航子模块。本次退出策略更新需要重新执行 `scripts/manage_inspection_services.sh install`。
+
 ## 本地验证
 
 ```bash
@@ -345,7 +362,10 @@ source /opt/ros/jazzy/setup.bash
 python3 test/config_test.py
 python3 test/config_launch_test.py
 python3 test/navigation_charge_handoff_test.py
+python3 test/service_shutdown_test.py
 ```
 
 前两组只检查配置、生成的 shell 和 launch 描述，不启动硬件或导航；最后一组
 使用独立 ROS domain 和本机发现范围的充电服务 mock，不连接机器人。
+退出回归测试使用独立 ROS domain 和模拟进程，覆盖重复信号、超时升级、残留
+子进程清理与节点就绪查询。

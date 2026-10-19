@@ -13,6 +13,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bringup_config import apply_module_switches, load_config, resolve_files
+from process_shutdown import stop_processes
 
 import rclpy
 from rcl_interfaces.msg import ParameterType, SetParametersResult
@@ -20,6 +21,7 @@ from rcl_interfaces.srv import SetParameters
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 
 
 STOPPED = "stopped"
@@ -130,7 +132,7 @@ def coerce_to_existing_type(value, existing):
 
 
 class NavigationSupervisor(Node):
-    def __init__(self, config_path, service_name, state_dir, result_timeout):
+    def __init__(self, config_path, service_name, state_dir, result_timeout, shutdown_event=None):
         super().__init__("navigation_supervisor")
         self.config_path = os.path.abspath(os.path.expanduser(os.path.expandvars(config_path)))
         self.state_dir = os.path.abspath(os.path.expanduser(os.path.expandvars(state_dir)))
@@ -145,6 +147,9 @@ class NavigationSupervisor(Node):
         self.map_context = {}
         self.in_progress = False
         self.busy_reason = ""
+        self.shutdown_event = shutdown_event or threading.Event()
+        self.worker_lock = threading.Lock()
+        self.helpers = {}
         self.request_lock = threading.Lock()
         self.state_lock = threading.Lock()
         self.workers = {"base": None, **{name: None for name in NAV_EXTENSION_MODULES}}
@@ -160,6 +165,9 @@ class NavigationSupervisor(Node):
         self.get_logger().info(f"navigation supervisor state dir: {self.state_dir}")
 
     def on_start_request(self, request, response):
+        if self.shutdown_event.is_set():
+            response.results.append(self.result(False, "navigation is shutting down"))
+            return response
         with self.request_lock:
             if self.in_progress:
                 response.results.append(self.result(False, self.busy_reason))
@@ -597,7 +605,7 @@ class NavigationSupervisor(Node):
             str(timeout),
         ]
         self.get_logger().info(f"mode {mode}: running control action {action_name} ({service})")
-        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        completed = self.run_helper(command)
         output = completed.stdout.strip()
         if output:
             for line in output.splitlines():
@@ -633,7 +641,7 @@ class NavigationSupervisor(Node):
             str(float(readiness.get("charge_poll_interval_seconds", 0.5))),
         ]
         self.get_logger().info(f"mode {mode}: checking charge state before control action")
-        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        completed = self.run_helper(command)
         output = completed.stdout.strip()
         if output:
             for line in output.splitlines():
@@ -650,20 +658,23 @@ class NavigationSupervisor(Node):
         os.makedirs(worker_state_dir, exist_ok=True)
         write_yaml_atomic(resolved_config_path, self.layer_config(config, sequence))
 
-        process = subprocess.Popen(
-            [
-                "ros2",
-                "launch",
-                "inspection_bringup",
-                "navigation.launch.py",
-                f"navigate_config_path:={resolved_config_path}",
-                f"navigation_state_dir:={worker_state_dir}",
-                f"navigation_run_id:={run_id}",
-            ],
-            start_new_session=True,
-        )
-        worker = {"process": process, "run_id": run_id, "result_path": result_path}
-        self.workers[layer] = worker
+        with self.worker_lock:
+            if self.shutdown_event.is_set():
+                return False, "navigation is shutting down"
+            process = subprocess.Popen(
+                [
+                    "ros2",
+                    "launch",
+                    "inspection_bringup",
+                    "navigation.launch.py",
+                    f"navigate_config_path:={resolved_config_path}",
+                    f"navigation_state_dir:={worker_state_dir}",
+                    f"navigation_run_id:={run_id}",
+                ],
+                start_new_session=True,
+            )
+            worker = {"process": process, "run_id": run_id, "result_path": result_path}
+            self.workers[layer] = worker
         self.get_logger().info(f"started {layer} worker pid={process.pid} run_id={run_id}")
         result = self.wait_for_result(worker)
         return bool(result.get("success", False)), str(result.get("reason", "worker result missing reason"))
@@ -677,48 +688,51 @@ class NavigationSupervisor(Node):
                 return False, f"{name} startup failed: {reason}"
         return True, "navigation extensions started"
 
+    def run_helper(self, command):
+        with self.worker_lock:
+            if self.shutdown_event.is_set():
+                return subprocess.CompletedProcess(command, -signal.SIGINT, "navigation is shutting down")
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, start_new_session=True)
+            self.helpers[process.pid] = process
+        while not self.shutdown_event.is_set():
+            try:
+                output, _ = process.communicate(timeout=0.2)
+                with self.worker_lock:
+                    self.helpers.pop(process.pid, None)
+                return subprocess.CompletedProcess(command, process.returncode, output)
+            except subprocess.TimeoutExpired:
+                continue
+        # Keep the process tracked so the shutdown path also cleans up active readiness checks.
+        return subprocess.CompletedProcess(command, -signal.SIGINT, "navigation is shutting down")
+
     def stop_extensions(self, sequence=None):
         names = tuple(sequence) if sequence is not None else NAV_EXTENSION_MODULES
-        for name in reversed(names):
-            self.stop_worker(name)
+        self.stop_workers(tuple(reversed(names)))
 
     def stop_worker(self, layer):
-        worker = self.workers.get(layer)
-        if worker is None:
+        self.stop_workers((layer,))
+
+    def stop_workers(self, layers, shutdown=False):
+        if self.shutdown_event.is_set() and not shutdown:
             return
-        process = worker["process"]
-        if process.poll() is None:
-            self.get_logger().info(f"stopping {layer} worker pid={process.pid}")
-            try:
-                os.killpg(process.pid, signal.SIGINT)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=10.0)
-            except subprocess.TimeoutExpired:
-                self.get_logger().warning(f"{layer} worker did not stop after SIGINT; sending SIGTERM")
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    self.get_logger().error(f"{layer} worker did not stop after SIGTERM; sending SIGKILL")
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait()
-        self.workers[layer] = None
+        with self.worker_lock:
+            processes = {name: self.workers[name]["process"] for name in layers
+                         if self.workers.get(name) is not None}
+            for name in processes:
+                self.workers[name] = None
+            if shutdown:
+                processes.update({f"readiness-{pid}": process for pid, process in self.helpers.items()})
+                self.helpers.clear()
+        stop_processes(processes, self.get_logger())
 
     def stop_all_workers(self):
-        self.stop_extensions()
-        self.stop_worker("base")
+        self.stop_workers((*reversed(NAV_EXTENSION_MODULES), "base"),
+                          shutdown=self.shutdown_event.is_set())
 
     def wait_for_result(self, worker):
         deadline = None if self.result_timeout <= 0.0 else time.monotonic() + self.result_timeout
-        while deadline is None or time.monotonic() < deadline:
+        while not self.shutdown_event.is_set() and (deadline is None or time.monotonic() < deadline):
             if os.path.exists(worker["result_path"]):
                 try:
                     result = load_yaml(worker["result_path"])
@@ -733,6 +747,8 @@ class NavigationSupervisor(Node):
                     "reason": f"worker exited before reporting startup result (exit_code={returncode})",
                 }
             time.sleep(0.2)
+        if self.shutdown_event.is_set():
+            return {"success": False, "reason": "navigation is shutting down"}
         return {"success": False, "reason": f"worker result timeout after {self.result_timeout:.1f}s"}
 
     def refresh_state(self):
@@ -777,6 +793,8 @@ class NavigationSupervisor(Node):
             )
 
     def monitor_workers(self):
+        if self.shutdown_event.is_set():
+            return
         # A worker can exit after startup has reported success. Keep the in-memory
         # mode honest even when no later service request arrives.
         with self.request_lock:
@@ -829,20 +847,29 @@ class NavigationSupervisor(Node):
 
 
 def run_node(args):
-    rclpy.init()
-    node = NavigationSupervisor(args.config, args.service_name, args.state_dir, args.result_timeout)
+    shutdown_event = threading.Event()
+    previous_handlers = {signum: signal.signal(signum, lambda *_: shutdown_event.set())
+                         for signum in (signal.SIGINT, signal.SIGTERM)}
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    node = NavigationSupervisor(args.config, args.service_name, args.state_dir,
+                                args.result_timeout, shutdown_event)
     executor = MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)
     try:
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
+        while not shutdown_event.is_set() and rclpy.ok():
+            executor.spin_once(timeout_sec=0.2)
     finally:
-        node.stop_all_workers()
-        executor.shutdown()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        shutdown_event.set()
+        node.monitor_timer.cancel()
+        try:
+            node.stop_all_workers()
+        finally:
+            executor.shutdown(timeout_sec=2.0)
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
     return 0
 
 

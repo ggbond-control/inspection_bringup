@@ -30,36 +30,33 @@ def write_failure_detail(path, module, reason, category="READINESS_FAILED", **fi
     except Exception as exc:
         print(f"[{module}] failed to write readiness detail: {exc}", file=sys.stderr, flush=True)
 
-def list_nodes():
-    result = subprocess.run(
-        ["ros2", "node", "list"],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    if result.returncode != 0:
-        return set()
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
-
-
 def wait_for_nodes(nodes, timeout, name, failure_detail=None):
+    import rclpy
+
     deadline = deadline_from_timeout(timeout)
     expected = set(nodes)
     missing = expected
     print(f"[{name}] waiting for nodes {timeout_text(timeout)}: {' '.join(nodes)}", flush=True)
-
-    while before_deadline(deadline):
-        missing = expected - list_nodes()
-        if not missing:
-            print(f"[{name}] nodes ready", flush=True)
-            return True
-        time.sleep(0.5)
+    rclpy.init(args=None)
+    node = rclpy.create_node("wait_for_navigation_nodes")
+    try:
+        while rclpy.ok() and before_deadline(deadline):
+            actual = {f"{namespace.rstrip('/')}/{node_name}"
+                      for node_name, namespace in node.get_node_names_and_namespaces()}
+            missing = expected - actual
+            if not missing:
+                print(f"[{name}] nodes ready", flush=True)
+                return True
+            rclpy.spin_once(node, timeout_sec=0.2)
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
 
     reason = f"node wait timeout: {' '.join(sorted(missing))}"
     print(f"[{name}] {reason}", file=sys.stderr, flush=True)
     write_failure_detail(failure_detail, name, reason, missing_nodes=sorted(missing))
     return False
+
 
 
 def deadline_from_timeout(timeout):
@@ -149,8 +146,7 @@ def wait_for_topic_message(topic, timeout, name, failure_detail=None):
             return True
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
     elapsed = time.monotonic() - start_time
     reason = f"topic message timeout after {elapsed:.1f}s: {topic}"
@@ -293,8 +289,7 @@ def wait_for_charge_clear(
         return fail(f"charge handoff failed: {exc}")
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 def run_trigger(args):
@@ -468,7 +463,7 @@ def wait_for_health(topic, timeout, name, failure_detail=None):
         return False
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 def run_health(args):
@@ -656,7 +651,7 @@ def wait_for_localization_init(
         return False
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 def run_localization_init(args):
@@ -809,7 +804,12 @@ def main():
     localization_parser.set_defaults(func=run_localization_init)
 
     args = parser.parse_args()
-    return 0 if args.func(args) else 1
+    from rclpy.executors import ExternalShutdownException
+    try:
+        return 0 if args.func(args) else 1
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # Cancellation must stay a failed readiness check, without a shutdown traceback.
+        return 130
 
 
 if __name__ == "__main__":
