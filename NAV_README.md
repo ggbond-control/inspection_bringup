@@ -92,9 +92,30 @@ config/navigation_deps.repos
 Missing repositories are cloned with `git clone --depth 1`. Navigation ROS
 repositories are pinned to their `jazzy` branches; GTSAM remains pinned to the
 `4.2.0` tag because it is not a ROS Jazzy repository. Existing repositories are
-skipped; the helper does not pull, checkout, reset, or overwrite local changes.
-It reports an existing repository whose origin or checked-out branch/tag does
-not match the manifest.
+skipped by default. The helper reports an existing repository whose origin or
+checked-out branch/tag does not match the manifest, without switching branches.
+
+Navigation supports the same update options as `build_inspection.sh`:
+
+```bash
+# Pull managed repositories, then build (supply your actual interfaces underlay).
+scripts/build_navigation.sh --update-current-branch \
+  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+
+# Pull only; no ROS underlay or build tools are required.
+scripts/build_navigation.sh --update-only
+```
+
+Both entry points execute ordinary `git pull` using each repository's current
+branch, upstream and local Git configuration (`pull.rebase`, `pull.ff`, etc.).
+They do not preemptively reject local edits, local commits or diverged history.
+Git decides whether the pull can succeed. A failure stops subsequent updates
+and prevents building; earlier repositories may already have been updated.
+Neither entry point switches branches or force resets files. Detached checkouts
+at manifest-pinned tags, such as GTSAM `4.2.0`, are skipped and retain that version.
+Other detached checkouts or missing upstreams produce the ordinary Git error.
+The flags `--workspace-root`, `--driver-ws`, `--algor-ws` also apply to updates.
+`--check-updates` only fetches and reports status; it does not pull working trees.
 
 GTSAM and Livox-SDK2 are built locally into:
 

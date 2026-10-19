@@ -29,8 +29,7 @@ Options:
   --no-branch-check    Do not print managed repository branch status.
   --check-updates      Fetch upstream refs and print ahead/behind status.
   --update-current-branch
-                      Fast-forward existing managed repositories to their
-                      current branch upstream, then build.
+                      Run git pull in managed repositories, then build.
   --update-only        Update current branches and exit without building.
   -h, --help           Show this help.
 
@@ -40,11 +39,12 @@ Build behavior:
   Builds all CMake packages in Release mode, one package at a time.
   Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
   Missing repositories are cloned from their remote default branch.
-  Existing repositories are skipped without branch checks or checkout changes.
+  Existing repositories are not updated unless an update option is selected.
   Managed repository branches are printed by default without checkout changes.
   --check-updates adds remote fetch/status checks but never pulls or checks out.
-  --update-current-branch is fast-forward only. It does not switch branches,
-  stash changes, rebase, or create merge commits.
+  Updates use plain git pull and respect each repository's Git configuration.
+  No dirty/ahead/divergence precheck; a pull failure stops the build.
+  Detached checkouts of manifest-pinned tags are kept unchanged.
 
 Default target_package: inspection_bringup
 EOF
@@ -283,147 +283,8 @@ PY
 }
 
 update_current_branches() {
-  python3 - "$WORKSPACE_ROOT" "$REPOS_FILE" <<'PY'
-import os
-import subprocess
-import sys
-
-import yaml
-
-workspace_root = sys.argv[1]
-repos_file = sys.argv[2]
-
-with open(repos_file, "r", encoding="utf-8") as stream:
-    data = yaml.safe_load(stream) or {}
-
-repositories = data.get("repositories", {})
-if not repositories:
-    raise SystemExit(f"no repositories found in {repos_file}")
-
-
-def git_output(repo_path, args):
-    result = subprocess.run(
-        ["git", "-C", repo_path] + args,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode:
-        return None
-    return result.stdout.strip()
-
-
-def fail(rel_path, message):
-    print(f"[update] {rel_path}: blocked: {message}", file=sys.stderr)
-
-
-prepared = []
-failed = False
-
-# Check all local safety conditions before fetching or changing any worktree.
-for rel_path, spec in repositories.items():
-    repo_type = spec.get("type", "git")
-    repo_path = os.path.join(workspace_root, rel_path)
-
-    if repo_type != "git":
-        fail(rel_path, f"unsupported repository type '{repo_type}'")
-        failed = True
-        continue
-    if not os.path.exists(repo_path):
-        fail(rel_path, "repository is missing")
-        failed = True
-        continue
-    if git_output(repo_path, ["rev-parse", "--is-inside-work-tree"]) != "true":
-        fail(rel_path, "not a Git worktree")
-        failed = True
-        continue
-    if git_output(repo_path, ["status", "--porcelain"]):
-        fail(rel_path, "working tree has local changes")
-        failed = True
-        continue
-
-    branch = git_output(repo_path, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-    if not branch:
-        fail(rel_path, "HEAD is detached")
-        failed = True
-        continue
-
-    upstream = git_output(
-        repo_path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]
-    )
-    if not upstream:
-        fail(rel_path, f"branch '{branch}' has no upstream")
-        failed = True
-        continue
-
-    remote = upstream.split("/", 1)[0]
-    prepared.append((rel_path, repo_path, upstream, remote))
-
-if failed:
-    raise SystemExit("[error] update aborted; resolve the blocked repositories first")
-
-# Fetch and compare every repository before updating any checkout.
-update_candidates = []
-for rel_path, repo_path, upstream, remote in prepared:
-    result = subprocess.run(
-        ["git", "-C", repo_path, "fetch", "--quiet", remote],
-        text=True,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode:
-        message = result.stderr.strip() or f"failed to fetch remote '{remote}'"
-        fail(rel_path, message)
-        failed = True
-        continue
-
-    counts = git_output(repo_path, ["rev-list", "--left-right", "--count", f"HEAD...{upstream}"])
-    try:
-        ahead_text, behind_text = counts.split() if counts else ("", "")
-        ahead = int(ahead_text)
-        behind = int(behind_text)
-    except ValueError:
-        fail(rel_path, f"could not determine status against '{upstream}'")
-        failed = True
-        continue
-
-    if ahead:
-        fail(
-            rel_path,
-            f"local branch is ahead={ahead} behind={behind}; fast-forward is unsafe",
-        )
-        failed = True
-        continue
-
-    if behind:
-        print(f"[update] {rel_path}: {behind} commit(s) behind {upstream}")
-        update_candidates.append((rel_path, repo_path, upstream))
-    else:
-        print(f"[update] {rel_path}: up-to-date ({upstream})")
-
-if failed:
-    raise SystemExit("[error] update aborted; no repositories were merged")
-
-for rel_path, repo_path, upstream in update_candidates:
-    old_sha = git_output(repo_path, ["rev-parse", "--short", "HEAD"])
-    result = subprocess.run(
-        ["git", "-C", repo_path, "merge", "--ff-only", upstream],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode:
-        message = result.stderr.strip() or f"failed to fast-forward from '{upstream}'"
-        fail(rel_path, message)
-        raise SystemExit("[error] update failed; build will not start")
-
-    new_sha = git_output(repo_path, ["rev-parse", "--short", "HEAD"])
-    print(f"[update] {rel_path}: {old_sha} -> {new_sha}")
-
-print(
-    f"[done] checked {len(prepared)} managed repositories; "
-    f"fast-forwarded {len(update_candidates)}"
-)
-PY
+  python3 "${SCRIPT_DIR}/update_repositories.py" \
+    --workspace-root "${WORKSPACE_ROOT}" --repos-file "${REPOS_FILE}"
 }
 
 source_if_exists() {

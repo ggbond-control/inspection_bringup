@@ -43,8 +43,8 @@ an environment default; an explicit command-line jobs option takes precedence.
 Job counts must be positive integers.
 
 Missing repositories are cloned from each remote's default branch, typically
-`main` or `master`. Existing repositories are not pulled, checked out, or
-branch-validated, so local manual branch changes are preserved.
+`main` or `master`. Existing repositories are not updated by default; update
+options below pull the currently checked-out branch without switching branches.
 
 Managed repository branches are printed by default before build:
 
@@ -65,17 +65,19 @@ Example output:
 [branch] src/inspection_task_hub: main dirty upstream=origin/main behind=2
 ```
 
-To fast-forward existing managed repositories to the newest commit of each
-repository's current branch before building, run:
+To run ordinary `git pull` in each managed repository before building, run:
 
 ```bash
 src/inspection_bringup/scripts/build_inspection.sh --update-current-branch
 ```
 
-The update is fast-forward only. It refuses dirty repositories, detached HEAD,
-branches without an upstream, local commits ahead of upstream, and diverged
-history. It never changes branches, stashes changes, rebases, or creates merge
-commits. To update without building:
+The update uses the repository's own upstream and Git settings, including
+`pull.rebase` and `pull.ff`. Local edits, local commits and diverged history do
+not trigger an extra rejection: if ordinary `git pull` succeeds, the helper
+continues. It does not switch branches, force reset, or explicitly stash edits.
+A pull failure stops the command before building; earlier repositories may
+already have been updated. Fix the Git error and rerun. Detached checkouts at
+an explicitly manifest-pinned tag are kept unchanged. To update without building:
 
 ```bash
 src/inspection_bringup/scripts/build_inspection.sh --update-only

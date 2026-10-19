@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +28,8 @@ class BuildScriptsTest(unittest.TestCase):
             source = (BRINGUP_DIR / 'scripts' / name).read_text()
             source = source.replace('/opt/ros/jazzy/setup.bash', str(self.setup_file))
             (self.bringup / 'scripts' / name).write_text(source)
+        shutil.copyfile(BRINGUP_DIR / 'scripts/update_repositories.py',
+                        self.bringup / 'scripts/update_repositories.py')
         (self.bringup / 'config/inspection_deps.repos').write_text('repositories: {}\n')
         repositories = {}
         for workspace in ('driver_ws', 'algor_ws'):
@@ -150,6 +153,268 @@ elif name == 'ros2':
             result, commands = self.run_build(script, env_jobs='0')
             self.assertEqual(result.returncode, 2)
             self.assertEqual(commands, [])
+
+
+class RepositoryUpdatesTest(unittest.TestCase):
+    """Real Git pulls against local remotes; never touch deployed repositories."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='bringup pull test ')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.counter = 0
+        self.env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
+                        GIT_AUTHOR_NAME='Test', GIT_AUTHOR_EMAIL='test@example.invalid',
+                        GIT_COMMITTER_NAME='Test', GIT_COMMITTER_EMAIL='test@example.invalid',
+                        GIT_TERMINAL_PROMPT='0', GIT_MERGE_AUTOEDIT='no')
+
+    def git(self, repo, *args):
+        result = subprocess.run(['git', '-C', str(repo), *args], env=self.env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout.strip()
+
+    def fixture(self, script):
+        self.counter += 1
+        root = self.root / str(self.counter)
+        bringup = root / 'task_ws/src/inspection_bringup'
+        (bringup / 'scripts').mkdir(parents=True)
+        setup = root / 'setup.bash'
+        setup.write_text('# local test\n')
+        for name in (*SCRIPTS, 'update_repositories.py'):
+            source = (BRINGUP_DIR / 'scripts' / name).read_text()
+            source = source.replace('/opt/ros/jazzy/setup.bash', f'"{setup}"')
+            (bringup / 'scripts' / name).write_text(source)
+        remote = root / 'remote.git'
+        remote.mkdir()
+        self.git(remote, 'init', '--bare', '--initial-branch=main')
+        seed = root / 'seed'
+        self.git(root, 'clone', str(remote), str(seed))
+        (seed / 'upstream.txt').write_text('initial\n')
+        (seed / 'local.txt').write_text('initial\n')
+        self.git(seed, 'add', '.')
+        self.git(seed, 'commit', '-m', 'initial')
+        self.git(seed, 'push', 'origin', 'main')
+        if script == 'build_inspection.sh':
+            relative = 'src/module'
+            repo = root / 'task_ws' / relative
+            extra = []
+        else:
+            relative = 'driver_ws/src/module'
+            repo = root / 'custom driver/src/module'
+            repo.parent.mkdir(parents=True)
+            extra = ['--workspace-root', str(root / 'navigation root'),
+                     '--driver-ws', str(root / 'custom driver'),
+                     '--algor-ws', str(root / 'custom algor'),
+                     '--interface-underlay', str(setup)]
+        self.git(root, 'clone', 'file://' + str(remote), str(repo))
+        manifest = root / 'deps.repos'
+        manifest.write_text(json.dumps({'repositories': {
+            relative: {'type': 'git', 'url': 'file://' + str(remote), 'version': 'main'}}}))
+        command = ['bash', str(bringup / 'scripts' / script), '--repos-file', str(manifest), *extra]
+        return root, seed, repo, manifest, command
+
+    def upstream_commit(self, seed, text='remote update\n'):
+        (seed / 'upstream.txt').write_text(text)
+        self.git(seed, 'commit', '-am', 'remote update')
+        self.git(seed, 'push', 'origin', 'main')
+
+    def run_update(self, command, *options):
+        return subprocess.run([*command, *(options or ('--update-only',))],
+                              env=self.env, capture_output=True, text=True, timeout=20)
+
+    def test_pull_accepts_unstaged_staged_and_untracked_changes(self):
+        for script in SCRIPTS:
+            for staged in (False, True):
+                with self.subTest(script=script, staged=staged):
+                    _, seed, repo, _, command = self.fixture(script)
+                    self.upstream_commit(seed)
+                    (repo / 'local.txt').write_text('local edits\n')
+                    (repo / 'untracked.txt').write_text('keep\n')
+                    if staged:
+                        self.git(repo, 'add', 'local.txt')
+                    result = self.run_update(command)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), self.git(seed, 'rev-parse', 'HEAD'))
+                    self.assertEqual((repo / 'local.txt').read_text(), 'local edits\n')
+                    self.assertTrue((repo / 'untracked.txt').is_file())
+                    status = self.git(repo, 'diff', '--cached', '--name-only')
+                    self.assertEqual(status, 'local.txt' if staged else '')
+
+    def test_local_ahead_is_allowed(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, _, repo, _, command = self.fixture(script)
+                (repo / 'local.txt').write_text('committed locally\n')
+                self.git(repo, 'commit', '-am', 'local commit')
+                head = self.git(repo, 'rev-parse', 'HEAD')
+                result = self.run_update(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+
+    def test_diverged_branch_respects_merge_or_rebase_configuration(self):
+        for script in SCRIPTS:
+            for strategy in ('false', 'true'):
+                with self.subTest(script=script, rebase=strategy):
+                    _, seed, repo, _, command = self.fixture(script)
+                    (repo / 'local.txt').write_text('local commit\n')
+                    self.git(repo, 'commit', '-am', 'local commit')
+                    self.git(repo, 'config', 'pull.rebase', strategy)
+                    self.upstream_commit(seed)
+                    result = self.run_update(command)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual((repo / 'local.txt').read_text(), 'local commit\n')
+                    self.assertEqual((repo / 'upstream.txt').read_text(), 'remote update\n')
+                    parents = self.git(repo, 'rev-list', '--parents', '-n', '1', 'HEAD').split()
+                    self.assertEqual(len(parents), 3 if strategy == 'false' else 2)
+
+    def test_pull_failure_stops_before_build_and_preserves_local_edits(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                root, seed, repo, _, command = self.fixture(script)
+                self.upstream_commit(seed)
+                (repo / 'upstream.txt').write_text('overlapping local edit\n')
+                head = self.git(repo, 'rev-parse', 'HEAD')
+                # Builders are sentinels: even update-and-build must stop at pull.
+                binary = root / 'bin'
+                binary.mkdir()
+                for name in ('cmake', 'colcon'):
+                    path = binary / name
+                    path.write_text('#!/bin/sh\ntouch "' + str(root / 'built') + '"\n')
+                    path.chmod(0o755)
+                env_path = self.env['PATH']
+                self.env['PATH'] = str(binary) + os.pathsep + env_path
+                try:
+                    result = self.run_update(command, '--update-current-branch')
+                finally:
+                    self.env['PATH'] = env_path
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('git pull failed', result.stderr)
+                self.assertFalse((root / 'built').exists())
+                self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+                self.assertEqual((repo / 'upstream.txt').read_text(), 'overlapping local edit\n')
+
+    def test_pinned_detached_tag_is_kept(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, seed, repo, manifest, command = self.fixture(script)
+                self.git(repo, 'tag', '4.2.0')
+                self.git(repo, 'checkout', '--detach', '4.2.0')
+                data = json.loads(manifest.read_text())
+                next(iter(data['repositories'].values()))['version'] = '4.2.0'
+                manifest.write_text(json.dumps(data))
+                head = self.git(repo, 'rev-parse', 'HEAD')
+                self.upstream_commit(seed)
+                result = self.run_update(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('keep pinned tag 4.2.0', result.stdout)
+                self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+
+    def test_git_errors_for_detached_head_and_missing_upstream_are_reported(self):
+        for script in SCRIPTS:
+            for mode in ('detached', 'no-upstream'):
+                with self.subTest(script=script, mode=mode):
+                    _, _, repo, _, command = self.fixture(script)
+                    if mode == 'detached':
+                        self.git(repo, 'checkout', '--detach')
+                    else:
+                        self.git(repo, 'branch', '--unset-upstream')
+                    result = self.run_update(command)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('git pull failed', result.stderr)
+                    self.assertIn('not currently on a branch' if mode == 'detached'
+                                  else 'no tracking information', result.stderr)
+
+    def test_pull_ff_only_configuration_is_respected(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, seed, repo, _, command = self.fixture(script)
+                (repo / 'local.txt').write_text('local commit\n')
+                self.git(repo, 'commit', '-am', 'local commit')
+                self.git(repo, 'config', 'pull.ff', 'only')
+                self.upstream_commit(seed)
+                result = self.run_update(command)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('git pull failed', result.stderr)
+                self.assertIn('fast-forward', result.stderr)
+
+    def test_current_branch_is_pulled_despite_manifest_branch_mismatch(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, seed, repo, manifest, command = self.fixture(script)
+                data = json.loads(manifest.read_text())
+                next(iter(data['repositories'].values()))['version'] = 'jazzy'
+                manifest.write_text(json.dumps(data))
+                self.upstream_commit(seed)
+                result = self.run_update(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git(repo, 'branch', '--show-current'), 'main')
+                self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), self.git(seed, 'rev-parse', 'HEAD'))
+
+    def test_default_fetch_does_not_pull_existing_repository(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, seed, repo, _, command = self.fixture(script)
+                head = self.git(repo, 'rev-parse', 'HEAD')
+                self.upstream_commit(seed)
+                result = self.run_update(command, '--fetch-only')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+
+    def test_missing_repositories_are_cloned_then_update_only_exits(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                _, _, repo, _, command = self.fixture(script)
+                shutil.rmtree(repo)
+                result = self.run_update(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue((repo / '.git').is_dir())
+                self.assertIn('update-only complete', result.stdout)
+
+    def test_update_and_build_runs_builder_after_pull_succeeds(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                root, seed, repo, _, command = self.fixture(script)
+                (repo / 'package.xml').write_text('<package><name>module</name></package>')
+                self.upstream_commit(seed)
+                binary = root / 'bin'
+                binary.mkdir()
+                builder = binary / 'colcon'
+                builder.write_text(
+                    '#!/usr/bin/python3\nfrom pathlib import Path\n'
+                    f'assert Path({str(repo / "upstream.txt")!r}).read_text() == "remote update\\n"\n'
+                    f'Path({str(root / "built")!r}).touch()\n')
+                builder.chmod(0o755)
+                # Navigation only builds its driver workspace in this fixture.
+                options = ['--update-current-branch']
+                if script == 'build_navigation.sh':
+                    options += ['--skip-third-party', '--skip-algor-build']
+                old_path = self.env['PATH']
+                self.env['PATH'] = str(binary) + os.pathsep + old_path
+                try:
+                    result = self.run_update(command, *options)
+                finally:
+                    self.env['PATH'] = old_path
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue((root / 'built').is_file())
+
+    def test_navigation_updates_shallow_clone_and_both_workspace_paths(self):
+        root, seed, repo, manifest, command = self.fixture('build_navigation.sh')
+        remote = self.git(repo, 'remote', 'get-url', 'origin')
+        shutil.rmtree(repo)
+        self.git(root, 'clone', '--depth', '1', remote, str(repo))
+        algor_repo = root / 'custom algor/src/algorithm'
+        algor_repo.parent.mkdir(parents=True)
+        self.git(root, 'clone', remote, str(algor_repo))
+        data = json.loads(manifest.read_text())
+        data['repositories']['algor_ws/src/algorithm'] = {'type': 'git', 'url': remote}
+        manifest.write_text(json.dumps(data))
+        self.upstream_commit(seed)
+        result = self.run_update(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.git(repo, 'rev-parse', '--is-shallow-repository'), 'true')
+        for path in (repo, algor_repo):
+            self.assertEqual(self.git(path, 'rev-parse', 'HEAD'), self.git(seed, 'rev-parse', 'HEAD'))
 
 
 if __name__ == '__main__':

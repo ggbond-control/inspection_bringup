@@ -20,6 +20,8 @@ SKIP_DRIVER_BUILD=0
 SKIP_ALGOR_BUILD=0
 CHECK_BRANCHES=1
 CHECK_UPDATES=0
+UPDATE_CURRENT_BRANCH=0
+UPDATE_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -40,13 +42,18 @@ Options:
   --interface-underlay PATH Source an existing inspection_interfaces underlay.
   --no-branch-check         Do not print managed repository branch status.
   --check-updates           Fetch upstream refs and print ahead/behind status.
+  --update-current-branch   Run git pull in managed repositories, then build.
+  --update-only             Pull managed repositories and exit without building.
   -h, --help                Show this help.
 
 Build behavior:
   Builds all CMake projects in Release mode, one package/project at a time.
   Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
   Clones missing repositories with git clone --depth 1.
-  Existing repositories are skipped without pull, checkout, or reset.
+  Existing repositories are not updated unless an update option is selected.
+  Updates use plain git pull and respect each repository's Git configuration.
+  No dirty/ahead/divergence precheck; a pull failure stops the build.
+  Detached checkouts of manifest-pinned tags (e.g. GTSAM 4.2.0) are kept unchanged.
   Builds GTSAM and Livox-SDK2 into driver_ws/third_party/install.
   Builds only ROS packages found in repositories managed by the .repos file.
   Does not run apt, sudo, sysctl, or any system-wide install step.
@@ -144,6 +151,17 @@ while [[ $# -gt 0 ]]; do
       CHECK_BRANCHES=1
       shift
       ;;
+    --update-current-branch)
+      UPDATE_CURRENT_BRANCH=1
+      CHECK_BRANCHES=1
+      shift
+      ;;
+    --update-only)
+      UPDATE_CURRENT_BRANCH=1
+      UPDATE_ONLY=1
+      CHECK_BRANCHES=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -225,7 +243,7 @@ preflight_build_environment() {
   require_command git
   require_command python3
   validate_python_yaml
-  if [[ "${FETCH_ONLY}" -eq 1 ]]; then
+  if [[ "${FETCH_ONLY}" -eq 1 || "${UPDATE_ONLY}" -eq 1 ]]; then
     return
   fi
   if [[ "${SKIP_THIRD_PARTY}" -eq 0 || "${THIRD_PARTY_ONLY}" -eq 1 || \
@@ -605,12 +623,23 @@ else
   preflight_build_environment
 fi
 
+if [[ "${UPDATE_CURRENT_BRANCH}" -eq 1 ]]; then
+  python3 "${SCRIPT_DIR}/update_repositories.py" \
+    --workspace-root "${WORKSPACE_ROOT}" --repos-file "${REPOS_FILE}" \
+    --algor-ws "${ALGOR_WS}" --driver-ws "${DRIVER_WS}"
+fi
+
 if [[ "${CHECK_BRANCHES}" -eq 1 ]]; then
   print_repository_branches
 fi
 
 if [[ "${FETCH_ONLY}" -eq 1 ]]; then
   echo "[done] fetch-only complete"
+  exit 0
+fi
+
+if [[ "${UPDATE_ONLY}" -eq 1 ]]; then
+  echo "[done] update-only complete"
   exit 0
 fi
 
