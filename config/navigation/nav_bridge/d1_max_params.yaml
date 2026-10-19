@@ -1,0 +1,18 @@
+nav_bridge_node:
+  ros__parameters:
+    # The navigation host reaches the motion host through the 192.168.168.x link.
+    # 192.168.234.1 is the motion host's wireless/p2p address and is not a
+    # suitable UDP SDK target from the navigation host.
+    d1_host_ip: "192.168.168.168"
+    d1_host_port: 8082
+    auto_reconnect: true
+    connect_timeout_ms: 5000
+    reconnect_interval_ms: 2000
+    cmd_vel_rate_hz: 50
+    cmd_vel_timeout_ms: 500
+    # Physical charging/undock confirmation wait; D1 may need 30-60 seconds
+    # to approach, dock, or leave the charging pile.
+    charge_task_confirmation_timeout_sec: 60
+    # Prefer the navigation host's 200 Hz IMU driver; SDK remains available as a fallback.
+    imu_source: "imu_driver"
+    imu_driver_topic: "/imu_shm_publisher/imu_central"

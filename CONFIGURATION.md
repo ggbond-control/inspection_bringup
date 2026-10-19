@@ -7,6 +7,7 @@ config/
 ├── system.yaml                  # 公共默认，保持旧配置可直接使用
 ├── navigate.yaml
 ├── services.yaml
+├── navigation/                  # 子模块完整参数，按真实包名分类
 ├── models/
 │   ├── x30/
 │   │   ├── system.yaml           # 只写机型差异
@@ -14,7 +15,8 @@ config/
 │   └── d1m/
 │       ├── system.yaml
 │       ├── navigate.yaml
-│       └── services.yaml         # D1M 的 Zenoh 服务环境与 workspace 列表
+│       ├── services.yaml         # D1M 的 Zenoh 服务环境与 workspace 列表
+│       └── navigation/           # 同名子模块文件，只写型号参数差异
 ├── robot.example.yaml           # 可提交的填写示例
 ├── robot.yaml                   # 本机文件，Git 忽略
 └── calibration/                 # 可选本机标定文件，Git 忽略
@@ -109,6 +111,77 @@ scripts/manage_inspection_services.sh --config "$PWD/config/services.yaml" rende
 ```
 
 即使显式传入的是公共默认 YAML 路径，也按独立配置处理。
+
+## 导航子模块参数分层
+
+`navigate.yaml` 管理启动行为和文件选择；子模块自身的参数另外按三层合并。
+公共层保留完整参数文件，型号层只写相同节点/字段的差异，单机层写在
+`robot.yaml` 的 `navigation.<模块>.parameters` 中，不需要复制完整文件。
+
+例如当前 D1M 的局部规划：
+
+```text
+config/navigation/local_planner/d1m.yaml                  # 完整公共基线，超时 3.0
+  → config/models/d1m/navigation/local_planner/d1m.yaml    # 型号差异，超时 8.0
+  → robot.yaml 的 navigation.local_planner.parameters   # 可选单机差异
+  → /tmp/inspection-parameters-<uid>/<内容摘要>.yaml       # 自动生成，交给子模块
+```
+
+型号文件内容沿用原始参数结构：
+
+```yaml
+localPlanner:
+  ros__parameters:
+    motionBlockNoPathTimeout: 8.0
+```
+
+若某台机器需要把该参数从型号默认的 8.0 改为 9.0（基于现有字段的增量示例）：
+
+```yaml
+model: d1m
+robot_id: D1M-A
+navigation:
+  local_planner:
+    parameters:
+      localPlanner:
+        ros__parameters:
+          motionBlockNoPathTimeout: 9.0
+```
+
+`config/models/d1m/navigate.yaml` 选择公共参数基线：
+
+```yaml
+local_planner:
+  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/d1m.yaml"
+```
+
+只有显式的 `${INSPECTION_CONFIG_DIR}/navigation/` 引用启用参数分层。解析器
+使用本次实际选中的配置根目录展开它，不要求手动 export，也不受旧 shell
+变量影响；型号文件按公共文件在 `navigation/` 下的相同相对位置查找。
+型号文件缺省时继承公共文件，公共文件不存在则报错，不搜索子模块目录回退。
+本机 `.parameters` 字典递归覆盖，数组整体替换，false、0、空字符串均保留。
+
+普通相对文件路径仍然相对所属子模块包的 config/ 或 params/；普通绝对路径
+直接读取完整文件，两者都不叠加型号参数。完整文件路径不能同时填写
+`.parameters`，避免单机增量被忽略。修改参数后重启 navigation；supervisor
+及工作进程共用已解析快照，运行过程中不会因源文件改变而混用参数。
+
+不同传感器或实现保留各自完整基线，例如 mid360.yaml 与 airy.yaml、
+x30_params.yaml 与 d1_max_params.yaml。它们是不同参数方案；同一方案的
+型号调参写在型号层，不需要给默认文件添加删除字段等额外语法。
+
+默认已集中管理 nav_bridge、faster_lio、gridmapper、local_planner 和
+multi_map_nav 的 YAML。Livox 支持相同的 JSON 分层，数组整体替换；未显式
+选择 JSON 时，继续由驱动按 mid360/mid360s 选择默认文件，避免固定一个 JSON
+破坏原有型号选择。XML 文件不参与参数字典合并。
+
+原 `global_planner.params_file` 文件名入口保留。型号、本机、launch 或运行时
+请求显式填写它而没有同时填写 `params_path` 时，清除继承的完整路径；两者
+同时指定则 `params_path` 优先。单独更换 nav_bridge 的 robot_type 时，应
+同步选择对应参数文件；本机、launch 或运行时请求显式切换类型且未指定文件时
+沿用子模块默认，避免继承另一个型号的参数。
+
+配置来源及 D1M-B Git 差异比对见 [导航参数来源](config/navigation/README.md)。
 
 ## 配置根目录与文件路径
 

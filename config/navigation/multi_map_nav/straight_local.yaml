@@ -1,0 +1,127 @@
+# Smac + safe straightening, for the external local planner.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 2.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      footprint: "[[0.5, 0.235], [0.5, -0.235], [-0.5, -0.235], [-0.5, 0.235]]"
+      footprint_padding: 0.05
+      resolution: 0.05
+      track_unknown_space: true
+      always_send_full_costmap: True
+      plugins: ["static_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.8  # Broad cost field for the 1.0 x 0.47 m robot
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 1.0  # 低频率以节省资源，但要保证关闭时能及时响应
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: false
+      width: 1
+      height: 1
+      resolution: 0.05
+      footprint: "[[0.5, 0.235], [0.5, -0.235], [-0.5, -0.235], [-0.5, 0.235]]"
+      footprint_padding: 0.05
+      min_obstacle_height: -0.4
+      max_obstacle_height: 0.5
+      always_send_full_costmap: false
+      plugins: ["static_layer"]  # 只保留静态层，最小资源消耗
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: false  # 禁用该层
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 2.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "smac_straight_planner::SmacStraightPlanner"
+      tolerance: 0.1
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      cost_travel_multiplier: 2.0
+      use_final_approach_orientation: false
+      straightening:
+        output_spacing: 0.05
+        collision_check_step: 0.025
+        min_clearance: 0.02  # Extra distance beyond the already padded footprint
+        max_shortcut_length: 20.0
+        shortcut_candidate_spacing: 0.25
+        max_cost_ratio: 1.05
+        max_center_cost: 252
+        peak_cost_tolerance: 5
+        corner_radius: 0.4  # Preferred fillet radius; shorten in short segments
+        min_corner_angle: 0.17453292519943295  # 10 degrees
+        max_corner_angle: 2.6179938779914944   # 150 degrees
+        max_shortcut_time: 1.0  # Optimization only; final validation is mandatory
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 10.0
+    costmap_update_timeout: 0.30
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: ["progress_checker"]
+    goal_checker_plugin: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.25
+      time_allowance: 20.0
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.2    # Abandoned! Plz check normal_xy_tolerance below
+      yaw_goal_tolerance: 0.2   # Abandoned! Plz check normal_yaw_tolerance below
+      stateful: True
+    FollowPath:
+      plugin: "multi_map_nav/DummyController"
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+multi_map_nav_node:
+  ros__parameters:
+    default_align_final_yaw: true
+    default_obstacle_policy: "avoid"
+    manual_switch_odometry_timeout_sec: 1.0
+    normal_xy_tolerance: 0.1
+    normal_yaw_tolerance: 0.1
+    transition_xy_tolerance: 0.5
+    transition_yaw_tolerance: 6.283185307179586

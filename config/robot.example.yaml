@@ -10,6 +10,11 @@ robot_id: D1M-A
 #     username: ""
 #     password: ""
 # navigation:
+#   local_planner:
+#     parameters:
+#       localPlanner:
+#         ros__parameters:
+#           motionBlockNoPathTimeout: 8.0  # existing D1M parameter; only this field overrides
 #   terrain:
 #     params_file: gridmapper_local.yaml  # gridmapper/config/; existing default file
 # External calibration files must use an absolute path to an existing file.

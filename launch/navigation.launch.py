@@ -59,6 +59,7 @@ def optional_module_arguments(context, config, section, use_launch_overrides):
 def apply_launch_overrides(context, config):
     """Resolve CLI values before the service-mode supervisor receives a snapshot."""
     config = copy.deepcopy(config)
+    old_robot_type = config.get('nav_bridge', {}).get('robot_type', 'x30')
     specs = [(name, section + "." + key, str) for name, section, key, _ in MODULE_ARGUMENTS]
     specs += [
         ("livox_launch_file", "livox.launch_file", str),
@@ -101,6 +102,14 @@ def apply_launch_overrides(context, config):
             switches[module] = as_bool(value)
     if switches:
         config["launch_module_switches"] = switches
+    requested_robot_type = LaunchConfiguration('nav_bridge_robot_type').perform(context)
+    if (requested_robot_type and requested_robot_type != old_robot_type and
+            not LaunchConfiguration('nav_bridge_params_file').perform(context)):
+        config.get('nav_bridge', {}).pop('params_file', None)
+    # Preserve the legacy filename selector when the caller explicitly uses it.
+    if (LaunchConfiguration('global_params_file').perform(context) and
+            not LaunchConfiguration('global_params_path').perform(context)):
+        config.get('global_planner', {}).pop('params_path', None)
     return resolve_files(config, "navigation", "navigation launch arguments")
 
 

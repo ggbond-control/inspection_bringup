@@ -1,0 +1,94 @@
+gridmapper_node:
+  ros__parameters:
+    # ==============================
+    # 1. Map Configuration
+    # ==============================
+    local_map_size: 15.0          # Size of local map implementation (meters)
+    global_map_width: 100.0       # Width of global map (meters)
+    global_map_height: 100.0      # Height of global map (meters)
+    global_map_x_bias: 0.0      # Initial X offset for global map center
+    global_map_y_bias: 0.0       # Initial Y offset for global map center
+    resolution: 0.1             # Map resolution (meters)
+    mapper_mode: "global"         # Mapper mode (local/global)
+    slow_frame_threshold_ms: 0.0  # Warn when one mapping frame exceeds this time; <=0 disables
+
+    # ==============================
+    # 2. Point Cloud Preprocessing
+    # ==============================
+    min_point_height: -1.0        # Points below this z are ignored
+    max_point_height: 0.5         # Points above this z are ignored
+    enable_pitch_downward_retention: true       # Relax only the lower height bound for front/body-below points while pitched
+    pitch_downward_retention_trigger_deg: 5.0   # Enable retention above this absolute pitch (deg)
+    pitch_downward_retention_body_z_min: -1.0   # Retain no points below this body-frame z (m)
+    pitch_downward_retention_body_z_max: -0.4   # Retain only points at or below this body-frame z (m)
+    pitch_downward_retention_forward_min: 0.0   # Retain only points in front of the body (m)
+    enable_x_passthrough: true   # Enable X-axis passthrough filter
+    x_passthrough_min: -1.0        # Min X value to keep if passthrough enabled
+    sensor_height_origin: 0.5     # Original sensor height
+
+    # ==============================
+    # 3. Mapping Algorithm (Kalman & Cleaning)
+    # ==============================
+    ray_tracing_gpu_en: true
+    ground_variance: 0.01        # Initial variance for ground
+    elevation_variance: 0.1      # Initial variance for elevation
+    elevation_rise_gain_min: 0.5 # Minimum gain when elevation increases
+    elevation_fall_gain_max: 0.02 # Maximum gain when elevation decreases
+    elevation_stale_vertical_margin: 0.10 # Reset stale upper elevation beyond input vertical span (m)
+    ray_tracing_variance: 0.2    # Variance update for ray tracing (clearing)
+    mahalanobis_threshold: 3.0   # Outlier rejection threshold
+    # Recover a stair tread when an old low ground came from the visible underside.
+    ground_replacement_timeout: 3.0              # Seconds without compatible/low ground evidence
+    ground_replacement_confirmations: 0           # Consecutive compatible high-min observations
+    ground_replacement_height_tolerance: 0.10     # Candidate height consistency gate (m)
+
+    # ==============================
+    # 4. Terrain Analysis
+    # ==============================
+    terrain_analysis_en: true    # Enable terrain analysis module
+    terrain_radius: 0.1          # Radius for local plane fitting
+    roughness_sigma: 0.1         # Roughness weight
+    traversability_lambda: 1.5   # Slope weight
+    roughness_threshold: 0.1     # Max acceptable roughness
+    slope_threshold: 60.0        # Max acceptable slope (degrees)
+    step_threshold: 0.2          # Max acceptable step height (meters)
+    instant_traversability_penalty: 0.2 # Penalty for blind zone obstacles
+    min_points_for_analysis: 3   # Min points for plane fitting (>=3)
+    
+    # GPU / Advanced Processing
+    enable_ground_filling: false 
+    filling_iterations: 2
+    filling_penalty: 0.5
+    fuse_external_map_en: false  # Fuse /map into /terrain_map in LOCAL mode for blind spots
+
+    # ==============================
+    # 5. Output Configuration
+    # ==============================
+    save_map_path: "data/Output/"
+    multi_map_output_dir: "multi_maps" # Final multi-map outputs live under save_map_path/multi_maps
+    initial_map_id: "map_000"          # Root/initial active map id
+    default_transition_type: "manual"  # Used when /switch_map transition_type is empty
+    default_transition_bidirectional: true # /switch_map bidirectional: 0=default, 1=true, 2=false
+    default_create_if_missing: true        # /switch_map create_if_missing: 0=default, 1=true, 2=false
+    default_switch_active_map: true        # /switch_map switch_active_map: 0=default, 1=true, 2=false
+
+    # ==============================
+    # 6. Height Array Publisher
+    # ==============================
+    height_array_range_x: 1.0    # Forward/Backward range (+/- meters)
+    height_array_range_y: 0.5    # Left/Right range (+/- meters)
+    height_array_resolution: 0.1 # Resolution for height array sampling
+    
+    # ==============================
+    # 7. Control Input Logic
+    # ==============================
+    control_en: false                       # Enable control input logic
+    control_check_radius: 0.5               # Radius around robot to check traversability
+    control_traverse_threshold: 0.2         # Traversability > 0.2 counts as valid
+    control_avg_threshold_high: 0.92        # Switch to WALK if avg > 0.92
+    control_avg_threshold_low: 0.82         # Switch to CLIMB if avg < 0.82
+    control_persistence_frames_to_climb: 1  # Frames to confirm switch to CLIMB (Fast)
+    control_persistence_frames_to_walk: 20  # Frames to confirm switch to WALK (Slow)
+    enable_mode_trajectory_viz: false       # Enable path visualization for different modes
+    max_path_points: 2000                   # Max points to keep in each path topic
+    marker_scale: 0.1                       # Size of the trajectory markers (meters)

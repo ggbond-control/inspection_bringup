@@ -1,0 +1,118 @@
+/**:
+  ros__parameters:
+    sensorOffsetX: 0.0  # 传感器相对车体 X 方向偏移（m）
+    sensorOffsetY: 0.0  # 传感器相对车体 Y 方向偏移（m）
+    NavType: 0  # 0: 全局路径导航；1: UWB目标；旧RC模式2已移除
+    odomMaxAge: 0.5    # 最大允许里程计年龄（s）
+    odomTimeout: 0.5   # 有效里程计最大中断间隔（s）
+    odomTimestampCheckEn: true  # 是否按 header.stamp 检查里程计年龄；关闭后仍检查超时和乱序
+
+    initialModel: "offroad"  # 启动时使用的运动模型名称
+    flat:
+      maxSpeed: 2.0  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.5  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.0  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 2.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.0  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 2.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 3.5  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.5  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
+    offroad:
+      maxSpeed: 1.2  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.6  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.2  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 1.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.2  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 2.5  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.8  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 2.5  # 模型偏航最大角减速度（rad/s2）
+
+localPlanner:
+  ros__parameters:
+    localPlannerFreq: 20.0  # 局部规划主循环频率（Hz）
+    vehicleLength: 1.0  # 机器人车体长度（m）
+    vehicleWidth: 0.47  # 机器人车体宽度（m）
+    terrainVoxelSize: 0.1  # 地形点云体素化分辨率（m）
+    adjacentRange: 3.5  # 局部候选路径与障碍评估范围（m）
+    obstacleTraversityThre: 0.2  # 障碍可通行性阈值，低于此值视为障碍
+    costTraversityThre: 1.0  # 路径代价使用的可通行性阈值
+    costScore: 0.02  # 路径障碍代价系数
+    pointPerPathThre: 4  # 候选路径有效点数下限
+    minRelZ: -1.0  # 参与规划点相对车体的最小高度（m）
+    maxRelZ: 1.0  # 参与规划点相对车体的最大高度（m）
+    dirWeight: 0.25  # 候选路径朝向代价权重
+    rotWeight: 2.0  # 候选路径转向代价权重
+    obsWeight: 7.0  # 候选路径障碍代价权重
+    dirThre: 90.0  # 允许的候选路径方向范围（deg）
+    dirToVehicle: false  # 是否以车体朝向而非目标方向筛选路径
+    defPathScale: 1.25  # 默认候选路径尺度
+    minPathScale: 0.75  # 最小候选路径尺度
+    pathScaleStep: 0.25  # 候选路径尺度步进
+    pathScaleBySpeed: true  # 是否随速度调整候选路径尺度
+    minPathRange: 1.0  # 最小候选路径评估长度（m）
+    pathRangeStep: 0.5  # 候选路径评估长度步进（m）
+    pathRangeBySpeed: true  # 是否随速度调整候选路径评估长度
+    pathCropByGoal: true  # 是否按目标距离裁剪候选局部路径
+    goalClearRange: 0.1  # 目标附近清空局部路径的距离（m）
+    obstacleStopClearance: 0.4  # 停障时与障碍保留的安全距离（m）
+    obstacleStopDetectionRange: 2.5  # 停障模式前方障碍检测范围（m）
+    obstacleStopConfirmTime: 0.2  # 障碍持续该时长后确认停车（s）
+    obstacleStopClearTime: 0.5  # 障碍清除持续该时长后恢复（s）
+    obstacleStopAbortTimeout: 10.0  # 停障持续超时后上报终止的时长（s）
+    obstacleStopHoldTolerance: 0.10  # 停车保持状态允许的障碍距离变化容差（m）
+    obstacleStopSettleRange: 0.30  # 停障后判定稳定的位移范围（m）
+    obstacleStopSettleTime: 0.5  # 停障后判定稳定所需时间（s）
+    obstacleStopSettleDisplacement: 0.03  # 停障稳定阶段允许的最大位移（m）
+    motionBlockEn: true  # 是否启用运动阻塞检测并上报上层
+    motionBlockStartupGrace: 2.0  # 新目标或定位恢复后的阻塞检测宽限期（s）
+    motionBlockNoPathTimeout: 3.0  # 持续没有局部路径时判定阻塞的时长（s）
+    motionBlockShortWindow: 4.0  # 短窗口低进展检测时长（s）
+    motionBlockShortMinDisplacement: 0.12  # 短窗口内最小平移位移阈值（m）
+    motionBlockShortMinYawChange: 0.30  # 短窗口内最小偏航变化阈值（rad）
+    motionBlockOscillationWindow: 10.0  # 长窗口左右徘徊检测时长（s）
+    motionBlockOscillationMinTravel: 1.0  # 长窗口触发徘徊检测所需最小累计路程（m）
+    motionBlockOscillationMaxDisplacement: 0.30  # 徘徊检测允许的最大净位移（m）
+    motionBlockOscillationMaxRadius: 1.0  # 徘徊检测允许的最大活动半径（m）
+    ompNumThreads: 2  # 规划计算使用的 OpenMP 线程数
+    planPermitInterval: 3.0  # 连续许可规划的最小间隔（s）
+    startPathsFile: "startPaths.ply"  # 起步运动原语文件名
+    pathsFile: "paths.ply"  # 候选路径点文件名
+    pathListFile: "pathList.ply"  # 候选路径索引文件名
+    correspondencesFile: "correspondences_x30.txt"  # 地形体素到候选路径对应关系文件名
+    towardGoal: true  # 是否优先选择朝向目标的局部路径
+    lookaheadScale: 0.6  # 全局路径前视距离缩放系数
+    scoreAdvantage: 1.1  # 与全局路径一致候选的评分优势系数
+    localGoalFreq: 5.0  # 局部目标更新频率（Hz）
+    goalRatioThre: 1.1  # 局部目标推进的距离比例阈值
+    UWBStopDis: 0.5  # UWB 目标到达停车距离（m）
+    gaitSwitchEn: true  # 是否按目标阶段自动切换步态
+    cruiseGaitSwitchEn: false  # 巡航步态由上层任务指定；保留目标附近精细步态
+    cruiseGait: 33  # 巡航阶段使用的步态编号
+    finalGoalGait: 32  # 普通最终目标阶段使用的步态编号
+    finalGaitEnterDist: 0.8  # 进入最终目标步态的距离阈值（m）
+    finalGaitExitDist: 1.2  # 退出最终目标步态回到巡航的距离阈值（m）
+    gaitRequestCooldown: 2.0  # 两次步态切换请求的最小间隔（s）
+    gaitConfirmTimeout: 4.0  # 等待步态切换确认的超时（s）
+
+pathFollower:
+  ros__parameters:
+    pathFollowerFreq: 50.0  # 路径跟随控制循环频率（Hz）
+    pubSkipNum: 0  # 控制指令发布跳帧数
+    lookAheadDis: 0.5  # 固定前视距离（m）
+    yawRateGain: 1.5  # 航向误差到偏航角速度的比例增益
+    switchTimeThre: 1.0  # 前后向行驶模式切换的时间阈值（s）
+    dirDiffThre: 0.4  # 切换前后向行驶的方向误差阈值（rad）
+    stopDisThre: 0.2  # 路径末端停车距离阈值（m）
+    slowdownDisThre: 0.2  # 距路径末端开始降低前向速度的距离（m）
+    cmdDeadzoneX: 0.05  # X方向速度输出死区，小于该值时发布0（m/s）
+    cmdDeadzoneY: 0.05  # Y方向速度输出死区，小于该值时发布0（m/s）
+    twoWayDrive: false  # 是否允许根据目标方向前后向行驶
+    lookaheadTime: 1.0  # 按当前速度计算动态前视距离的时间（s）
+    minLookaheadDis: 0.1  # 动态前视距离下限（m）
+    maxLookaheadDis: 1.0  # 动态前视距离上限（m）
+    curvatureDecelGain: 0.75  # 曲率导致前向减速的增益
+    lateralGain: 2.0  # 横向误差到横向速度的比例增益
+    yawRateDecelRatio: 0.2  # 大偏航角速度时前向减速比例
+    approveYawDeg: 10.0  # 最终位置到达后允许结束的偏航误差（deg）

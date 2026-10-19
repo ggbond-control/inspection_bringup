@@ -1,0 +1,4 @@
+# D1M-B working-tree parameter differences; other fields inherit the public profile.
+localPlanner:
+  ros__parameters:
+    motionBlockNoPathTimeout: 8.0

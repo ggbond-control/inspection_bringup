@@ -55,6 +55,7 @@ bringup:
   wait_timeout_seconds: 10.0
 
 nav_bridge:
+  params_file: "${INSPECTION_CONFIG_DIR}/navigation/nav_bridge/x30_params.yaml"
   readiness:
     type: nav_bridge
     topics:
@@ -71,6 +72,8 @@ nav_bridge:
     charge_poll_interval_seconds: 0.5
 
 livox:
+  # Leave unset to retain the driver's model-dependent default (mid360/mid360s).
+  # An explicit ${INSPECTION_CONFIG_DIR}/navigation/... JSON uses the same layers.
   model: mid360
   readiness:
     type: topics
@@ -79,6 +82,7 @@ livox:
     timeout_seconds: 10.0
 
 slam:
+  config: "${INSPECTION_CONFIG_DIR}/navigation/faster_lio/mid360.yaml"
   relocal: true
   prior_dir: ""
   rviz: false
@@ -95,6 +99,7 @@ slam:
     release_control_timeout_seconds: 5.0
 
 terrain:
+  params_file: "${INSPECTION_CONFIG_DIR}/navigation/gridmapper/gridmapper_local.yaml"
   rviz: false
   use_gpu: true
   readiness:
@@ -104,6 +109,7 @@ terrain:
     timeout_seconds: 10.0
 
 local_planner:
+  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/x30.yaml"
   use_sim_time: false
   start_rviz: false
   readiness:
@@ -118,6 +124,7 @@ global_planner:
   multi_map_dir: ""
   use_fake_cmdvel: true
   params_file: "new_local"
+  params_path: "${INSPECTION_CONFIG_DIR}/navigation/multi_map_nav/new_local.yaml"
   waypoint_dwell_time: 1.0
   patrol_loops: 1
   readiness:

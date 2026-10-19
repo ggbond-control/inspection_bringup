@@ -1,0 +1,5 @@
+# D1M-B working-tree parameter differences; other fields inherit the public profile.
+gridmapper_node:
+  ros__parameters:
+    global_map_width: 500.0
+    global_map_height: 500.0

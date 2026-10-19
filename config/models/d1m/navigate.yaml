@@ -31,9 +31,11 @@ bringup:
 
 nav_bridge:
   robot_type: d1_max
+  params_file: "${INSPECTION_CONFIG_DIR}/navigation/nav_bridge/d1_max_params.yaml"
 slam:
-  config: airy.yaml
+  config: "${INSPECTION_CONFIG_DIR}/navigation/faster_lio/airy.yaml"
 local_planner:
-  config: d1m.yaml
+  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/d1m.yaml"
 global_planner:
   params_file: straight_local
+  params_path: "${INSPECTION_CONFIG_DIR}/navigation/multi_map_nav/straight_local.yaml"

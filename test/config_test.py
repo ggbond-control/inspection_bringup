@@ -49,7 +49,19 @@ class Configuration(unittest.TestCase):
     def test_no_robot_preserves_all_legacy_defaults(self):
         for module, filename in cfg.FILENAMES.items():
             with self.subTest(module=module):
-                self.assertEqual(cfg.load_config(module), cfg.read_yaml(self.root / filename))
+                raw = cfg.read_yaml(self.root / filename)
+                resolved = cfg.load_config(module)
+                if module == 'navigation':
+                    for section, field, profile in [
+                        ('nav_bridge', 'params_file', 'nav_bridge/x30_params.yaml'),
+                        ('slam', 'config', 'faster_lio/mid360.yaml'),
+                        ('terrain', 'params_file', 'gridmapper/gridmapper_local.yaml'),
+                        ('local_planner', 'config', 'local_planner/x30.yaml'),
+                        ('global_planner', 'params_path', 'multi_map_nav/new_local.yaml')]:
+                        self.assertEqual(cfg.read_yaml(resolved[section][field]),
+                                         cfg.read_yaml(self.root / 'navigation' / profile))
+                        raw[section][field] = resolved[section][field]
+                self.assertEqual(resolved, raw)
 
     def test_defaults_model_robot_merge_and_identity(self):
         self.write('models/d1m/system.yaml', {'mqtt': {'port': 2345}, 'modules': {'gas': False}})
@@ -86,7 +98,10 @@ class Configuration(unittest.TestCase):
             self.robot(model=model)
             value = cfg.load_config('navigation')
             self.assertEqual(value['nav_bridge']['robot_type'], robot_type)
-            self.assertEqual(value['local_planner']['config'], self.package_file('local_planner', planner))
+            expected = cfg.read_yaml(self.root / 'navigation/local_planner' / planner)
+            if model == 'd1m':
+                expected['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'] = 8.0
+            self.assertEqual(cfg.read_yaml(value['local_planner']['config']), expected)
 
     def test_d1m_system_matches_stored_deployment_with_local_identity(self):
         self.robot(robot_id='D1M-002')
@@ -106,9 +121,14 @@ class Configuration(unittest.TestCase):
         # Retain inherited Livox settings, but no D1M sequence starts its driver.
         expected['livox'] = cfg.read_yaml(self.root / 'navigate.yaml')['livox']
         expected['nav_bridge']['robot_type'] = 'd1_max'
-        expected['slam']['config'] = self.package_file('faster_lio', 'airy.yaml')
-        expected['local_planner']['config'] = self.package_file('local_planner', 'd1m.yaml')
-        self.assertEqual(cfg.load_config('navigation'), expected)
+        actual = cfg.load_config('navigation')
+        # File selection has moved to bringup-managed snapshots; startup behavior
+        # must still match the historical deployment.
+        for section, field in [('nav_bridge', 'params_file'), ('slam', 'config'),
+                               ('terrain', 'params_file'), ('local_planner', 'config'),
+                               ('global_planner', 'params_path')]:
+            expected[section][field] = actual[section][field]
+        self.assertEqual(actual, expected)
 
     def test_relative_file_paths_are_independent_of_layer_and_dot_prefix(self):
         for name in ('gridmapper_local.yaml', './gridmapper_local.yaml'):
@@ -171,7 +191,8 @@ class Configuration(unittest.TestCase):
     def test_file_names_resolve_but_legacy_global_selector_remains_plain(self):
         self.robot()
         value = cfg.load_config('navigation')
-        self.assertEqual(value['slam']['config'], self.package_file('faster_lio', 'airy.yaml'))
+        self.assertEqual(cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']
+                         ['initial_alignment']['position'], [0.0, 0.0, 0.0])
         self.assertEqual(value['global_planner']['params_file'], 'straight_local')
 
     def test_explicit_file_bypasses_robot_even_if_it_is_the_default_path(self):
@@ -221,6 +242,128 @@ class Configuration(unittest.TestCase):
         self.assertEqual(value['service']['environment']['ROS_DOMAIN_ID'], '198')
         self.assertNotIn('navigate_config_path', value['navigation']['launch_args'])
         self.assertNotIn('system_config_path', value['inspection_system']['launch_args'])
+
+    def test_submodule_public_model_robot_fields_merge_without_copying(self):
+        self.robot(navigation={'local_planner': {'parameters': {
+            'localPlanner': {'ros__parameters': {'motionBlockNoPathTimeout': 9.0}}}}})
+        value = cfg.load_config('navigation')
+        data = cfg.read_yaml(value['local_planner']['config'])
+        public = cfg.read_yaml(self.root / 'navigation/local_planner/d1m.yaml')
+        self.assertEqual(public['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'], 3.0)
+        public['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'] = 9.0
+        self.assertEqual(data, public)
+        self.assertNotIn('parameters', value['local_planner'])
+        # Editing an inherited field must appear without refreshing model/robot files.
+        public['pathFollower']['ros__parameters']['lookAheadDis'] = 0.42
+        self.write('navigation/local_planner/d1m.yaml', public)
+        again = cfg.load_config('navigation')
+        self.assertEqual(cfg.read_yaml(again['local_planner']['config']), public)
+
+    def test_submodule_lists_false_zero_empty_and_null_are_preserved(self):
+        self.write('navigation/gridmapper/gridmapper_local.yaml',
+                   {'node': {'ros__parameters': {'enabled': True, 'limit': 3,
+                      'names': ['a', 'b'], 'text': 'default', 'optional': 'value'}}})
+        expected = {'node': {'ros__parameters': {'enabled': False, 'limit': 0,
+                     'names': [], 'text': '', 'optional': None}}}
+        self.robot(navigation={'terrain': {'parameters': expected}})
+        value = cfg.load_config('navigation')
+        self.assertEqual(cfg.read_yaml(value['terrain']['params_file']), expected)
+
+    def test_explicit_root_beats_stale_environment_and_needs_no_packages(self):
+        self.robot()
+        with patch.dict(os.environ, INSPECTION_CONFIG_DIR='/nonexistent/stale-root'), \
+                patch('ament_index_python.packages.get_package_share_directory',
+                      side_effect=AssertionError('managed files must not look up child packages')):
+            value = cfg.load_config('navigation', config_dir=self.root)
+        self.assertEqual(cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']
+                         ['initial_alignment']['position'], [0.0, 0.0, 0.0])
+
+    def test_standalone_child_file_bypasses_model_and_robot_parameter_layers(self):
+        complete = self.write('calibration/local_planner.yaml', {'only_external': True})
+        self.robot(navigation={'local_planner': {'config': str(complete)}})
+        value = cfg.load_config('navigation')
+        self.assertEqual(value['local_planner']['config'], str(complete))
+        self.assertEqual(cfg.read_yaml(value['local_planner']['config']), {'only_external': True})
+        self.robot(navigation={'local_planner': {'config': str(complete), 'parameters': {'x': 1}}})
+        with self.assertRaisesRegex(ValueError, 'standalone paths use complete files'):
+            cfg.load_config('navigation')
+
+    def test_explicit_bringup_file_bypasses_model_parameter_layers(self):
+        self.robot()
+        standalone = self.write('standalone.yaml', {'slam': {'config':
+            '${INSPECTION_CONFIG_DIR}/navigation/faster_lio/airy.yaml'}})
+        value = cfg.load_config('navigation', str(standalone))
+        self.assertEqual(cfg.read_yaml(value['slam']['config']),
+                         cfg.read_yaml(self.root / 'navigation/faster_lio/airy.yaml'))
+
+    def test_managed_json_keeps_driver_format_and_replaces_device_lists(self):
+        # Livox accepts JSON rather than a ROS parameter YAML.
+        target = self.root / 'models/d1m/navigation/livox_ros_driver2/multi_MID360_config.json'
+        target.parent.mkdir(parents=True)
+        target.write_text('{"lidar_configs": []}')
+        self.robot(navigation={'livox': {'user_config_path':
+            '${INSPECTION_CONFIG_DIR}/navigation/livox_ros_driver2/multi_MID360_config.json'}})
+        value = cfg.load_config('navigation')
+        path = value['livox']['user_config_path']
+        self.assertTrue(path.endswith('.json'))
+        expected = cfg.read_parameter_file(self.root / 'navigation/livox_ros_driver2/multi_MID360_config.json')
+        expected['lidar_configs'] = []
+        self.assertEqual(cfg.read_parameter_file(path), expected)
+
+    def test_snapshots_freeze_parameters_and_repeated_loads_reuse_files(self):
+        self.robot()
+        value = cfg.load_config('navigation')
+        self.assertEqual(cfg.load_config('navigation'), value)
+        snapshot = cfg.write_snapshot(value, self.temp.name)
+        before = cfg.read_yaml(value['slam']['config'])
+        self.write('models/d1m/navigation/faster_lio/airy.yaml',
+                   {'laser_mapping': {'ros__parameters': {'initial_alignment': {'position': [1, 2, 3]}}}})
+        self.assertEqual(cfg.load_config('navigation', snapshot), value)
+        self.assertEqual(cfg.read_yaml(value['slam']['config']), before)
+        self.assertNotEqual(cfg.load_config('navigation')['slam']['config'], value['slam']['config'])
+
+    def test_gridmapper_global_diff_is_available_without_changing_local_navigation(self):
+        self.robot()
+        local = cfg.read_yaml(cfg.load_config('navigation')['terrain']['params_file'])
+        self.assertEqual(local, cfg.read_yaml(self.root / 'navigation/gridmapper/gridmapper_local.yaml'))
+        self.robot(navigation={'terrain': {'params_file':
+            '${INSPECTION_CONFIG_DIR}/navigation/gridmapper/gridmapper_global.yaml'}})
+        global_params = cfg.read_yaml(cfg.load_config('navigation')['terrain']['params_file'])
+        self.assertEqual(global_params['gridmapper_node']['ros__parameters']['global_map_width'], 500.0)
+        self.assertEqual(global_params['gridmapper_node']['ros__parameters']['global_map_height'], 500.0)
+
+    def test_managed_missing_files_traversal_and_bad_parameter_types_fail(self):
+        for name in ['missing.yaml', '../system.yaml', '/tmp/file.yaml']:
+            self.robot(navigation={'slam': {'config': '${INSPECTION_CONFIG_DIR}/navigation/' + name}})
+            with self.subTest(name=name), self.assertRaises((ValueError, FileNotFoundError)):
+                cfg.load_config('navigation')
+        self.robot(navigation={'slam': {'parameters': []}})
+        with self.assertRaisesRegex(ValueError, 'parameters must be a mapping'):
+            cfg.load_config('navigation')
+
+    def test_robot_legacy_global_selector_overrides_managed_default(self):
+        self.robot(navigation={'global_planner': {'params_file': 'straight_local'}})
+        value = cfg.load_config('navigation')
+        self.assertNotIn('params_path', value['global_planner'])
+        self.assertEqual(value['global_planner']['params_file'], 'straight_local')
+
+    def test_robot_bridge_type_switch_does_not_inherit_other_robot_parameters(self):
+        self.robot(navigation={'nav_bridge': {'robot_type': 'cyvet'}})
+        value = cfg.load_config('navigation')
+        self.assertNotIn('params_file', value['nav_bridge'])
+
+    def test_parameter_snapshot_recovers_from_a_truncated_runtime_file(self):
+        self.robot(navigation={'local_planner': {'parameters': {
+            'pathFollower': {'ros__parameters': {'lookAheadDis': 0.314159265}}}}})
+        value = cfg.load_config('navigation')
+        path = Path(value['local_planner']['config'])
+        content = path.read_text()
+        try:
+            path.write_text('')
+            self.assertEqual(cfg.load_config('navigation'), value)
+            self.assertEqual(path.read_text(), content)
+        finally:
+            path.write_text(content)
 
     def test_d1m_services_matches_stored_deployment_without_editing_defaults(self):
         self.robot()

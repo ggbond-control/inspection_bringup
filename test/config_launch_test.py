@@ -159,6 +159,38 @@ class LaunchConfiguration(unittest.TestCase):
         self.assertEqual(node.layer_sequence(config, 'add', supervisor.MANUAL_LOCALIZED, 'navigation'),
                          ('terrain', 'local_planner', 'global_planner'))
 
+    def test_cli_legacy_global_selector_replaces_managed_path(self):
+        context = context_for(navigation, global_params_file='new_local')
+        value = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
+        self.assertEqual(value['global_planner']['params_file'], 'new_local')
+        self.assertNotIn('params_path', value['global_planner'])
+
+    def test_runtime_selectors_do_not_inherit_incompatible_files(self):
+        from rclpy.parameter import Parameter
+        from rcl_interfaces.srv import SetParameters
+        node = object.__new__(supervisor.NavigationSupervisor)
+        node.base_config = cfg.load_config('navigation')
+        node.active_config = None
+        node.current_state = supervisor.STOPPED
+        node.map_context = {}
+        node.allowed_paths = supervisor.flatten_leaves(node.base_config)
+        request = SetParameters.Request(parameters=[
+            Parameter('global_planner.params_file', value='new_local').to_parameter_msg(),
+            Parameter('nav_bridge.robot_type', value='cyvet').to_parameter_msg()])
+        value, _, results = node.resolve_request(request)
+        self.assertTrue(all(result.successful for result in results))
+        self.assertNotIn('params_path', value['global_planner'])
+        self.assertNotIn('params_file', value['nav_bridge'])
+
+    def test_cli_model_file_uses_layers_and_switching_robot_type_uses_child_default(self):
+        context = context_for(navigation, terrain_params_file=
+            '${INSPECTION_CONFIG_DIR}/navigation/gridmapper/gridmapper_global.yaml',
+            nav_bridge_robot_type='cyvet')
+        value = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
+        self.assertEqual(cfg.read_yaml(value['terrain']['params_file'])['gridmapper_node']
+                         ['ros__parameters']['global_map_width'], 500.0)
+        self.assertNotIn('params_file', value['nav_bridge'])
+
     def test_immediate_mode_forwards_resolved_cli_file_path(self):
         custom = Path(self.temp.name) / 'custom.yaml'
         custom.write_text('{}\n')
@@ -199,16 +231,23 @@ class LaunchConfiguration(unittest.TestCase):
             navigation.build_navigation_actions(context, config, use_launch_overrides=False)
         self.assertEqual(captured['nav_bridge'][1]['robot_type'], 'd1_max')
         self.assertEqual(captured['nav_bridge'][1]['params_file'], str(external))
-        self.assertEqual(captured['faster_lio'][1]['config'], self.package_file('faster_lio', 'airy.yaml'))
+        self.assertEqual(captured['faster_lio'][1]['config'], config['slam']['config'])
         self.assertEqual(captured['gridmapper'][1]['params_file'], str(external))
-        self.assertEqual(captured['local_planner'][1]['config'], self.package_file('local_planner', 'd1m.yaml'))
+        self.assertEqual(captured['local_planner'][1]['config'], config['local_planner']['config'])
         self.assertEqual(captured['multi_map_nav'][1]['params_file'], 'straight_local')
         self.assertEqual(captured['multi_map_nav'][1]['params_path'], str(external))
         self.assertEqual(captured['livox_ros_driver2'][0], 'msg_MID360_launch.py')
         self.assertEqual(captured['livox_ros_driver2'][1]['user_config_path'], str(external))
 
     def test_legacy_config_does_not_send_new_optional_arguments(self):
-        config = cfg.load_config('navigation', str(self.root / 'navigate.yaml'))
+        config = cfg.read_yaml(self.root / 'navigate.yaml')
+        for section, field in [('nav_bridge', 'params_file'), ('slam', 'config'),
+                               ('terrain', 'params_file'), ('local_planner', 'config'),
+                               ('global_planner', 'params_path')]:
+            config[section].pop(field)
+        legacy = self.root / 'legacy.yaml'
+        legacy.write_text(yaml.safe_dump(config))
+        config = cfg.load_config('navigation', str(legacy))
         context = context_for(navigation)
         for section in ('nav_bridge', 'slam', 'terrain', 'local_planner', 'global_planner', 'livox'):
             self.assertEqual(navigation.optional_module_arguments(context, config, section, False), {})

@@ -1,0 +1,224 @@
+laser_mapping:
+  ros__parameters:
+    common:
+      lid_topic: "/lidar/airy"                    # 输入点云话题，必须为 sensor_msgs/msg/PointCloud2
+      imu_topic: "/imu_shm_publisher/imu_central" # 输入 IMU 话题，必须为 sensor_msgs/msg/Imu
+      time_sync_en: false                          # 是否启用 LiDAR 与 IMU 的软件时间偏移补偿
+      imu_acceleration_scale: 1.0                  # IMU 加速度倍率；输入单位为 g 时应配置为 9.80665
+      imu_acceleration_sign: 1.0                   # IMU 加速度符号，支持 1.0 或 -1.0
+
+    preprocess:
+      lidar_type: 4                              # 雷达类型：1 Mid-360，2 Velodyne，3 Ouster，4 Airy
+      blind: 0.1                                 # 雷达盲区半径，单位米
+      self_box_filter_en: true                   # 是否滤除雷达/机器人自身附近的点
+      self_box_half_size: [0.65, 0.35, 0.4]      # 自身过滤盒半尺寸 [x, y, z]，单位米
+      time_scale: 0.001                          # 点时间字段到秒的缩放系数，Airy timestamp 为毫秒时使用 0.001
+
+    mapping:
+      acc_cov: 0.1                             # IMU 加速度测量噪声协方差对角值
+      gyr_cov: 0.1                             # IMU 角速度测量噪声协方差对角值
+      b_acc_cov: 0.0001                        # 加速度计偏置随机游走协方差对角值
+      b_gyr_cov: 0.0001                        # 陀螺仪偏置随机游走协方差对角值
+      extrinsic_est_en: false                  # 是否在线估计 LiDAR 与 IMU 的外参
+      extrinsic_T: [0.0, 0.0, 0.0]             # LiDAR 在 IMU 坐标系中的平移外参 [x, y, z]，单位米
+      extrinsic_R: [1.0, 0.0, 0.0,             # LiDAR 到 IMU 的旋转外参，按行展开的 3x3 矩阵
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    localization:
+      map_update_en: false                     # 重定位时是否允许把当前点云写入先验地图
+
+    # RTK fallback：只在 LiDAR LOST/RECOVERING 时辅助 EKF，TRACKING 时不参与融合。
+    rtk:
+      # 1. 总开关与运行范围
+      enable: true                             # 是否启用 RTK fallback；false 时保持原始 LiDAR/IMU 流程
+      diagnostics: false                        # 是否输出 RTK 时间、门控、修正量和 LiDAR 恢复诊断
+      localization_only: true                  # true 时仅在 relocal 模式启用 RTK fallback
+
+      # 2. 输入、输出与天线安装
+      topic: "/rtk_pvh_g90"                        # 原始 robots_dog_msgs/msg/UniRtkPvh 输入话题
+      output_topic: "/odometry_from_rtk"       # 转换到 PGO world 后的 nav_msgs/msg/Odometry 输出话题
+      antenna_layout: "primary_front"          # 双天线布局：primary_front 主天线在前，primary_rear 主天线在后
+      lever_arm: [0.37, 0.0, 0.0]              # 主天线相对 IMU 的杆臂 [x, y, z]，单位米
+
+      # 3. 时间匹配与超时
+      timestamp_mode: "imu_receipt"           # imu_receipt 使用到达时的最新 IMU 时间；header_offset 使用 header.stamp+time_offset
+      time_offset: 0.0                         # 仅 header_offset 模式生效；RTK header 时间修正量，单位秒
+      max_time_diff: 0.1                       # RTK 匹配时间与 LiDAR 扫描结束时间的最大差值，单位秒
+      timeout: 2.0                             # 按 IMU 时间计算；超过该时间未收到 RTK 后将 RTK 标记为 LOST
+
+      # 4. RTK 位置与航向解质量
+      position:
+        max_std_xy: 0.1                        # lat_std 或 lon_std 超过该值时位置无效，单位米
+        max_std_z: 0.2                         # hgt_std 超过该值时位置无效，单位米
+      heading:
+        fallback_std_deg: 2.0                  # heading_std 无效时使用的航向标准差，仅影响权重，单位度
+        max_innovation_deg: 20.0               # RTK yaw 与 EKF yaw 的最大允许创新，单位度
+        max_correction_deg: 3.0                # 单次 RTK yaw 更新允许的最大姿态修正，单位度
+
+      # 5. LiDAR/RTK 动态坐标标定
+      dynamic_alignment:
+        enable: true                           # 是否在 LiDAR 和 RTK 稳定时持续修正 ENU 到 world 的标定
+        update_distance: 10.0                  # 水平移动达到该距离后生成新锚点，按 RTK ENU 计算，单位米
+        stable_lidar_frames: 20                # LiDAR 连续通过质量检查多少帧后才允许生成锚点
+        window_size: 3                         # 最近参与标定估计的锚点数量，必须不小于 2
+        blend_frames: 30                       # 新标定分多少个有效 LiDAR/RTK 帧平滑生效
+        max_translation_change: 10.0            # 新标定在当前位置允许产生的最大位移变化，单位米
+        max_yaw_change_deg: 3.0                # 新标定相对当前标定允许的最大 yaw 变化，单位度
+
+      # 6. RTK 异常观测门控
+      max_innovation: 8.0                      # RTK 与 EKF 预测位置的最大允许创新距离，单位米
+      mahalanobis_threshold: 11.34             # RTK 马氏距离门限，超出后拒绝该观测
+      max_position_correction: 0.5             # 单次 RTK 对 EKF 位置的最大修正量，单位米
+
+      # 7. RTK 自身 LOST/RECOVERING/GOOD 状态机
+      min_good_samples: 3                      # RTK 从 LOST 恢复前需要连续接受的观测数量
+      max_bad_samples: 2                       # 连续拒绝多少次后将 RTK 标记为 LOST
+      recovery_noise_scale: 3.0                # RTK 恢复阶段的噪声放大倍数
+      recovery_ramp_updates: 5                 # RTK 从 RECOVERING 过渡到 GOOD 所需的更新次数
+
+      # 8. EKF 对 RTK 的自适应权重
+      ekf_low_position_sigma: 0.2              # EKF 位置标准差低于该值时降低 RTK 权重，单位米
+      ekf_high_position_sigma: 1.0             # EKF 位置标准差高于该值时提高 RTK 权重，单位米
+      lidar_lost_position_sigma_floor: 0.5     # LiDAR 失效时 EKF 位置标准差下限，使 RTK 能接管，单位米
+
+      # 9. LiDAR 丢失后的 RTK 水平恢复
+      recovery:
+        enable: true                           # 是否允许 LiDAR LOST 且 EKF 发散时用 RTK 重置水平状态
+        position_sigma_threshold: 2.0           # XY 任一位置标准差达到该值才进入恢复，单位米
+        max_position_innovation: 20.0           # 恢复允许的最大 XY 创新，超过则拒绝，单位米
+        max_position_reset: 20.0                # 一次恢复允许拉回的最大水平距离，单位米
+
+      # 10. LiDAR 失效判定与恢复确认；仅在 RTK fallback 启用时生效
+      lidar_recovery:
+        min_downsampled_points: 400            # TRACKING 与 RECOVERING 共用的降采样点数下限
+        min_effective_points: 200              # TRACKING 与 RECOVERING 共用的有效匹配点数下限
+        min_inlier_ratio: 0.15                  # TRACKING 与 RECOVERING 共用的有效匹配点比例下限
+        max_residual_rms: 0.25                  # TRACKING 与 RECOVERING 共用的点面残差 RMS 上限，单位米
+        tracking:                              # 正常跟踪阶段只保留允许跳变量
+          max_position_correction: 0.5         # 单帧 LiDAR 位置修正超过该值时进入 LOST，单位米
+          max_rotation_correction_deg: 5.0     # 单帧 LiDAR 旋转修正超过该值时进入 LOST，单位度
+        recovery:                              # 恢复阶段只保留连续确认和允许跳变量
+          required_consecutive_frames: 5       # 连续多少帧候选通过后切回 TRACKING
+          max_position_correction: 0.5         # 恢复候选允许的最大位置修正，单位米
+          max_rotation_correction_deg: 2.0     # 恢复候选允许的最大旋转修正，单位度
+        position_sigma_floor: 0.1              # RECOVERING 阶段 EKF 位置标准差下限，单位米
+        rotation_sigma_floor_deg: 2.0          # RECOVERING 阶段 EKF 姿态标准差下限，单位度
+        max_rtk_disagreement: 0.5              # LiDAR/RTK XY 差异诊断阈值，仅告警、不否决 LiDAR，单位米
+        rtk_max_age: 0.2                       # 用于差异诊断的最近 RTK 最大时间年龄，单位秒
+
+    initial_alignment:
+      position: [0.0, 0.0, 1.0]                 # 初始配准位置猜测 [x, y, z]，单位米
+      yaw: 0.0                               # 初始配准 yaw 猜测，单位度
+      method: "ICP"                            # 初始配准方法：ICP 或 Fusion
+      score_threshold: 0.5                     # 初始配准接受的最大 fitness score
+      scan_voxel_size: 0.3                     # 初始配准输入点云体素大小，单位米
+      accumulate_frames: 1                     # 初始配准前累计的 LiDAR 帧数
+      max_attempts: 3                          # 初始配准最大自动尝试次数，超过后等待重启服务
+      ICP:
+        max_correspondence_distance: 1.0       # ICP 最大对应点距离，单位米
+        maximum_iterations: 100                 # ICP 最大迭代次数
+        transformation_epsilon: 1e-6            # ICP 位姿变换收敛阈值
+        euclidean_fitness_epsilon: 1e-6         # ICP fitness 收敛阈值
+        ransac_iterations: 100                  # ICP RANSAC 迭代次数，0 表示关闭 RANSAC
+      Fusion:
+        ndt_coarse_matching_threads: 6          # NDT 粗配准线程数
+        early_exit_score_threshold: 0.038       # NDT score 低于该值时提前接受结果
+        ndt_resolution: 1.0                     # NDT 栅格分辨率，单位米
+        ndt_transformation_epsilon: 1e-2        # NDT 位姿变换收敛阈值
+
+    laserscan:
+      enable: false                            # 是否将点云投影为 LaserScan
+      min_height: -0.25                       # LaserScan 使用的最小高度，单位米
+      max_height: 1.0                          # LaserScan 使用的最大高度，单位米
+      angle_min: -3.1415                       # 最小扫描角，单位弧度
+      angle_max: 3.1415                        # 最大扫描角，单位弧度
+      angle_increment: 0.017                   # 扫描角分辨率，单位弧度
+      scan_time: 0.1                          # LaserScan 扫描周期，单位秒
+      range_min: 0.1                           # 最小有效距离，单位米
+      range_max: 4.0                           # 最大有效距离，单位米
+      use_inf: false                           # 无回波位置是否发布 infinity
+      inf_epsilon: 1.0                         # 不使用 infinity 时的无回波距离偏移，单位米
+
+    init_state_cov:
+        position: [1.0, 1.0, 1.0]              # 初始位置误差协方差对角值
+        rotation: [1.0, 1.0, 1.0]              # 初始姿态误差协方差对角值
+        velocity: [1.0, 1.0, 1.0]              # 初始速度误差协方差对角值
+        extrinsic_R_L_I: [0.00001, 0.00001, 0.00001] # 初始外参旋转误差协方差
+        extrinsic_T_L_I: [0.00001, 0.00001, 0.00001] # 初始外参平移误差协方差
+        bg: [0.0001, 0.0001, 0.0001]            # 初始陀螺仪偏置误差协方差
+        ba: [0.0001, 0.0001, 0.0001]            # 初始加速度计偏置误差协方差
+        gravity: [0.00001, 0.00001]             # 初始重力方向误差协方差
+
+    publish:
+      path_publish_en: true                     # 是否发布轨迹 path
+      scan_publish_en: true                     # 是否发布点云；关闭可减少带宽和日志/可视化负载
+      dense_publish_en: false                   # 是否发布稠密世界坐标系点云
+      scan_bodyframe_pub_en: true               # 是否发布 IMU/body 坐标系点云
+      scan_effect_pub_en: true                  # 是否发布参与匹配的有效点云
+
+    pcd_save:
+      # Dense scan for visualization or other downstream tasks
+      pcd_save_en: false                        # 是否保存在线点云到 PCD
+      # How many LiDAR frames saved in each pcd file
+      # -1: all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames
+      interval: -1                              # 每个 PCD 文件包含的帧数，-1 表示全部写入一个文件
+      # Sparse map for localization
+      prior_map_save_en: true                   # 是否保存用于重定位的稀疏先验地图
+
+    feature_extract_enable: false               # 是否启用特征提取
+    point_filter_num: 3                         # 点云预处理时的点抽样间隔
+    max_iteration: 3                            # LiDAR IEKF 最大迭代次数
+    filter_size_surf: 0.4                       # 当前扫描体素降采样大小，单位米
+    filter_size_map: 0.4                        # 先验地图体素降采样大小，单位米
+    cube_side_length: 1000                      # 局部地图立方体边长，单位米
+
+    ivox_grid_resolution: 0.4                   # iVox 栅格分辨率，单位米
+    ivox_nearby_type: 18                        # iVox 邻域类型：0、6、18 或 26
+    esti_plane_threshold: 0.1                   # 平面拟合阈值，单位米
+
+laser_PGO:
+  ros__parameters:
+    PGO:
+      save_directory: "data/PGO_output/"       # PGO 输出目录
+      rebuild: false                            # 是否从保存的关键帧数据重建并重新优化
+      odometry_topic: "/odometry_horizon"      # PGO 使用的里程计话题
+      keyframe_meter_gap: 1.0                   # 关键帧最小平移间隔，单位米
+      keyframe_deg_gap: 30.0                   # 关键帧最小旋转间隔，单位度
+      historyKeyframeSearchRadius: 20.0        # 回环候选搜索半径，单位米
+      historyKeyframeSearchTimeDiff: 60.0      # 回环候选最小时间间隔，单位秒
+      historyKeyframeSearchNum: 10              # 每个关键帧最多搜索的回环候选数
+      loopFitnessScoreThreshold: 0.1            # ICP 回环接受的最大 fitness score
+      loopClosureFrequency: 5.0                 # 回环检测频率，单位 Hz
+      graphUpdateFrequency: 20.0                # 因子图更新频率，单位 Hz
+      filter_size_scan: 0.2                     # PGO 输入扫描体素大小，单位米
+      filter_size_nearby_map: 0.2               # 回环局部地图体素大小，单位米
+      filter_size_output_map: 0.4               # PGO 输出地图体素大小，单位米
+      output_local_x_filter_en: false           # 是否按局部坐标 x 过滤输出点
+      output_local_x_min: 0.0                   # 局部 x 小于该值的点将被过滤，单位米
+      deduplication_meter_gap: 1.0              # 输出关键帧去重的最小平移间隔，单位米
+      deduplication_deg_gap: 30.0               # 输出关键帧去重的最小旋转间隔，单位度
+      offline_reoptimization:
+        enable: false                         # 是否启用离线独立重优化
+        iterations: 1                         # 离线重优化迭代轮数
+        threads: 12                            # 离线重优化并行线程数
+        search_radius: 20.0                    # 每帧搜索邻近关键帧的空间半径，单位米
+        max_neighbors: 10                      # 每帧最多保留的邻居数量
+        neighbor_window: 5                     # 候选邻居前后扩展的关键帧窗口大小
+        min_time_gap: 60.0                     # 邻居与当前帧的最小时间间隔，单位秒
+        prefer_farthest_time: true              # 是否优先选择时间间隔更大的邻居
+        score_threshold: 0.5                    # NDT 配准接受的最大 score
+        max_translation_correction: 30.0        # 单个 peer 允许的最大平移修正，单位米
+        max_rotation_correction: 100.0          # 单个 peer 允许的最大旋转修正，单位度
+        translation_sigma: 0.1                  # peer 平移约束标准差，单位米
+        rotation_sigma: 0.1                     # peer 旋转约束标准差，单位弧度
+        ndt_resolution: 1.0                     # NDT 分辨率，单位米
+        ndt_step_size: 1.0                      # NDT 优化步长
+        ndt_transformation_epsilon: 0.001       # NDT 变换收敛阈值
+        ndt_max_iterations: 100                 # NDT 最大迭代次数
+
+    gridmap:
+      save_en: false                            # 是否输出 2D 栅格地图
+      resolution: 0.05                         # 栅格分辨率，单位米
+      map_min_z: 0.0                            # 栅格地图使用的最小高度，单位米
+      map_max_z: 1.2                            # 栅格地图使用的最大高度，单位米

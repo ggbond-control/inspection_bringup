@@ -1,0 +1,145 @@
+laser_mapping:
+  ros__parameters:
+    common:
+      lid_topic: "/livox/lidar"
+      imu_topic: "/imu/data"
+      # ONLY turn on when external time synchronization is really not possible
+      time_sync_en: false
+
+    preprocess:
+      # 1: Livox Mid-360  2: Velodyne LiDAR  3: Ouster LiDAR
+      lidar_type: 1
+      blind: 0.1
+      self_box_filter_en: true
+      self_box_half_size: [0.65, 0.35, 0.4]  # 以雷达坐标原点为中心的半尺寸 [x, y, z]，开启后会滤除盒内点
+      time_scale: 0.001
+
+    mapping:
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      extrinsic_est_en: false
+      extrinsic_T: [ 0.0, 0.0, 0.0 ]
+      extrinsic_R: [ 1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0 ]
+
+    localization:
+      map_update_en: false
+
+    initial_alignment:
+      position: [0.0, 0.0, 0.0]
+      yaw: 0.0
+      method: "ICP"  # Options: ICP, Fusion
+      score_threshold: 0.08
+      scan_voxel_size: 0.3
+      accumulate_frames: 1
+      max_attempts: 3
+      ICP:
+        max_correspondence_distance: 1.0
+        maximum_iterations: 100
+        transformation_epsilon: 1e-6
+        euclidean_fitness_epsilon: 1e-6
+        ransac_iterations: 100
+      Fusion:
+        ndt_coarse_matching_threads: 6      # ndt_omp NumThreads
+        early_exit_score_threshold: 0.038
+        ndt_resolution: 1.0
+        ndt_transformation_epsilon: 1e-2
+
+    laserscan:
+      enable: false
+      min_height: -0.25
+      max_height: 1.0
+      angle_min: -3.1415
+      angle_max: 3.1415
+      angle_increment: 0.017
+      scan_time: 0.1
+      range_min: 0.1
+      range_max: 4.0
+      use_inf: false
+      inf_epsilon: 1.0
+
+    init_state_cov:
+        position: [1.0, 1.0, 1.0]
+        rotation: [1.0, 1.0, 1.0]
+        velocity: [1.0, 1.0, 1.0]
+        extrinsic_R_L_I: [0.00001, 0.00001, 0.00001]
+        extrinsic_T_L_I: [0.00001, 0.00001, 0.00001]
+        bg: [0.0001, 0.0001, 0.0001]
+        ba: [0.0001, 0.0001, 0.0001]
+        gravity: [0.00001, 0.00001]
+
+    publish:
+      path_publish_en: true
+      scan_publish_en: true           # false: close all the point cloud output
+      dense_publish_en: false         # false: low down the points number in a global-frame point clouds scan
+      scan_bodyframe_pub_en: true     # true:  output the point cloud scans in IMU-body-frame
+      scan_effect_pub_en: true        # true:  publish the pointscloud of effect point
+
+    pcd_save:
+      # Dense scan for visualization or other downstream tasks
+      pcd_save_en: false
+      # How many LiDAR frames saved in each pcd file
+      # -1: all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames
+      interval: -1
+      # Sparse map for localization
+      prior_map_save_en: true
+
+    feature_extract_enable: false
+    point_filter_num: 3
+    max_iteration: 3
+    filter_size_surf: 0.4
+    filter_size_map: 0.4
+    cube_side_length: 1000
+
+    ivox_grid_resolution: 0.4         # default = 0.2
+    ivox_nearby_type: 18              # 6, 18, 26
+    esti_plane_threshold: 0.1         # default = 0.1
+
+laser_PGO:
+  ros__parameters:
+    PGO:
+      save_directory: "data/PGO_output/"
+      rebuild: false
+      odometry_topic: "/odometry_horizon"
+      keyframe_meter_gap: 1.0
+      keyframe_deg_gap: 30.0
+      historyKeyframeSearchRadius: 20.0
+      historyKeyframeSearchTimeDiff: 60.0
+      historyKeyframeSearchNum: 10
+      loopFitnessScoreThreshold: 0.1
+      loopClosureFrequency: 5.0
+      graphUpdateFrequency: 20.0
+      filter_size_scan: 0.2
+      filter_size_nearby_map: 0.2
+      filter_size_output_map: 0.4
+      output_local_x_filter_en: false
+      output_local_x_min: 0.0
+      deduplication_meter_gap: 1.0
+      deduplication_deg_gap: 30.0
+      offline_reoptimization:
+        enable: false
+        iterations: 1
+        threads: 12
+        search_radius: 20.0
+        max_neighbors: 10
+        neighbor_window: 5
+        min_time_gap: 60.0
+        prefer_farthest_time: true
+        score_threshold: 0.5
+        max_translation_correction: 30.0
+        max_rotation_correction: 100.0
+        translation_sigma: 0.1
+        rotation_sigma: 0.1
+        ndt_resolution: 1.0
+        ndt_step_size: 1.0
+        ndt_transformation_epsilon: 0.001
+        ndt_max_iterations: 100
+
+    gridmap:
+      save_en: false
+      resolution: 0.05
+      map_min_z: 0.0
+      map_max_z: 1.2

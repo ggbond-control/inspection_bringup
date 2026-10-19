@@ -1,8 +1,9 @@
 nav_bridge:
   robot_type: x30
 slam:
-  config: mid360.yaml
+  config: "${INSPECTION_CONFIG_DIR}/navigation/faster_lio/mid360.yaml"
 local_planner:
-  config: x30.yaml
+  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/x30.yaml"
 global_planner:
   params_file: new_local
+  params_path: "${INSPECTION_CONFIG_DIR}/navigation/multi_map_nav/new_local.yaml"

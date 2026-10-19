@@ -218,6 +218,14 @@ class NavigationSupervisor(Node):
                 results.append(self.result(True, f"accepted {parameter.name}"))
             except Exception as exc:
                 results.append(self.result(False, str(exc)))
+        if ('global_planner.params_file' in provided_paths and
+                'global_planner.params_path' not in provided_paths):
+            config.get('global_planner', {}).pop('params_path', None)
+        previous = self.active_config or self.base_config
+        if ('nav_bridge.robot_type' in provided_paths and
+                'nav_bridge.params_file' not in provided_paths and
+                config['nav_bridge']['robot_type'] != previous['nav_bridge'].get('robot_type', 'x30')):
+            config['nav_bridge'].pop('params_file', None)
         return resolve_files(config, "navigation", "navigation request"), provided_paths, results
 
     def target_state(self, config):
