@@ -108,6 +108,7 @@ class Configuration(unittest.TestCase):
         expected = cfg.read_yaml(ROOT / 'store/d1m_zenoh/system_d1m.yaml')
         expected['mqtt']['sn'] = 'D1M-002'
         expected['mission_execution_agent']['robot_id'] = 'D1M-002'
+        expected['task_hub']['obstacle_snapshot_enabled'] = False
         self.assertEqual(cfg.load_config('system'), expected)
 
     def test_d1m_navigation_matches_stored_sequences_and_inherits_defaults(self):

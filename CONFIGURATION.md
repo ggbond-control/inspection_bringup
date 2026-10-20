@@ -369,3 +369,10 @@ python3 test/service_shutdown_test.py
 使用独立 ROS domain 和本机发现范围的充电服务 mock，不连接机器人。
 退出回归测试使用独立 ROS domain 和模拟进程，覆盖重复信号、超时升级、残留
 子进程清理与节点就绪查询。
+# 障碍取证开关
+
+`system.yaml` 的 `task_hub.obstacle_snapshot_enabled` 默认 `false`。
+也可在 `robot.yaml` 的 `system.task_hub.obstacle_snapshot_enabled` 覆盖。
+设为 `true` 后，TaskHub 对正在巡检中的 planner 避障开始事件异步抓拍一张可见光照片，
+随障碍文字记录存入现有端侧巡检报告；关闭时仍记录文字。启动时读取，修改后需重启。
+需启用现有云台拍照节点、巡检报告及照片落盘；不改变导航行为或自动转向云台。

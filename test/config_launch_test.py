@@ -274,6 +274,19 @@ class LaunchConfiguration(unittest.TestCase):
         gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
         self.assertEqual(gimbal['gimbal_params_file'], self.package_file('sensor_gimbal', 'stub_params.yaml'))
 
+    def test_obstacle_snapshot_switch_is_forwarded_as_bool(self):
+        for enabled in (False, True):
+            self.robot['system']['task_hub'] = {'obstacle_snapshot_enabled': enabled}
+            self.write_robot()
+            context = context_for(system)
+            with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                    patch.object(system, 'Node', wraps=system.Node) as factory:
+                system.launch_setup(context)
+            node = next(call.kwargs for call in factory.call_args_list
+                        if call.kwargs.get('name') == 'task_hub_node')
+            params = evaluate_parameters(context, normalize_parameters(node['parameters']))
+            self.assertIs(params[0]['obstacle_snapshot_enabled'], enabled)
+
     def test_system_and_standalone_platform_receive_same_identity(self):
         for module in (system, platform):
             context = context_for(module)
