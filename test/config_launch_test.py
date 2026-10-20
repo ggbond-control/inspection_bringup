@@ -287,6 +287,20 @@ class LaunchConfiguration(unittest.TestCase):
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
             self.assertIs(params[0]['obstacle_snapshot_enabled'], enabled)
 
+    def test_route_start_preparation_is_only_enabled_for_d1m(self):
+        for model, expected in [('x30', ''), ('d1m', '/nav_bridge_node/ready')]:
+            with self.subTest(model=model):
+                self.robot['model'] = model
+                self.write_robot()
+                context = context_for(system)
+                with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                        patch.object(system, 'Node', wraps=system.Node) as factory:
+                    system.launch_setup(context)
+                node = next(call.kwargs for call in factory.call_args_list
+                            if call.kwargs.get('name') == 'task_hub_node')
+                params = evaluate_parameters(context, normalize_parameters(node['parameters']))
+                self.assertEqual(params[0]['route_start_prepare_service_name'], expected)
+
     def test_system_and_standalone_platform_receive_same_identity(self):
         for module in (system, platform):
             context = context_for(module)

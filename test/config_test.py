@@ -109,6 +109,8 @@ class Configuration(unittest.TestCase):
         expected['mqtt']['sn'] = 'D1M-002'
         expected['mission_execution_agent']['robot_id'] = 'D1M-002'
         expected['task_hub']['obstacle_snapshot_enabled'] = False
+        expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
+        expected['task_hub']['trigger_service_timeout_seconds'] = 30.0
         self.assertEqual(cfg.load_config('system'), expected)
 
     def test_d1m_navigation_matches_stored_sequences_and_inherits_defaults(self):

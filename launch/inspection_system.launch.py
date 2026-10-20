@@ -395,6 +395,11 @@ def generate_launch_description():
             description="Trigger service name for lie task.",
         ),
         DeclareLaunchArgument(
+            "route_start_prepare_service_name",
+            default_value="",
+            description="Trigger service before route navigation; configured for D1 ready.",
+        ),
+        DeclareLaunchArgument(
             "set_gait_service_name",
             default_value="",
             description="SetParameters service name for set_gait task.",
@@ -630,6 +635,11 @@ def launch_setup(context):
             "task_hub",
             "set_gait_service_name",
             "/nav_bridge_node/set_gait",
+        ),
+        "route_start_prepare_service_name": ParameterValue(
+            override_or_config(context, "route_start_prepare_service_name", config,
+                               "task_hub", "route_start_prepare_service_name", ""),
+            value_type=str,
         ),
         "navigation_action_name": override_or_config(
             context,

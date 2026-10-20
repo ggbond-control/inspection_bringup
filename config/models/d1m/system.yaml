@@ -1,4 +1,9 @@
 # Only shared D1M differences belong here; individual identity is robot.yaml.
+task_hub:
+  # Each new route confirms MOUNTAIN before navigation (including pre-charge).
+  route_start_prepare_service_name: /nav_bridge_node/ready
+  # D1 ready waits for standing and gait feedback from the SDK.
+  trigger_service_timeout_seconds: 30.0
 charge:
   # 90 s pile connection + 60 s charge confirmation + SDK command margin.
   charge_command_timeout_sec: 120.0
