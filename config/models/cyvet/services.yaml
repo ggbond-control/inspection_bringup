@@ -1,0 +1,8 @@
+# Other settings inherit config/services.yaml. Keep launch paths automatic.
+service:
+  environment:
+    ROS_DOMAIN_ID: "81"
+    RUSTICL_ENABLE: panfrost
+
+hardware:
+  enabled_on_boot: false

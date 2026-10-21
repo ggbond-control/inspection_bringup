@@ -2,7 +2,6 @@
 Description=Inspection System Bringup
 After=network-online.target inspection-navigation.service @HARDWARE_SERVICE@
 Wants=network-online.target inspection-navigation.service
-Requires=@HARDWARE_SERVICE@
 
 [Service]
 Type=simple

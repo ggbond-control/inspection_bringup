@@ -34,18 +34,37 @@ cp config/robot.example.yaml config/robot.yaml
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 ```
 
 第二台 D1M 只修改 `robot_id`；X30 使用 `model: x30`。`robot_id` 覆盖公共配置
 中的 `mqtt.sn` 和 `mission_execution_agent.robot_id`。有意使用不同身份时，
 可以在本机 `system` 字段中分别覆盖。
 
+Cyvet 使用以下本机身份配置（另一台改为 CYVET-B）：
+
+```yaml
+model: cyvet
+robot_id: CYVET-A
+```
+
+`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块，开启任务执行和集群选主，
+集群列表包含 X30-A、X30-B、CYVET-A、CYVET-B。任务中枢的充电退出地址保留
+部署值 `/inspection_charge_executor/exit_charge`，但 charge 模块关闭，不会由本启动
+提供该服务；Cyvet 导航也关闭充电预检查。没有外部实现时，不应执行充电任务。
+`auto_execute: true` 继承公共值，表示自动执行任务。
+`models/cyvet/services.yaml` 选择 ROS_DOMAIN_ID=81、RUSTICL_ENABLE=panfrost，
+并关闭 hardware 的开机自启；现有已运行的 hardware 服务不会仅因该字段立即停止。
+公共服务配置中的 workspace、日志、动态库路径及其他环境值继续继承。
+不要在型号层重新填写固定 navigate_config_path/system_config_path，否则会绕过型号加载。
+Cyvet 定位调用超时按部署值设为 60 秒；若初始化超过该时间，调用方可能先超时，
+导航启动不会因此自动取消。
+
 需要单机差异时，直接写在同一个文件中：
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 
 system:
   mqtt:
@@ -467,7 +486,7 @@ scripts/manage_inspection_services.sh render
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 services:
   service:
     environment:
