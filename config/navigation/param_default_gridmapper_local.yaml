@@ -1,3 +1,4 @@
+# Complete local mapping baseline; optional model files override differences.
 gridmapper_node:
   ros__parameters:
     # ==============================
@@ -54,9 +55,9 @@ gridmapper_node:
     step_threshold: 0.2          # Max acceptable step height (meters)
     instant_traversability_penalty: 0.2 # Penalty for blind zone obstacles
     min_points_for_analysis: 3   # Min points for plane fitting (>=3)
-    
+
     # GPU / Advanced Processing
-    enable_ground_filling: false 
+    enable_ground_filling: false
     filling_iterations: 2
     filling_penalty: 0.5
     fuse_external_map_en: true           # Fuse /map into /terrain_map in LOCAL mode for blind spots
@@ -84,7 +85,7 @@ gridmapper_node:
     height_array_range_x: 1.0    # Forward/Backward range (+/- meters)
     height_array_range_y: 0.5    # Left/Right range (+/- meters)
     height_array_resolution: 0.1 # Resolution for height array sampling
-    
+
     # ==============================
     # 7. Control Input Logic
     # ==============================

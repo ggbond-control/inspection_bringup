@@ -10,13 +10,16 @@ robot_id: D1M-A
 #     username: ""
 #     password: ""
 # navigation:
+#   # Cyvet only: select MID360 instead of its default MID360s JSON.
+#   livox:
+#     config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_livox_ros_driver2_mid360.json"
 #   local_planner:
 #     parameters:
 #       localPlanner:
 #         ros__parameters:
 #           motionBlockNoPathTimeout: 8.0  # existing D1M parameter; only this field overrides
 #   terrain:
-#     params_file: gridmapper_local.yaml  # gridmapper/config/; existing default file
+#     config: gridmapper_local.yaml  # gridmapper/config/; existing default file
 # External calibration files must use an absolute path to an existing file.
 # services:
 #   service:

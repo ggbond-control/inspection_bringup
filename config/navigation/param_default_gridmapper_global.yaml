@@ -1,11 +1,12 @@
+# Complete global mapping baseline; model files override only their differences.
 gridmapper_node:
   ros__parameters:
     # ==============================
     # 1. Map Configuration
     # ==============================
     local_map_size: 15.0          # Size of local map implementation (meters)
-    global_map_width: 100.0       # Width of global map (meters)
-    global_map_height: 100.0      # Height of global map (meters)
+    global_map_width: 500.0       # Width of global map (meters)
+    global_map_height: 500.0      # Height of global map (meters)
     global_map_x_bias: 0.0      # Initial X offset for global map center
     global_map_y_bias: 0.0       # Initial Y offset for global map center
     resolution: 0.1             # Map resolution (meters)
@@ -54,9 +55,9 @@ gridmapper_node:
     step_threshold: 0.2          # Max acceptable step height (meters)
     instant_traversability_penalty: 0.2 # Penalty for blind zone obstacles
     min_points_for_analysis: 3   # Min points for plane fitting (>=3)
-    
+
     # GPU / Advanced Processing
-    enable_ground_filling: false 
+    enable_ground_filling: false
     filling_iterations: 2
     filling_penalty: 0.5
     fuse_external_map_en: false  # Fuse /map into /terrain_map in LOCAL mode for blind spots
@@ -78,7 +79,7 @@ gridmapper_node:
     height_array_range_x: 1.0    # Forward/Backward range (+/- meters)
     height_array_range_y: 0.5    # Left/Right range (+/- meters)
     height_array_resolution: 0.1 # Resolution for height array sampling
-    
+
     # ==============================
     # 7. Control Input Logic
     # ==============================

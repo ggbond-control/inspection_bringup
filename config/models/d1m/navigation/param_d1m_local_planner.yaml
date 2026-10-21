@@ -1,0 +1,55 @@
+# D1M motion models and differences from the X30 default.
+/**:
+  ros__parameters:
+    odomTimestampCheckEn: false  # 关闭时间戳年龄检查，保留接收超时和乱序检查
+    initialModel: "offroad"  # 启动时使用的运动模型名称
+    flat:
+      maxSpeed: 1.2  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.4  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 0.8  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 1.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 0.8  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 1.8  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.2  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 1.8  # 模型偏航最大角减速度（rad/s2）
+    offroad:
+      maxSpeed: 2.2  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.5  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.5  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 1.2  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.2  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 6.6  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.2  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 2.5  # 模型偏航最大角减速度（rad/s2）
+
+localPlanner:
+  ros__parameters:
+    adjacentRange: 4.0  # 局部候选路径与障碍评估范围（m）
+    dirWeight: 0.35  # 候选路径朝向代价权重
+    defPathScale: 1.5  # 默认候选路径尺度
+    motionBlockNoPathTimeout: 8.0  # 持续没有局部路径时判定阻塞的时长（s）
+    correspondencesFile: "correspondences_d1m.txt"  # 地形体素到候选路径对应关系文件名
+    scoreAdvantage: 1.2  # 与全局路径一致候选的评分优势系数
+    finalGaitEnterDist: 1.2  # 进入最终目标步态的距离阈值（m）
+    finalGaitExitDist: 1.6  # 退出最终目标步态回到巡航的距离阈值（m）
+    gaitRequestCooldown: 4.0  # 两次步态切换请求的最小间隔（s）
+    gaitConfirmTimeout: 2.0  # 等待步态切换确认的超时（s）
+
+pathFollower:
+  ros__parameters:
+    tracking_mode: "turn_preferred"  # 普通纠偏优先使用航向
+    turn_lateral_weight: 0.5  # 普通路径纠偏的横向权重；侧向绕障和终点自动恢复 omni
+    turn_tangent_angle_limit_deg: 60.0  # 路径切线相对车头超过此角度时保留完整横移
+    turn_correction_angle_limit_deg: 30.0  # 普通纠偏角过大时恢复 omni，保留避障横移
+    turn_heading_offset_limit_deg: 15.0  # turn 对 omni 航向参考的最大附加偏角
+    turn_lateral_override_timeout: 0.5  # 外部横移优先请求的有效期（s）
+    lookAheadDis: 1.5  # 固定前视距离（m）
+    stopDisThre: 0.1  # 路径末端停车距离阈值（m）
+    slowdownDisThre: 1.2  # 距路径末端开始降低前向速度的距离（m）
+    lookaheadTime: 2.5  # 按当前速度计算动态前视距离的时间（s）
+    maxLookaheadDis: 2.0  # 动态前视距离上限（m）
+    curvatureDecelGain: 3.5  # 曲率导致前向减速的增益
+    lateralGain: 1.4  # 横向误差到横向速度的比例增益
+    approveYawDeg: 5.0  # 最终位置到达后允许结束的偏航误差（deg）

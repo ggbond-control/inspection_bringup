@@ -35,13 +35,13 @@ from bringup_config import (
 # each child package's existing defaults and old deployments.
 MODULE_ARGUMENTS = (
     ("nav_bridge_robot_type", "nav_bridge", "robot_type", "robot_type"),
-    ("nav_bridge_params_file", "nav_bridge", "params_file", "params_file"),
+    ("nav_bridge_config", "nav_bridge", "config", "params_file"),
     ("nav_bridge_cyclonedds_config", "nav_bridge", "cyclonedds_config", "cyclonedds_config"),
-    ("livox_user_config_path", "livox", "user_config_path", "user_config_path"),
+    ("livox_config", "livox", "config", "user_config_path"),
     ("slam_config", "slam", "config", "config"),
-    ("terrain_params_file", "terrain", "params_file", "params_file"),
+    ("terrain_config", "terrain", "config", "params_file"),
     ("local_planner_config", "local_planner", "config", "config"),
-    ("global_params_path", "global_planner", "params_path", "params_path"),
+    ("global_config", "global_planner", "config", "params_path"),
 )
 
 
@@ -63,7 +63,6 @@ def apply_launch_overrides(context, config):
     specs = [(name, section + "." + key, str) for name, section, key, _ in MODULE_ARGUMENTS]
     specs += [
         ("livox_launch_file", "livox.launch_file", str),
-        ("livox_model", "livox.model", str),
         ("navigation_start_delay_seconds", "bringup.start_delay_seconds", float),
         ("nav_bridge_wait_topics", "nav_bridge.readiness.topics", split_list_text),
         ("nav_bridge_stand_service", "nav_bridge.readiness.stand_service", str),
@@ -82,7 +81,6 @@ def apply_launch_overrides(context, config):
         ("global_initial_map", "global_planner.initial_map", str),
         ("global_multi_map_dir", "global_planner.multi_map_dir", str),
         ("global_use_fake_cmdvel", "global_planner.use_fake_cmdvel", as_bool),
-        ("global_params_file", "global_planner.params_file", str),
         ("global_waypoint_dwell_time", "global_planner.waypoint_dwell_time", float),
         ("global_patrol_loops", "global_planner.patrol_loops", int),
     ]
@@ -104,12 +102,8 @@ def apply_launch_overrides(context, config):
         config["launch_module_switches"] = switches
     requested_robot_type = LaunchConfiguration('nav_bridge_robot_type').perform(context)
     if (requested_robot_type and requested_robot_type != old_robot_type and
-            not LaunchConfiguration('nav_bridge_params_file').perform(context)):
-        config.get('nav_bridge', {}).pop('params_file', None)
-    # Preserve the legacy filename selector when the caller explicitly uses it.
-    if (LaunchConfiguration('global_params_file').perform(context) and
-            not LaunchConfiguration('global_params_path').perform(context)):
-        config.get('global_planner', {}).pop('params_path', None)
+            not LaunchConfiguration('nav_bridge_config').perform(context)):
+        config.get('nav_bridge', {}).pop('config', None)
     return resolve_files(config, "navigation", "navigation launch arguments")
 
 
@@ -816,11 +810,6 @@ def generate_launch_description():
             description="Timeout for the nav_bridge stand service call.",
         ),
         DeclareLaunchArgument("enable_livox", default_value="", description="Start MID360 Livox driver."),
-        DeclareLaunchArgument(
-            "livox_model",
-            default_value="",
-            description="Livox model passed to msg_multi_MID360_launch.py: mid360 or mid360s.",
-        ),
         DeclareLaunchArgument("enable_slam", default_value="", description="Start faster_lio localization."),
         DeclareLaunchArgument("enable_terrain", default_value="", description="Start gridmapper local terrain."),
         DeclareLaunchArgument("enable_local_planner", default_value="", description="Start local planner."),
@@ -858,11 +847,6 @@ def generate_launch_description():
             "global_use_fake_cmdvel",
             default_value="",
             description="Use cmd_vel_fake in multi-map navigation.",
-        ),
-        DeclareLaunchArgument(
-            "global_params_file",
-            default_value="",
-            description="Multi-map params file name without extension.",
         ),
         DeclareLaunchArgument(
             "global_waypoint_dwell_time",
@@ -989,12 +973,7 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "livox_ros_driver2",
         str(config_value(config, "livox", "launch_file", "msg_multi_MID360_launch.py")),
         "true",
-        {
-            **optional_module_arguments(context, config, "livox", use_launch_overrides),
-            "model": override_or_config(
-                context, "livox_model", config, "livox", "model", "mid360", use_launch_overrides
-            ),
-        },
+        optional_module_arguments(context, config, "livox", use_launch_overrides),
     )
     livox_enabled = sequence_module_enabled(
         context, "enable_livox", sequence, "livox", use_launch_overrides
@@ -1098,6 +1077,9 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "true",
         {
             **optional_module_arguments(context, config, "global_planner", use_launch_overrides),
+            "use_sim_time": as_bool_text(
+                config_value(config, "global_planner", "use_sim_time", False)
+            ),
             "multi_map_dir": os.path.expanduser(
                 os.path.expandvars(
                     override_or_config(
@@ -1138,15 +1120,6 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
                     True,
                     use_launch_overrides,
                 )
-            ),
-            "params_file": override_or_config(
-                context,
-                "global_params_file",
-                config,
-                "global_planner",
-                "params_file",
-                "new_local",
-                use_launch_overrides,
             ),
             "patrol_loops": str(
                 override_or_config_typed(

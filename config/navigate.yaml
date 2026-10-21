@@ -55,12 +55,12 @@ bringup:
   wait_timeout_seconds: 10.0
 
 nav_bridge:
-  params_file: "${INSPECTION_CONFIG_DIR}/navigation/nav_bridge/x30_params.yaml"
+  config: ""
   readiness:
     type: nav_bridge
     topics:
       - /battery/level
-    topic_timeout_seconds: 10.0
+    topic_timeout_seconds: 15.0
     stand_service: /nav_bridge_node/stand
     stand_timeout_seconds: 30.0
     charge_precheck: true
@@ -72,9 +72,7 @@ nav_bridge:
     charge_poll_interval_seconds: 0.5
 
 livox:
-  # Leave unset to retain the driver's model-dependent default (mid360/mid360s).
-  # An explicit ${INSPECTION_CONFIG_DIR}/navigation/... JSON uses the same layers.
-  model: mid360
+  config: ""
   readiness:
     type: topics
     topics:
@@ -82,7 +80,7 @@ livox:
     timeout_seconds: 10.0
 
 slam:
-  config: "${INSPECTION_CONFIG_DIR}/navigation/faster_lio/mid360.yaml"
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_faster_lio.yaml"
   relocal: true
   prior_dir: ""
   rviz: false
@@ -99,7 +97,7 @@ slam:
     release_control_timeout_seconds: 5.0
 
 terrain:
-  params_file: "${INSPECTION_CONFIG_DIR}/navigation/gridmapper/gridmapper_local.yaml"
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_gridmapper_local.yaml"
   rviz: false
   use_gpu: true
   readiness:
@@ -109,7 +107,7 @@ terrain:
     timeout_seconds: 10.0
 
 local_planner:
-  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/x30.yaml"
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_local_planner.yaml"
   use_sim_time: false
   start_rviz: false
   readiness:
@@ -120,11 +118,11 @@ local_planner:
     timeout_seconds: 10.0
 
 global_planner:
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_multi_map_nav.yaml"
   initial_map: ""
   multi_map_dir: ""
+  use_sim_time: false
   use_fake_cmdvel: true
-  params_file: "new_local"
-  params_path: "${INSPECTION_CONFIG_DIR}/navigation/multi_map_nav/new_local.yaml"
   waypoint_dwell_time: 1.0
   patrol_loops: 1
   readiness:

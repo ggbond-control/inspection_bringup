@@ -1,4 +1,4 @@
-# Smac + safe straightening, for the external local planner.
+# Historical D1M reference: Smac + safe straightening, for the external local planner.
 global_costmap:
   global_costmap:
     ros__parameters:

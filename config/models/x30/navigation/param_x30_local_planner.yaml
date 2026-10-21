@@ -1,0 +1,24 @@
+# X30 motion models; common parameters inherit the X30 default.
+/**:
+  ros__parameters:
+    initialModel: "offroad"  # 启动时使用的运动模型名称
+    flat:
+      maxSpeed: 2.0  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.5  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.0  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 2.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.0  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 2.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 3.5  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.5  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
+    offroad:
+      maxSpeed: 1.2  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.6  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.2  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 1.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.2  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 2.5  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.8  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 2.5  # 模型偏航最大角减速度（rad/s2）

@@ -7,9 +7,32 @@ For model selection and per-robot configuration, see
 [配置与多机器人部署](CONFIGURATION.md). The default launch now reads the shared,
 model, and robot layers when `robot.yaml` exists. An explicit
 `navigate_config_path` continues to load that standalone YAML only.
+Nav bridge uses a complete `models/<model>/navigation/param_<model>_nav_bridge.yaml`
+selected by `nav_bridge.config`, with no shared default parameter file.
+Model launch settings select `robot_type: x30/d1m/cyvet`; per-robot changes use
+`navigation.nav_bridge.parameters` in robot.yaml. The child launch still receives
+`params_file` and accepts `d1_max` as a legacy alias for `d1m`.
+SLAM now uses `config/navigation/param_default_faster_lio.yaml` plus
+`config/models/<model>/navigation/param_<model>_faster_lio.yaml` and optional
+`robot.yaml` inline parameters. The complete default follows X30/Mid360 and
+includes RTK settings with RTK disabled; D1M enables RTK and selects Airy inputs.
+Cyvet currently inherits the Mid360 defaults. Bringup merges these layers into
+one snapshot passed to the existing SLAM launch.
+Multi-map navigation uses `config/navigation/param_default_multi_map_nav.yaml`
+with `config/models/<model>/navigation/param_<model>_multi_map_nav.yaml`.
+X30/Cyvet retain the original `new_local` settings; D1M retains `straight_local`,
+including its own planner plugin and `straightening` parameters. The merged
+snapshot is selected by `global_planner.config` and passed to the child launch as `params_path`.
+Local planning uses `config/navigation/param_default_local_planner.yaml` plus
+`param_<model>_local_planner.yaml` in each model directory. The complete `flat`,
+`offroad`, and `initialModel` settings live only in model files. Shared defaults
+follow the X30 baseline with omni tracking and `odomTimestampCheckEn: true`.
+D1M overrides timestamp checking to false and alone defines `turn_preferred` and `turn_*`
+parameters. Cyvet geometry, motion models, and tracking settings follow its
+deployed configuration.
 Child parameter file paths use the owning ROS package's configuration directory
 for all relative paths (including `./`); absolute paths select external files.
-For example, `terrain.params_file: gridmapper_local.yaml` selects the existing
+For example, `terrain.config: gridmapper_local.yaml` selects the existing
 `gridmapper/config/gridmapper_local.yaml`. See the linked guide for each package.
 
 The navigation stack is intentionally decoupled from
@@ -234,7 +257,6 @@ Call the service to apply runtime overrides and start the stack:
 ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
   {name: 'mode', value: {type: 4, string_value: 'nav'}},
-  {name: 'livox.model', value: {type: 4, string_value: 'mid360'}},
   {name: 'slam.prior_dir', value: {type: 4, string_value: '/home/cat/Workspace/Maps/company2'}},
   {name: 'global_planner.initial_map', value: {type: 4, string_value: 'map_000'}}
 ]}"
@@ -410,7 +432,7 @@ slam:
 
 global_planner:
   initial_map: "map_000"
-  params_file: "new_local"
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_multi_map_nav.yaml"
   use_fake_cmdvel: true
   patrol_loops: 1
 ```
@@ -497,7 +519,7 @@ nav_bridge:
     charge_exit_timeout_seconds: 300.0
 
 livox:
-  model: mid360
+  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2.json"
   readiness:
     type: topics
     topics:
@@ -634,12 +656,17 @@ python3 scripts/wait_for_ready.py localization-init --status-topic /localization
 Use the `topics` subcommand for other modules when node existence is not enough
 and the module must prove that a topic is publishing real data.
 
-`livox.model` is passed to `livox_ros_driver2/msg_multi_MID360_launch.py`:
+`livox.config` selects the complete JSON passed to the driver's `user_config_path`.
+There is no shared default JSON or bringup `livox.model` selector. X30 selects its
+four-lidar configuration; Cyvet defaults to MID360s; D1M starts no Livox driver.
+To select the alternate Cyvet MID360 configuration, override only the file path:
 
 ```yaml
-livox:
-  model: mid360   # multi_MID360_config.json
-  # model: mid360s  # multi_MID360s_config.json
+model: cyvet
+robot_id: CYVET-A
+navigation:
+  livox:
+    config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_livox_ros_driver2_mid360.json"
 ```
 
 Default readiness checks:
@@ -652,7 +679,6 @@ nav_bridge:
       - /battery/level
 
 livox:
-  model: mid360
   readiness:
     type: topics
     topics:
@@ -718,7 +744,6 @@ Examples:
 ros2 launch inspection_bringup navigation.launch.py \
   enable_nav_bridge:=true \
   enable_livox:=false \
-  livox_model:=mid360 \
   slam_prior_dir:=company2 \
   global_initial_map:=map_000 \
   global_multi_map_dir:=~/Workspace/algor_ws/src/gridmapper/data/Output/multi_maps

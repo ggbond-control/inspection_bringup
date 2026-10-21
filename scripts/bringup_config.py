@@ -15,7 +15,6 @@ import yaml
 
 FILENAMES = {"system": "system.yaml", "navigation": "navigate.yaml", "services": "services.yaml"}
 # Relative file paths always use the owning package's configuration directory.
-# global_planner.params_file remains the legacy extensionless selector.
 FILE_FIELDS = {
     "system": {
         ("gimbal", "params_file"): ("sensor_gimbal", "config"),
@@ -24,13 +23,13 @@ FILE_FIELDS = {
         ("sensor_rs485", "params_file"): ("sensor_rs485", "config"),
     },
     "navigation": {
-        ("nav_bridge", "params_file"): ("nav_bridge", "config"),
+        ("nav_bridge", "config"): ("nav_bridge", "config"),
         ("nav_bridge", "cyclonedds_config"): ("nav_bridge", "config"),
-        ("livox", "user_config_path"): ("livox_ros_driver2", "config"),
+        ("livox", "config"): ("livox_ros_driver2", "config"),
         ("slam", "config"): ("faster_lio", "config"),
-        ("terrain", "params_file"): ("gridmapper", "config"),
+        ("terrain", "config"): ("gridmapper", "config"),
         ("local_planner", "config"): ("local_planner", "config"),
-        ("global_planner", "params_path"): ("multi_map_nav", "params"),
+        ("global_planner", "config"): ("multi_map_nav", "params"),
     },
     "services": {
         ("navigation", "launch_args", "navigate_config_path"): ("inspection_bringup", "config"),
@@ -83,15 +82,10 @@ def merge(base, override):
 
 def merge_module_config(base, override, module):
     result = merge(base, override)
-    # Explicit legacy filename selection must not be shadowed by an inherited
-    # full file path. This also applies to robot.yaml overrides.
-    planner = override.get('global_planner', {}) if module == 'navigation' else {}
-    if isinstance(planner, dict) and 'params_file' in planner and 'params_path' not in planner:
-        result.get('global_planner', {}).pop('params_path', None)
     bridge = override.get('nav_bridge', {}) if module == 'navigation' else {}
-    if (isinstance(bridge, dict) and 'robot_type' in bridge and 'params_file' not in bridge
+    if (isinstance(bridge, dict) and 'robot_type' in bridge and 'config' not in bridge
             and bridge['robot_type'] != base.get('nav_bridge', {}).get('robot_type', 'x30')):
-        result.get('nav_bridge', {}).pop('params_file', None)
+        result.get('nav_bridge', {}).pop('config', None)
     return result
 
 
@@ -164,6 +158,13 @@ def parameter_snapshot(value, suffix):
 
 def layered_parameter_file(value, root, model, overrides, origin):
     """Only an explicit root reference opts into managed parameter layers."""
+    for prefix in ('${INSPECTION_CONFIG_DIR}/models/', '$INSPECTION_CONFIG_DIR/models/'):
+        if value.startswith(prefix):
+            relative = Path(value[len(prefix):])
+            if relative.is_absolute() or '..' in relative.parts or relative.suffix not in ('.yaml', '.yml', '.json'):
+                raise ValueError(f'{origin}: invalid model parameter path: {value}')
+            result = read_parameter_file(root / 'models' / relative)
+            return parameter_snapshot(merge(result, overrides), relative.suffix)
     prefix = next((p for p in ('${INSPECTION_CONFIG_DIR}/navigation/',
                               '$INSPECTION_CONFIG_DIR/navigation/')
                    if value.startswith(p)), None)
@@ -182,7 +183,11 @@ def layered_parameter_file(value, root, model, overrides, origin):
     if model:
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', model):
             raise ValueError(f'{origin}: invalid robot model')
-        model_path = root / 'models' / model / 'navigation' / relative
+        model_relative = relative
+        if relative.name.startswith('param_default_'):
+            model_relative = relative.with_name(
+                relative.name.replace('param_default_', f'param_{model}_', 1))
+        model_path = root / 'models' / model / 'navigation' / model_relative
         if model_path.exists():
             result = merge(result, read_parameter_file(model_path))
     return parameter_snapshot(merge(result, overrides), relative.suffix)
@@ -213,7 +218,7 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                     continue
                 if overrides:
                     raise ValueError(f'{origin}: {parts[0]}.parameters requires a managed '
-                                     '${INSPECTION_CONFIG_DIR}/navigation/ file; '
+                                     '${INSPECTION_CONFIG_DIR}/navigation/ or models/ file; '
                                      'standalone paths use complete files')
             cursor[parts[-1]] = file_path(
                 value, package, directory, f"{origin}: {'.'.join(parts)}",
