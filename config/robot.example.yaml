@@ -5,6 +5,9 @@ robot_id: D1M-A
 
 # Optional per-robot overrides; dictionary merge, lists replace.
 # system:
+#   task_hub:
+#     obstacle_snapshot_enabled: false  # 障碍事件与日志总开关，默认关闭
+#     obstacle_photo_enabled: false     # 遇障拍照，需同时开启总开关，默认关闭
 #   mqtt:
 #     host: mqtt.example.com
 #     username: ""

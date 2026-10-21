@@ -889,6 +889,13 @@ def generate_launch_description():
 def launch_setup(context):
     navigate_config_path = LaunchConfiguration("navigate_config_path").perform(context)
     config = apply_launch_overrides(context, load_config(navigate_config_path))
+    # Resolve the shared switch once, before service-mode snapshots are created.
+    # Workers reuse the captured value rather than rereading a changed robot.yaml.
+    planner_config = config.setdefault("local_planner", {})
+    if "obstacle_snapshot_enabled" not in planner_config:
+        system_config = load_bringup_config("system")
+        planner_config["obstacle_snapshot_enabled"] = as_bool(
+            system_config.get("task_hub", {}).get("obstacle_snapshot_enabled", False))
     start_mode = str(config_value(config, "bringup", "start_mode", "immediate")).strip().lower()
     if start_mode == "service":
         state_dir = navigation_state_dir(navigate_config_path or default_navigate_config_path())
@@ -1065,6 +1072,8 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         "true",
         {
             **optional_module_arguments(context, config, "local_planner", use_launch_overrides),
+            "obstacle_snapshot_enabled": as_bool_text(
+                config_value(config, "local_planner", "obstacle_snapshot_enabled", False)),
             "use_sim_time": as_bool_text(
                 override_or_config_bool(
                     context,

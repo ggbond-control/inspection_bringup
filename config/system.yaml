@@ -182,8 +182,10 @@ task_hub:
   inspection_report_enabled: true
   inspection_report_name: "常规巡检"
   inspection_report_copy_local_media: true
-  # 障碍事件始终记文字；开启后额外抓拍一张可见光图片，不阻塞导航。
+  # 避障事件与日志总开关；同时传给 localPlanner 和 TaskHub，不影响实际避障。
   obstacle_snapshot_enabled: false
+  # 遇障额外抓拍一张可见光图片；需要上面的总开关开启。
+  obstacle_photo_enabled: false
   # 保存算法中心返回的结果图片，并复制到巡检报告目录中展示。
   algorithm_result_image_save_enabled: true
   # 算法调用前拍摄的输入图片默认只用于算法，不在巡检报告中重复展示。

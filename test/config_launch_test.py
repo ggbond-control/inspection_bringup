@@ -274,9 +274,11 @@ class LaunchConfiguration(unittest.TestCase):
         gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
         self.assertEqual(gimbal['gimbal_params_file'], self.package_file('sensor_gimbal', 'stub_params.yaml'))
 
-    def test_obstacle_snapshot_switch_is_forwarded_as_bool(self):
-        for enabled in (False, True):
-            self.robot['system']['task_hub'] = {'obstacle_snapshot_enabled': enabled}
+    def test_obstacle_switches_default_off_and_are_forwarded_as_bool(self):
+        for enabled, photo in [(None, None), (False, False), (False, True),
+                               (True, False), (True, True)]:
+            self.robot['system']['task_hub'] = {} if enabled is None else {
+                'obstacle_snapshot_enabled': enabled, 'obstacle_photo_enabled': photo}
             self.write_robot()
             context = context_for(system)
             with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
@@ -285,7 +287,52 @@ class LaunchConfiguration(unittest.TestCase):
             node = next(call.kwargs for call in factory.call_args_list
                         if call.kwargs.get('name') == 'task_hub_node')
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
-            self.assertIs(params[0]['obstacle_snapshot_enabled'], enabled)
+            self.assertIs(params[0]['obstacle_snapshot_enabled'], bool(enabled))
+            self.assertIs(params[0]['obstacle_photo_enabled'], bool(photo))
+
+    def test_obstacle_switch_reaches_planner_and_survives_supervisor_snapshot(self):
+        for enabled in (None, False, True):
+            self.robot['system']['task_hub'] = {} if enabled is None else {
+                'obstacle_snapshot_enabled': enabled}
+            self.write_robot()
+            context = context_for(navigation)
+            actions = navigation.launch_setup(context)
+            process = next(a for a in actions if isinstance(a, ExecuteProcess))
+            command = [perform_substitutions(context, part) for part in process.cmd]
+            snapshot_path = command[command.index('--config') + 1]
+            self.addCleanup(os.unlink, snapshot_path)
+            config = supervisor.load_yaml(snapshot_path)
+            self.assertIs(config['local_planner']['obstacle_snapshot_enabled'], bool(enabled))
+
+            # A later robot.yaml edit must not change an already captured supervisor run.
+            self.robot['system']['task_hub']['obstacle_snapshot_enabled'] = not bool(enabled)
+            self.write_robot()
+            config['bringup'].update(start_mode='immediate', wait_for_readiness=False)
+            worker_path = cfg.write_snapshot(config)
+            self.addCleanup(os.unlink, worker_path)
+            context = context_for(navigation, navigate_config_path=worker_path)
+            captured = {}
+
+            def include(package, filename, switch, launch_arguments=None):
+                captured[package] = launch_arguments or {}
+                return DeclareLaunchArgument('mock_' + package, default_value='')
+
+            with patch.object(navigation, 'include_package_launch', side_effect=include):
+                navigation.launch_setup(context)
+            self.assertEqual(captured['local_planner']['obstacle_snapshot_enabled'],
+                             str(bool(enabled)).lower())
+
+    def test_obstacle_switch_reaches_planner_in_immediate_mode(self):
+        for enabled in (False, True):
+            self.robot['system']['task_hub'] = {'obstacle_snapshot_enabled': enabled}
+            self.robot['navigation'] = {'bringup': {'start_mode': 'immediate',
+                                                    'wait_for_readiness': False}}
+            self.write_robot()
+            with patch.object(navigation, 'include_package_launch',
+                              wraps=navigation.include_package_launch) as include:
+                navigation.launch_setup(context_for(navigation))
+            planner = next(c for c in include.call_args_list if c.args[0] == 'local_planner')
+            self.assertEqual(planner.args[3]['obstacle_snapshot_enabled'], str(enabled).lower())
 
     def test_route_start_preparation_is_only_enabled_for_d1m(self):
         for model, expected in [('x30', ''), ('d1m', '/nav_bridge_node/ready')]:

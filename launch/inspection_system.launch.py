@@ -834,6 +834,10 @@ def launch_setup(context):
             as_bool(config_value(config, "task_hub", "obstacle_snapshot_enabled", False)),
             value_type=bool,
         ),
+        "obstacle_photo_enabled": ParameterValue(
+            as_bool(config_value(config, "task_hub", "obstacle_photo_enabled", False)),
+            value_type=bool,
+        ),
         "inspection_report_name": str(
             config_value(config, "task_hub", "inspection_report_name", "常规巡检")
         ),
