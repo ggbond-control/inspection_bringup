@@ -11,5 +11,7 @@ service:
     # Clear the inherited CycloneDDS file path when selecting Zenoh.
     CYCLONEDDS_URI: ""
     ZENOH_SESSION_CONFIG_URI: /home/cat/Workspace/zenoh_ws/session_config.json5
+    # Cover charge START (180 s) and complete handoff (300 s), including cleanup.
+    ZENOH_CONFIG_OVERRIDE: "queries_default_timeout=600000"
     ZENOH_ROUTER_CHECK_ATTEMPTS: "30"
     ROS_DOMAIN_ID: "24"

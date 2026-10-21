@@ -6,7 +6,7 @@ task_hub:
   trigger_service_timeout_seconds: 30.0
 charge:
   # 90 s pile connection + 60 s charge confirmation + SDK command margin.
-  charge_command_timeout_sec: 120.0
+  charge_command_timeout_sec: 180.0
 algorithm:
   transport: http
 mqtt:

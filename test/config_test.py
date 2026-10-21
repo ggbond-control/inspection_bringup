@@ -112,6 +112,7 @@ class Configuration(unittest.TestCase):
         expected['task_hub']['obstacle_photo_enabled'] = False
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
         expected['task_hub']['trigger_service_timeout_seconds'] = 30.0
+        expected['charge']['charge_command_timeout_sec'] = 180.0
         self.assertEqual(cfg.load_config('system'), expected)
 
     def test_d1m_navigation_matches_stored_sequences_and_inherits_defaults(self):
@@ -375,6 +376,7 @@ class Configuration(unittest.TestCase):
         expected['navigation']['launch_args'].pop('navigate_config_path')
         expected['inspection_system']['launch_args'].pop('system_config_path')
         expected['service']['environment']['CYCLONEDDS_URI'] = ''
+        expected['service']['environment']['ZENOH_CONFIG_OVERRIDE'] = 'queries_default_timeout=600000'
         expected['service']['environment']['INSPECTION_CONFIG_DIR'] = str(self.root)
         self.assertEqual(cfg.load_config('services'), expected)
 
@@ -404,6 +406,7 @@ class Configuration(unittest.TestCase):
             self.assertIn('source /home/cat/Workspace/zenoh_ws/install/setup.bash', content)
             self.assertIn('export RMW_IMPLEMENTATION=rmw_zenoh_cpp', content)
             self.assertIn('export ROS_DOMAIN_ID=24', content)
+            self.assertIn('export ZENOH_CONFIG_OVERRIDE=queries_default_timeout=600000', content)
             self.assertIn("export CYCLONEDDS_URI=''", content)
             check = subprocess.run(['bash', '-n', str(path)], capture_output=True, text=True)
             self.assertEqual(check.returncode, 0, check.stderr)
