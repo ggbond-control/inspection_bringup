@@ -15,6 +15,9 @@ CHECK_BRANCHES=1
 CHECK_UPDATES=0
 UPDATE_CURRENT_BRANCH=0
 UPDATE_ONLY=0
+CHECKOUT=""
+CHECKOUT_REMOTE="origin"
+REMOTE_SELECTED=0
 
 usage() {
   cat <<'EOF'
@@ -31,6 +34,10 @@ Options:
   --update-current-branch
                       Run git pull in managed repositories, then build.
   --update-only        Update current branches and exit without building.
+  --checkout dev|main  Switch managed repositories to remote-backed dev/main branches.
+                      main resolves manifest main_branch/version, then a unique main/jazzy/master.
+                      Add an update option for fast-forward synchronization.
+  --remote NAME        Checkout remote (default: origin); requires --checkout.
   -h, --help           Show this help.
 
 Build behavior:
@@ -40,10 +47,12 @@ Build behavior:
   Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
   Missing repositories are cloned from their remote default branch.
   Existing repositories are not updated unless an update option is selected.
-  Managed repository branches are printed by default without checkout changes.
+  Managed repository branches are printed by default; checkout is opt-in.
   --check-updates adds remote fetch/status checks but never pulls or checks out.
-  Updates use plain git pull and respect each repository's Git configuration.
-  No dirty/ahead/divergence precheck; a pull failure stops the build.
+  Without --checkout, updates use plain git pull and respect Git configuration.
+  Checkout preflights all repositories, requires clean worktrees and real remote branches.
+  With --checkout, updates only fast-forward; local commits are never reset.
+  --checkout conflicts with --fetch-only and --build-only.
   Detached checkouts of manifest-pinned tags are kept unchanged.
 
 Default target_package: inspection_bringup
@@ -100,6 +109,32 @@ while [[ $# -gt 0 ]]; do
       CHECK_BRANCHES=1
       shift
       ;;
+    --checkout|--remote)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "error: $1 requires a value" >&2
+        exit 2
+      fi
+      if [[ "$1" == "--checkout" ]]; then
+        CHECKOUT="$2"
+      else
+        CHECKOUT_REMOTE="$2"
+        REMOTE_SELECTED=1
+      fi
+      shift 2
+      ;;
+    --checkout=*)
+      CHECKOUT="${1#--checkout=}"
+      if [[ -z "${CHECKOUT}" ]]; then
+        echo "error: --checkout requires dev or main" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --remote=*)
+      CHECKOUT_REMOTE="${1#--remote=}"
+      REMOTE_SELECTED=1
+      shift
+      ;;
     --repos-file)
       if [[ $# -lt 2 ]]; then
         echo "error: --repos-file requires a path" >&2
@@ -134,6 +169,23 @@ if [[ "${FETCH_ONLY}" -eq 1 && "${BUILD_ONLY}" -eq 1 ]]; then
   exit 2
 fi
 
+if [[ -n "${CHECKOUT}" && "${CHECKOUT}" != "dev" && "${CHECKOUT}" != "main" ]]; then
+  echo "error: --checkout must be dev or main" >&2
+  exit 2
+fi
+if [[ -n "${CHECKOUT}" && ( "${FETCH_ONLY}" -eq 1 || "${BUILD_ONLY}" -eq 1 ) ]]; then
+  echo "error: --checkout conflicts with --fetch-only/--build-only" >&2
+  exit 2
+fi
+if [[ "${REMOTE_SELECTED}" -eq 1 && -z "${CHECKOUT}" ]]; then
+  echo "error: --remote requires --checkout" >&2
+  exit 2
+fi
+if [[ -z "${CHECKOUT_REMOTE}" || "${CHECKOUT_REMOTE}" == -* ]]; then
+  echo "error: invalid --remote" >&2
+  exit 2
+fi
+
 if [[ ! -f "${REPOS_FILE}" ]]; then
   echo "error: repos file not found: ${REPOS_FILE}" >&2
   exit 2
@@ -144,15 +196,20 @@ if [[ ! -d "${WORKSPACE_ROOT}/src" ]]; then
 fi
 
 fetch_missing_repositories() {
-  python3 - "$WORKSPACE_ROOT" "$REPOS_FILE" <<'PY'
+  python3 - "$WORKSPACE_ROOT" "$REPOS_FILE" "$CHECKOUT_REMOTE" "$CHECKOUT" "$SCRIPT_DIR" <<'PY'
 import os
-import subprocess
 import sys
+from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, sys.argv[5])
+from update_repositories import clone_repository
+
 workspace_root = sys.argv[1]
 repos_file = sys.argv[2]
+remote = sys.argv[3]
+checkout = sys.argv[4] or None
 
 with open(repos_file, "r", encoding="utf-8") as stream:
     data = yaml.safe_load(stream) or {}
@@ -162,9 +219,11 @@ if not repositories:
     raise SystemExit(f"no repositories found in {repos_file}")
 
 for rel_path, spec in repositories.items():
+    relative_path = Path(rel_path)
+    if relative_path.is_absolute() or '..' in relative_path.parts or len(relative_path.parts) < 2:
+        raise SystemExit(f'invalid managed repository path: {rel_path}')
     repo_type = spec.get("type", "git")
     url = spec.get("url")
-    version = spec.get("version")
     abs_path = os.path.join(workspace_root, rel_path)
 
     if repo_type != "git":
@@ -176,13 +235,11 @@ for rel_path, spec in repositories.items():
         print(f"[fetch] skip existing {rel_path}")
         continue
 
-    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-    cmd = ["git", "clone"]
-    if version:
-        cmd += ["--branch", str(version)]
-    cmd += [url, abs_path]
     print(f"[fetch] clone {url} -> {rel_path}")
-    subprocess.run(cmd, check=True)
+    try:
+        clone_repository(abs_path, spec, checkout=checkout, remote=remote)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f'[error] {rel_path}: {exc}')
 PY
 }
 
@@ -283,8 +340,15 @@ PY
 }
 
 update_current_branches() {
+  local options=()
+  if [[ -n "${CHECKOUT}" ]]; then
+    options+=(--checkout "${CHECKOUT}" --remote "${CHECKOUT_REMOTE}")
+    if [[ "${UPDATE_CURRENT_BRANCH}" -eq 0 ]]; then
+      options+=(--no-update)
+    fi
+  fi
   python3 "${SCRIPT_DIR}/update_repositories.py" \
-    --workspace-root "${WORKSPACE_ROOT}" --repos-file "${REPOS_FILE}"
+    --workspace-root "${WORKSPACE_ROOT}" --repos-file "${REPOS_FILE}" "${options[@]}"
 }
 
 source_if_exists() {
@@ -301,7 +365,7 @@ if [[ "${BUILD_ONLY}" -eq 0 ]]; then
   fetch_missing_repositories
 fi
 
-if [[ "${UPDATE_CURRENT_BRANCH}" -eq 1 ]]; then
+if [[ "${UPDATE_CURRENT_BRANCH}" -eq 1 || -n "${CHECKOUT}" ]]; then
   update_current_branches
 fi
 

@@ -83,6 +83,79 @@ an explicitly manifest-pinned tag are kept unchanged. To update without building
 src/inspection_bringup/scripts/build_inspection.sh --update-only
 ```
 
+Both `build_inspection.sh` and `build_navigation.sh` also support explicit checkout:
+
+```bash
+# Switch to existing remote dev branches, then build (no merge into existing branches).
+src/inspection_bringup/scripts/build_inspection.sh --checkout dev
+
+# Switch to each repository's main branch, fast-forward, then build.
+src/inspection_bringup/scripts/build_navigation.sh --checkout main --update-current-branch
+
+# Switch and fast-forward only; do not build.
+src/inspection_bringup/scripts/build_inspection.sh --checkout dev --update-only
+
+# Select a remote explicitly; existing repositories must have this remote configured.
+src/inspection_bringup/scripts/build_navigation.sh --checkout main --remote gitlab --update-only
+```
+
+Checkout rules (only repositories in the selected `.repos` file are managed;
+`inspection_bringup` itself is not implicitly switched):
+
+- `dev` requires an actual `dev` branch on the selected remote. There is no
+  fallback to a main branch, and no branch is pushed or invented by the helper.
+- `main` is a mode, not necessarily a literal branch name. An entry's
+  `main_branch` wins; otherwise an existing manifest `version` of `main`, `jazzy`
+  or `master` is preferred. Without a usable preference, exactly one of those
+  branches must exist remotely. Multiple candidates require an explicit choice:
+
+  ```yaml
+  repositories:
+    src/example:
+      type: git
+      url: https://github.com/example/example.git
+      main_branch: jazzy
+  ```
+
+- An explicitly configured `main_branch` must exist; a missing one is an error.
+- Manifest-pinned tags, including GTSAM `4.2.0`, stay detached at the pinned
+  commit. An attached branch or different commit at that path is an error.
+- Fresh remote heads are checked even if a local branch or stale remote-tracking
+  ref already exists. Missing local targets are created with remote tracking.
+  Existing targets retain their local commits and track the selected remote.
+- Shallow/single-branch clones fetch the target explicitly and extend their fetch
+  mapping when needed, so later ordinary `git pull` also works on the target.
+- Missing repositories are cloned directly at the resolved branch or pinned tag.
+  They use the manifest URL and name that remote according to `--remote`.
+  All existing repositories are then preflighted before any checkout begins.
+  Dirty worktrees (including untracked files), unfinished Git operations, and
+  branches occupied in other worktrees stop checkout. Preflight may fetch refs,
+  and repositories cloned earlier in the command remain on disk after failure.
+  Ignored local files are also protected against overwrites during switch/update.
+- Checkout alone leaves existing branch commits unchanged. With an update option,
+  synchronization uses `merge --ff-only` against the fetched remote ref, regardless
+  of `pull.rebase` settings. Divergence stops preflight; local ahead commits are
+  preserved and reported. There is no reset, automatic stash or automatic rollback.
+  If execution fails after preflight, completed repositories are listed and no
+  build starts; inspect the failing repository too before retrying.
+- `--checkout` conflicts with `--fetch-only` and `--build-only`, and navigation's
+  read-only `--plan`/`--check`. `--remote` requires `--checkout` (default: `origin`).
+
+The `inspection_task_hub` branch rename from `jazzy_dev` to `dev` is a one-time
+repository migration, not part of a build. Rename the branch on each maintained
+remote first (prefer the hosting platform's native rename), then update the clone:
+
+```bash
+git branch -m jazzy_dev dev
+git fetch --prune origin
+git branch --set-upstream-to=origin/dev dev
+git pull --ff-only
+```
+
+Check for an existing `dev`, uncommitted work and differing commits before the
+migration. Update CI, branch protections and other consumers of `jazzy_dev` as
+needed. The build helper only recognizes the final `dev` name.
+
 Disable the branch status output when needed:
 
 ```bash

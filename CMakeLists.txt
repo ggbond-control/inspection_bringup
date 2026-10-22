@@ -16,7 +16,7 @@ if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME build_scripts_test
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/build_scripts_test.py)
-  set_tests_properties(build_scripts_test PROPERTIES TIMEOUT 60)
+  set_tests_properties(build_scripts_test PROPERTIES TIMEOUT 120)
   add_test(NAME config_test
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/config_test.py)
   add_test(NAME config_launch_test

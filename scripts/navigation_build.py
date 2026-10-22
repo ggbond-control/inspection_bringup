@@ -21,7 +21,7 @@ try:
 except ImportError:
     sys.exit('[error] PyYAML is required; install python3-yaml before building.')
 
-from update_repositories import update_repositories
+from update_repositories import clone_repository, update_repositories
 
 
 BRINGUP = Path(__file__).resolve().parents[1]
@@ -92,6 +92,10 @@ def arguments():
     parser.add_argument('--check-updates', action='store_true')
     parser.add_argument('--update-current-branch', action='store_true')
     parser.add_argument('--update-only', action='store_true')
+    parser.add_argument('--checkout', choices=('dev', 'main'),
+                        help='switch remote-backed branches; main uses manifest preference or unique main/jazzy/master; '
+                             'add an update option to fast-forward')
+    parser.add_argument('--remote', help='checkout remote (default: origin); requires --checkout')
     args = parser.parse_args()
     if args.jobs is None:
         try:
@@ -101,8 +105,15 @@ def arguments():
     if args.skip_third_party and (args.rebuild_gtsam or args.rebuild_third_party):
         parser.error('--skip-third-party conflicts with --rebuild-gtsam/--rebuild-third-party')
     if (args.plan or args.check) and (args.fetch_only or args.update_only or
-                                    args.update_current_branch or args.check_updates):
+                                    args.update_current_branch or args.check_updates or args.checkout):
         parser.error('--plan/--check cannot fetch or update repositories')
+    if args.checkout and (args.fetch_only or args.build_only):
+        parser.error('--checkout conflicts with --fetch-only/--build-only')
+    if args.remote is not None and not args.checkout:
+        parser.error('--remote requires --checkout')
+    if args.remote is not None and (not args.remote or args.remote.startswith('-')):
+        parser.error('invalid --remote')
+    args.remote = args.remote or 'origin'
     return args
 
 
@@ -160,6 +171,7 @@ class Build:
         self.repo_paths = {}
         self.base_env = None
         self.env = None
+        self.checkout_targets = {}
 
     def resolve(self, value):
         return path(str(value).replace('${WORKSPACE_ROOT}', str(self.root)))
@@ -188,10 +200,10 @@ class Build:
             details = [branch]
             if git('status', '--porcelain'):
                 details.append('dirty')
-            expected = str(spec.get('version', ''))
+            expected = self.checkout_targets.get(relative, str(spec.get('version', '')))
             if expected and branch != expected and git('describe', '--tags', '--exact-match', 'HEAD') != expected:
                 details.append('expected=' + expected)
-            actual = git('remote', 'get-url', 'origin')
+            actual = git('remote', 'get-url', self.args.remote)
             if actual and actual != spec.get('url'):
                 details.append('remote-mismatch=' + actual)
             if self.args.check_updates:
@@ -218,12 +230,8 @@ class Build:
             if repo.exists():
                 info(f'[fetch] skip existing {relative}')
                 continue
-            repo.parent.mkdir(parents=True, exist_ok=True)
-            command = ['git', 'clone', '--depth', '1']
-            if spec.get('version'):
-                command += ['--branch', str(spec['version'])]
             info(f'[fetch] {relative}')
-            run(command + [spec['url'], repo])
+            clone_repository(repo, spec, checkout=self.args.checkout, remote=self.args.remote, depth=1)
 
     def plan(self):
         info(f'[plan] model={self.model or "default"}; RMW={self.rmw}; Release; sequential; jobs={self.args.jobs}')
@@ -455,10 +463,13 @@ class Build:
         if not self.args.build_only and not self.args.check:
             STAGE = 'fetch'
             self.fetch()
-        if self.args.update_current_branch or self.args.update_only:
-            STAGE = 'update'
-            update_repositories(self.repos_file, self.root, self.workspaces['algor_ws'],
-                                self.workspaces['driver_ws'], self.workspaces['task_ws'])
+        if self.args.update_current_branch or self.args.update_only or self.args.checkout:
+            STAGE = 'checkout' if self.args.checkout else 'update'
+            self.checkout_targets = update_repositories(
+                self.repos_file, self.root, self.workspaces['algor_ws'],
+                self.workspaces['driver_ws'], self.workspaces['task_ws'],
+                checkout=self.args.checkout, remote=self.args.remote,
+                update=self.args.update_current_branch or self.args.update_only) or {}
         if not self.args.no_branch_check or self.args.check_updates:
             self.branches()
         if self.args.fetch_only or self.args.update_only:
