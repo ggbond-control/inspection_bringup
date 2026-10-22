@@ -42,199 +42,133 @@ navigation stack.
 
 ## Deployment
 
-The navigation deployment helper keeps all managed source and third-party build
-artifacts inside user workspaces. It does not run `sudo`, install apt packages,
-write sysctl files, or install libraries into `/usr/local`.
-
-After a successful build, the helper prints this optional command for systems
-that require access to GPU or video devices. Run it manually, then log out and
-back in for the membership change to take effect:
+Daily navigation builds use one command, with no required path or middleware flags:
 
 ```bash
-sudo usermod -aG video,render $USER
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh
 ```
 
-By default, run the helper from a navigation deployment rooted at
-`~/Workspace`. The helper creates missing workspace directories before cloning
-or building:
+The helper reads `config/build/navigation.yaml`, then `config/build/<model>.yaml`
+selected by `config/robot.yaml`. `INSPECTION_CONFIG_DIR` selects another config
+root. `--model d1m` overrides model selection, and `--config PATH` supplies a build
+configuration override. CLI paths override configuration. The default root is
+`~/Workspace` (`NAV_WORKSPACE_ROOT` or `--workspace-root` can override it).
 
-```text
-~/Workspace/
-  algor_ws/
-  driver_ws/
-  task_ws/
-    src/inspection_bringup
-    install/  # Existing inspection_interfaces and inspection_bringup overlays
-```
+D1M explicitly loads the Zenoh underlay before compiling any ROS package and
+builds the D1 Max nav bridge backend. It follows this order:
 
-Use `--workspace-root PATH` to place both workspaces under a different root, or
-use `--algor-ws PATH` / `--driver-ws PATH` when the two workspaces should not
-share the same parent. `inspection_bringup` may live in `task_ws`, `algor_ws`,
-or another workspace. Its location does not affect the deployment helper: the
-helper never builds `inspection_bringup` and only builds packages from
-`config/navigation_deps.repos`.
+1. Check ROS/RMW, system dependencies, source packages and third-party inputs.
+2. Build only `inspection_interfaces` in `task_ws`.
+3. Initialize missing local third-party libraries, or reuse installed libraries.
+4. Build managed driver packages, including `robots_dog_msgs` and `gnss_driver`.
+5. Build managed algorithm packages, including `smac_straight_planner`.
 
-Install system packages before running the helper. The exact apt source is
-environment-specific, but the navigation stack expects these families to be
-available:
+The current build profiles explicitly support D1M. X30 and Cyvet runtime
+configuration files do not select their CMake backends: dedicated build profiles
+are not yet provided. A fresh unconfigured nav_bridge build defaults to X30;
+Cyvet needs its backend enabled and the UniUbi dependencies supplied separately.
+Do not reuse a D1M build directory for another model with this version: cached
+backend switches are not reset when a model profile is absent. Each additional
+model should explicitly set all three `NAV_BRIDGE_BUILD_*` switches before it is
+considered supported. `--model` changes this build's profile only; it does not
+modify runtime `robot.yaml`.
 
-```text
-sudo apt install libgoogle-glog-dev \
-libgflags-dev \
-libyaml-cpp-dev \
-libeigen3-dev \
-libpcl-dev \
-libopencv-dev \
-libtbb-dev \
-opencl-headers \
-ocl-icd-opencl-dev \
-ros-jazzy-pcl-ros \
-ros-jazzy-navigation2 \
-ros-jazzy-grid-map \
-ros-jazzy-rviz-2d-overlay-msgs \
-opencl-headers \
-ocl-icd-opencl-dev \
-mesa-opencl-icd \
-clinfo
-```
+Each stage loads only its declared underlays. Workspace `local_setup.bash` and
+the interface package's own setup are used to avoid recorded chains that import
+old task/driver/algorithm overlays. Ambient ROS, middleware and library search
+variables are cleared. Repositories are discovered with colcon, respecting
+`COLCON_IGNORE`; missing/empty package lists stop the build.
 
-`inspection_interfaces` is not managed by the navigation helper. Source an
-existing underlay that provides it when building `algor_ws`:
+**GTSAM is built on first initialization only.** When its installed CMake config,
+headers and libraries already exist, the helper does not configure, compile or
+install GTSAM again. It also reuses an existing complete Livox-SDK2 install.
+Libraries remain under `driver_ws/third_party/install`, with no system install.
+A partial GTSAM install fails with a repair command instead of triggering an
+unexpected rebuild. Consumer CMake checks still validate the installed GTSAM
+configuration; those checks do not compile GTSAM.
 
 ```bash
-task_ws/src/inspection_bringup/scripts/build_navigation.sh \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+# Inspect the resolved paths, repositories, middleware and build stages.
+scripts/build_navigation.sh --plan
+
+# Check existing sources, middleware/system dependencies and library inputs.
+# Does not fetch, update or compile. Missing sources must be fetched first.
+scripts/build_navigation.sh --check
+
+# Explicitly rebuild GTSAM, or both third-party projects.
+scripts/build_navigation.sh --rebuild-gtsam
+scripts/build_navigation.sh --rebuild-third-party
+
+# Validate with separate build/install/log directories, reusing third-party libs.
+scripts/build_navigation.sh --output-root ~/tmp/navigation-validation
+
+# Increase per-package jobs; packages still run sequentially, Release by default.
+scripts/build_navigation.sh -j2
+
+# Alternate layout, or an externally maintained inspection_interfaces underlay.
+scripts/build_navigation.sh --workspace-root /workspaces/robot
+scripts/build_navigation.sh --interface-underlay /workspaces/common/install/local_setup.bash
 ```
 
-Managed repositories are listed in:
+`BUILD_JOBS` supplies the job default; `-j`/`--jobs` takes precedence. The default
+is one. `--output-root` isolates ROS build/install/log outputs; it continues to
+reuse the shared third-party prefix. It does not switch services to those outputs.
+On D1M-A (8 GiB RAM), one faster_lio compiler process was observed using about
+4.3 GiB; retain `-j1` unless memory measurements justify increasing it.
+`--interface-underlay` skips the interface build and uses the supplied setup;
+prefer an interface-only or controlled `local_setup.bash` over a historical full
+workspace setup chain.
 
-```text
-config/navigation_deps.repos
-```
+Install system dependencies before building. The helper checks the CMake
+packages listed in `config/build/navigation.yaml`, including ROS navigation2,
+grid-map, PCL, OpenCV, Eigen, glog, gflags, YAML, TBB and GeographicLib. It does
+not run apt, sudo, sysctl, or change system services. D1M also requires a built
+`zenoh_ws/install/local_setup.bash` and the vendored D1 Max SDK in nav_bridge.
 
-Missing repositories are cloned with `git clone --depth 1`. Navigation ROS
-repositories are pinned to their `jazzy` branches; GTSAM remains pinned to the
-`4.2.0` tag because it is not a ROS Jazzy repository. Existing repositories are
-skipped by default. The helper reports an existing repository whose origin or
-checked-out branch/tag does not match the manifest, without switching branches.
-
-Navigation supports the same update options as `build_inspection.sh`:
+Sources are managed by `config/navigation_deps.repos`. Missing repositories are
+cloned; existing checkouts and local edits are retained. `--fetch-only` clones
+without building; `--build-only` skips cloning. Existing sources are never
+updated implicitly. Use these explicit update operations:
 
 ```bash
-# Pull managed repositories, then build (supply your actual interfaces underlay).
-scripts/build_navigation.sh --update-current-branch \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
-
-# Pull only; no ROS underlay or build tools are required.
+scripts/build_navigation.sh --update-current-branch
 scripts/build_navigation.sh --update-only
+scripts/build_navigation.sh --check-updates
 ```
 
-Both entry points execute ordinary `git pull` using each repository's current
-branch, upstream and local Git configuration (`pull.rebase`, `pull.ff`, etc.).
-They do not preemptively reject local edits, local commits or diverged history.
-Git decides whether the pull can succeed. A failure stops subsequent updates
-and prevents building; earlier repositories may already have been updated.
-Neither entry point switches branches or force resets files. Detached checkouts
-at manifest-pinned tags, such as GTSAM `4.2.0`, are skipped and retain that version.
-Other detached checkouts or missing upstreams produce the ordinary Git error.
-The flags `--workspace-root`, `--driver-ws`, `--algor-ws` also apply to updates.
-`--check-updates` only fetches and reports status; it does not pull working trees.
+Updates use ordinary `git pull` on the current branch and honor local Git
+settings. They do not switch branches, reset files, or stash changes. Pinned
+detached tags are retained. A pull failure prevents the build; earlier repositories
+may already have been updated. `--check-updates` fetches/reports without pulling.
 
-GTSAM and Livox-SDK2 are built locally into:
+`--third-party-only`, `--skip-third-party`, `--skip-driver-build` and
+`--skip-algor-build` remain available for diagnosis. `--skip-third-party`
+requires complete installed libraries. These switches are unnecessary for normal
+incremental builds. Successful builds record source commits, dirty state, model,
+RMW and package lists in `algor_ws/navigation-build.json` (under `--output-root`
+when selected). Branch manifests are development inputs; use the recorded commit
+IDs to establish an immutable release baseline.
 
-```text
-driver_ws/third_party/install
-```
-
-The helper passes this prefix to CMake and sets package RPATHs to
-`driver_ws/third_party/install/lib` and
-`driver_ws/third_party/install/lib64`, so installed ROS executables can resolve
-the local shared libraries without `sudo make install`. It also prints an
-`LD_LIBRARY_PATH` fallback for ad-hoc tools or manually built binaries.
-
-Before building, the helper clears inherited ROS overlay variables and sources
-only ROS Jazzy, then `driver_ws`, and the supplied `inspection_interfaces`
-underlay before building `algor_ws`. This prevents old workspaces from
-accidentally satisfying dependencies. It also converts Linux colon-separated
-prefix paths to CMake's semicolon-separated list format before passing `-D`
-CMake options. It discovers package manifests only inside repositories listed
-in `config/navigation_deps.repos`, so unrelated packages in either workspace,
-including `inspection_bringup`, are not built.
-
-Every ROS package contained in the managed repositories receives these CMake
-settings:
-
-```text
--Wno-dev
--DCMAKE_BUILD_TYPE=Release
--DCMAKE_EXPORT_COMPILE_COMMANDS=1
---symlink-install
-```
-
-GTSAM and Livox-SDK2 remain native CMake projects and receive the equivalent
-Release and compile-command options.
-
-All stages run sequentially: GTSAM, Livox-SDK2, driver packages, then algorithm
-packages. ROS packages use `--executor sequential`. Each package/project defaults
-to one build job (`-j1`); use `-j4`, `-j 4`, `--jobs 4`, or `--jobs=4` to increase
-jobs within each package/project without running multiple packages concurrently.
-`BUILD_JOBS=4` is also supported; an explicit jobs option takes precedence. Job
-counts must be positive integers. Both `MAKEFLAGS` and
-`CMAKE_BUILD_PARALLEL_LEVEL` are set explicitly so colcon does not replace the
-requested job count with the CPU count.
-
-Useful commands:
-
-```bash
-# Clone missing repositories, then build managed third-party, driver, and algor packages.
-task_ws/src/inspection_bringup/scripts/build_navigation.sh \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
-
-# Use four build jobs within each package/project (default is one).
-task_ws/src/inspection_bringup/scripts/build_navigation.sh -j4 \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
-
-# Use a different deployment root.
-task_ws/src/inspection_bringup/scripts/build_navigation.sh \
-  --workspace-root /workspaces/navigation \
-  --interface-underlay /workspaces/task_ws/install/setup.bash
-
-# Only clone missing repositories.
-task_ws/src/inspection_bringup/scripts/build_navigation.sh --fetch-only
-
-# Only build local third-party libraries.
-task_ws/src/inspection_bringup/scripts/build_navigation.sh --third-party-only
-
-# Rebuild from existing sources.
-task_ws/src/inspection_bringup/scripts/build_navigation.sh \
-  --build-only \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
-```
-
-For the merged Livox stream, keep the runtime DDS settings from
-`livox_ros_driver2`:
-
-```bash
-export CYCLONEDDS_URI=file://$HOME/Workspace/driver_ws/src/livox_ros_driver2/config/cyclonedds_large_message.xml
-```
-
-The Linux socket buffer sysctl settings described by `livox_ros_driver2` still
-need to be handled by the deployment environment; the helper intentionally does
-not change system configuration.
+D1M does not launch Livox, but `faster_lio` currently depends on its messages and
+CMake package, so the driver and SDK are still required during compilation.
 
 ## Start
 
 Build the navigation workspaces with the deployment helper, then source the
-resulting overlays in order:
+resulting overlays in order. The following example uses D1M/Zenoh; for other
+models, use the middleware and underlays printed by the build helper:
 
 ```bash
-~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh \
-  --interface-underlay ~/Workspace/task_ws/install/setup.bash
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh
 
 source /opt/ros/jazzy/setup.bash
-source ~/Workspace/driver_ws/install/setup.bash
-source ~/Workspace/task_ws/install/setup.bash
-source ~/Workspace/algor_ws/install/setup.bash
+# D1M uses Zenoh; other models use their configured middleware.
+source ~/Workspace/zenoh_ws/install/local_setup.bash
+source ~/Workspace/task_ws/install/inspection_interfaces/share/inspection_interfaces/local_setup.bash
+source ~/Workspace/driver_ws/install/local_setup.bash
+source ~/Workspace/algor_ws/install/local_setup.bash
+source ~/Workspace/task_ws/install/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 ```
 
 Start the default navigation stack:

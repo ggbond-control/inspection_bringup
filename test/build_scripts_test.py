@@ -14,6 +14,28 @@ BRINGUP_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS = ('build_inspection.sh', 'build_navigation.sh')
 
 
+def navigation_support(bringup, setup):
+    for name in ('navigation_build.py', 'update_repositories.py'):
+        source = (BRINGUP_DIR / 'scripts' / name).read_text()
+        source = source.replace('/opt/ros/jazzy/setup.bash', str(setup))
+        (bringup / 'scripts' / name).write_text(source)
+    directory = bringup / 'config/build'
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'navigation.yaml').write_text(json.dumps({
+        'system_cmake_packages': [], 'required_packages': {},
+    }))
+
+
+def installed_libraries(prefix):
+    for relative in ('lib/cmake/GTSAM/GTSAMConfig.cmake', 'include/gtsam/base/Matrix.h',
+                     'lib/libgtsam.so', 'lib/libgtsam_unstable.so',
+                     'include/livox_lidar_api.h', 'lib/liblivox_lidar_sdk_shared.so'):
+        target = prefix / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+
+
+
 class BuildScriptsTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory(prefix='bringup-build-test-')
@@ -28,8 +50,7 @@ class BuildScriptsTest(unittest.TestCase):
             source = (BRINGUP_DIR / 'scripts' / name).read_text()
             source = source.replace('/opt/ros/jazzy/setup.bash', str(self.setup_file))
             (self.bringup / 'scripts' / name).write_text(source)
-        shutil.copyfile(BRINGUP_DIR / 'scripts/update_repositories.py',
-                        self.bringup / 'scripts/update_repositories.py')
+        navigation_support(self.bringup, self.setup_file)
         (self.bringup / 'config/inspection_deps.repos').write_text('repositories: {}\n')
         repositories = {}
         for workspace in ('driver_ws', 'algor_ws'):
@@ -43,6 +64,7 @@ class BuildScriptsTest(unittest.TestCase):
             json.dumps({'repositories': repositories}))
         for name in ('gtsam', 'livox_sdk2'):
             (self.root / 'driver_ws/third_party/src' / name).mkdir(parents=True)
+            (self.root / 'driver_ws/third_party/src' / name / 'CMakeLists.txt').touch()
 
         self.log = self.root / 'commands.jsonl'
         bin_dir = self.root / 'bin'
@@ -55,16 +77,44 @@ from pathlib import Path
 import sys
 
 name = Path(sys.argv[0]).name
+if name == 'cmake' and os.environ.get('BUILD_TEST_FAIL_PROBE') and any('navigation-check-' in a for a in sys.argv):
+    print('missing middleware', file=sys.stderr)
+    sys.exit(1)
 with open(os.environ['BUILD_TEST_LOG'], 'a') as stream:
     stream.write(json.dumps({
         'name': name, 'args': sys.argv[1:],
         'makeflags': os.environ.get('MAKEFLAGS'),
         'parallel': os.environ.get('CMAKE_BUILD_PARALLEL_LEVEL'),
+        'rmw': os.environ.get('RMW_IMPLEMENTATION'),
+        'ament': os.environ.get('AMENT_PREFIX_PATH', ''),
     }) + '\\n')
+if name == 'colcon' and 'list' in sys.argv:
+    import xml.etree.ElementTree as ET
+    roots = sys.argv[sys.argv.index('--base-paths') + 1:sys.argv.index('--names-only')]
+    for root in roots:
+        manifest = Path(root) / 'package.xml'
+        if manifest.exists():
+            print(ET.parse(manifest).getroot().findtext('name'))
+    sys.exit(0)
 if name == 'colcon':
-    install = Path.cwd() / 'install'
+    install = Path(sys.argv[sys.argv.index('--install-base') + 1]) if '--install-base' in sys.argv else Path.cwd() / 'install'
     install.mkdir(exist_ok=True)
     (install / 'setup.bash').write_text('# Test workspace overlay.\\n')
+    (install / 'local_setup.bash').write_text('# Explicit local overlay.\\n')
+    if 'inspection_interfaces' in sys.argv:
+        setup = install / 'inspection_interfaces/share/inspection_interfaces/local_setup.bash'
+        setup.parent.mkdir(parents=True, exist_ok=True)
+        setup.write_text('# Generated interface package.\\n')
+elif name == 'cmake' and '--install' in sys.argv:
+    prefix = Path(os.environ['BUILD_TEST_LOG']).parent / 'driver_ws/third_party/install'
+    files = ('lib/cmake/GTSAM/GTSAMConfig.cmake', 'include/gtsam/base/Matrix.h',
+             'lib/libgtsam.so', 'lib/libgtsam_unstable.so', 'include/livox_lidar_api.h',
+             'lib/liblivox_lidar_sdk_shared.so')
+    files = files[:4] if Path(sys.argv[-1]).name == 'gtsam' else files[4:]
+    for relative in files:
+        target = prefix / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
 elif name == 'ros2':
     print('/test/inspection_interfaces')
 ''')
@@ -82,8 +132,10 @@ elif name == 'ros2':
             'CMAKE_BUILD_PARALLEL_LEVEL': '99',
         })
 
-    def run_build(self, script, jobs_args=(), env_jobs=None):
+    def run_build(self, script, jobs_args=(), env_jobs=None, fresh=True):
         self.log.unlink(missing_ok=True)
+        if fresh:
+            shutil.rmtree(self.root / 'driver_ws/third_party/install', ignore_errors=True)
         args = ['bash', str(self.bringup / 'scripts' / script),
                 '--build-only', '--no-branch-check']
         if script == 'build_navigation.sh':
@@ -101,7 +153,7 @@ elif name == 'ros2':
     def assert_build_policy(self, script, args, jobs, env_jobs=None):
         result, commands = self.run_build(script, args, env_jobs)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        colcon_commands = [c for c in commands if c['name'] == 'colcon']
+        colcon_commands = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
         self.assertEqual(len(colcon_commands), 2 if script == SCRIPTS[1] else 1)
         for command in colcon_commands:
             arguments = command['args']
@@ -112,7 +164,7 @@ elif name == 'ros2':
             self.assertEqual(command['makeflags'], f'-j{jobs}')
             self.assertEqual(command['parallel'], str(jobs))
         if script == SCRIPTS[1]:
-            cmake_commands = [c for c in commands if c['name'] == 'cmake']
+            cmake_commands = [c for c in commands if c['name'] == 'cmake' and not any('navigation-check-' in a for a in c['args'])]
             self.assertEqual(len(cmake_commands), 6)
             self.assertEqual(
                 [c['args'][0] for c in cmake_commands],
@@ -124,8 +176,7 @@ elif name == 'ros2':
                     self.assertIn(f'-j{jobs}', command['args'])
                     self.assertEqual(command['makeflags'], f'-j{jobs}')
                     self.assertEqual(command['parallel'], str(jobs))
-            self.assertEqual([c['name'] for c in commands[:8]],
-                             ['cmake'] * 6 + ['colcon', 'ros2'])
+            self.assertLess(commands.index(cmake_commands[-1]), commands.index(colcon_commands[0]))
 
     def test_defaults_and_job_options(self):
         for script in SCRIPTS:
@@ -153,6 +204,92 @@ elif name == 'ros2':
             result, commands = self.run_build(script, env_jobs='0')
             self.assertEqual(result.returncode, 2)
             self.assertEqual(commands, [])
+
+    def test_navigation_reuses_installed_gtsam_and_requires_explicit_rebuild(self):
+        installed_libraries(self.root / 'driver_ws/third_party/install')
+        result, commands = self.run_build(SCRIPTS[1], fresh=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('reuse installed gtsam', result.stdout)
+        native = [c for c in commands if c['name'] == 'cmake' and
+                  any('/third_party/' in a for a in c['args'])]
+        self.assertEqual(native, [])
+        result, commands = self.run_build(SCRIPTS[1], ['--rebuild-gtsam'], fresh=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        native = [c for c in commands if c['name'] == 'cmake' and
+                  any('/third_party/' in a for a in c['args'])]
+        self.assertEqual([c['args'][0] for c in native], ['-S', '--build', '--install'])
+        self.assertTrue(all('gtsam' in ' '.join(c['args']) for c in native))
+
+    def test_incomplete_gtsam_fails_before_build_without_implicit_repair(self):
+        prefix = self.root / 'driver_ws/third_party/install'
+        installed_libraries(prefix)
+        (prefix / 'lib/libgtsam_unstable.so').unlink()
+        result, commands = self.run_build(SCRIPTS[1], fresh=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--rebuild-gtsam', result.stderr)
+        self.assertFalse(any('build' in c['args'] or '--build' in c['args'] for c in commands))
+
+    def test_check_and_missing_repository_never_invoke_builders(self):
+        installed_libraries(self.root / 'driver_ws/third_party/install')
+        result, commands = self.run_build(SCRIPTS[1], ['--check'], fresh=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any('build' in c['args'] or '--build' in c['args'] for c in commands))
+        shutil.rmtree(self.root / 'algor_ws/src/algor_ws_package')
+        result, commands = self.run_build(SCRIPTS[1], fresh=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing managed repositories', result.stderr)
+        self.assertFalse(any(c['name'] == 'cmake' for c in commands))
+
+    def test_default_entry_builds_interfaces_first_without_path_options(self):
+        installed_libraries(self.root / 'driver_ws/third_party/install')
+        source = self.root / 'task_ws/src/inspection_interfaces'
+        source.mkdir()
+        (source / 'package.xml').write_text('<package><name>inspection_interfaces</name></package>')
+        env = dict(self.env, NAV_WORKSPACE_ROOT=str(self.root),
+                   AMENT_PREFIX_PATH='/stale/overlay', RMW_IMPLEMENTATION='rmw_missing_cpp')
+        result = subprocess.run(['bash', str(self.bringup / 'scripts' / SCRIPTS[1]),
+                                 '--build-only', '--no-branch-check'],
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [json.loads(line) for line in self.log.read_text().splitlines()]
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        names = [c['args'][c['args'].index('--packages-select') + 1] for c in builds]
+        self.assertEqual(names, ['inspection_interfaces', 'driver_ws_package', 'algor_ws_package'])
+        self.assertTrue(all(c['rmw'] == 'rmw_fastrtps_cpp' for c in builds))
+        self.assertTrue(all('/stale/overlay' not in c['ament'] for c in builds))
+
+    def test_failed_environment_probe_stops_before_native_or_ros_builds(self):
+        self.env['BUILD_TEST_FAIL_PROBE'] = '1'
+        result, commands = self.run_build(SCRIPTS[1])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing middleware', result.stderr)
+        self.assertFalse(any('build' in c['args'] or '--build' in c['args'] for c in commands))
+
+    @unittest.skipUnless(Path('/usr/bin/colcon').exists(), 'requires real colcon discovery')
+    def test_real_colcon_discovery_respects_ignored_vendor_packages(self):
+        for workspace in ('driver_ws', 'algor_ws'):
+            package = self.root / f'{workspace}/src/{workspace}_package'
+            (package / 'package.xml').write_text(
+                f'<package format="3"><name>{workspace}_package</name><version>0.1.0</version>'
+                '<description>Discovery fixture</description>'
+                '<maintainer email="test@example.com">Test</maintainer><license>MIT</license>'
+                '<buildtool_depend>ament_cmake</buildtool_depend>'
+                '<export><build_type>ament_cmake</build_type></export></package>')
+        ignored = self.root / 'driver_ws/src/driver_ws_package/vendor'
+        ignored.mkdir()
+        (ignored / 'COLCON_IGNORE').touch()
+        (ignored / 'package.xml').write_text('<package><name>ignored_vendor</name></package>')
+        builder = self.root / 'bin/builder'
+        source = builder.read_text().replace(
+            "if name == 'colcon' and 'list' in sys.argv:",
+            "if name == 'colcon' and 'list' in sys.argv:\n"
+            "    os.execv('/usr/bin/colcon', ['/usr/bin/colcon', *sys.argv[1:]])")
+        builder.write_text(source)
+        result, commands = self.run_build(SCRIPTS[1])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        self.assertEqual(len(builds), 2)
+        self.assertTrue(all('ignored_vendor' not in c['args'] for c in builds))
 
 
 class RepositoryUpdatesTest(unittest.TestCase):
@@ -185,6 +322,7 @@ class RepositoryUpdatesTest(unittest.TestCase):
             source = (BRINGUP_DIR / 'scripts' / name).read_text()
             source = source.replace('/opt/ros/jazzy/setup.bash', f'"{setup}"')
             (bringup / 'scripts' / name).write_text(source)
+        navigation_support(bringup, setup)
         remote = root / 'remote.git'
         remote.mkdir()
         self.git(remote, 'init', '--bare', '--initial-branch=main')
@@ -389,6 +527,15 @@ class RepositoryUpdatesTest(unittest.TestCase):
                 options = ['--update-current-branch']
                 if script == 'build_navigation.sh':
                     options += ['--skip-third-party', '--skip-algor-build']
+                    installed_libraries(root / 'custom driver/third_party/install')
+                    (binary / 'cmake').write_text('#!/bin/sh\nexit 0\n')
+                    (binary / 'cmake').chmod(0o755)
+                    builder.write_text(builder.read_text().replace(
+                        'from pathlib import Path',
+                        'from pathlib import Path\nimport sys\n'
+                        'if "list" in sys.argv:\n print("module"); sys.exit(0)'))
+                    (binary / 'ros2').write_text('#!/bin/sh\necho /test/interfaces\n')
+                    (binary / 'ros2').chmod(0o755)
                 old_path = self.env['PATH']
                 self.env['PATH'] = str(binary) + os.pathsep + old_path
                 try:

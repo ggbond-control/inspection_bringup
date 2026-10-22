@@ -1,4 +1,18 @@
 repositories:
+  task_ws/src/inspection_interfaces:
+    type: git
+    url: https://github.com/ggbond-control/inspection_interfaces.git
+
+  driver_ws/src/robots_dog_msgs:
+    type: git
+    url: https://github.com/ggbond-control/robots_dog_msgs.git
+    version: jazzy
+
+  driver_ws/src/gnss_driver:
+    type: git
+    url: https://github.com/ggbond-control/gnss_driver.git
+    version: jazzy
+
   driver_ws/src/nav_bridge:
     type: git
     url: https://github.com/ggbond-control/nav_bridge.git
@@ -48,3 +62,8 @@ repositories:
     type: git
     url: https://github.com/ggbond-control/multi_map_nav_ros2.git
     version: jazzy
+
+  algor_ws/src/smac_straight_planner:
+    type: git
+    url: https://github.com/ggbond-control/smac_straight_planner.git
+    version: master

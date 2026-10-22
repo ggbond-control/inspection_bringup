@@ -1,0 +1,12 @@
+# Match config/models/d1m/services.yaml. Source this before compiling drivers.
+rmw_implementation: rmw_zenoh_cpp
+underlays:
+  - "${WORKSPACE_ROOT}/zenoh_ws/install/local_setup.bash"
+required_packages:
+  driver_ws: [nav_bridge, livox_ros_driver2, ndt_omp, control_input_msgs, robots_dog_msgs, gnss_driver]
+  algor_ws: [faster_lio, gridmapper, local_planner, multi_map_nav, smac_straight_planner]
+package_cmake_args:
+  nav_bridge:
+    - -DNAV_BRIDGE_BUILD_D1_MAX=ON
+    - -DNAV_BRIDGE_BUILD_X30=OFF
+    - -DNAV_BRIDGE_BUILD_CYVET=OFF

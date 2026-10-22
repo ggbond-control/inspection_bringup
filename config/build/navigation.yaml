@@ -1,0 +1,30 @@
+# Paths can be overridden by CLI; robot.yaml selects build/<model>.yaml.
+workspace_root: ~/Workspace
+ros_setup: /opt/ros/jazzy/setup.bash
+rmw_implementation: rmw_fastrtps_cpp
+underlays: []
+
+# Check system dependencies before any third-party compilation. Internal ROS
+# dependencies are built in the interfaces -> driver -> algorithm stages.
+system_cmake_packages:
+  - ament_cmake
+  - rclcpp
+  - rosidl_default_generators
+  - pcl_ros
+  - pcl_conversions
+  - Eigen3
+  - PCL
+  - OpenCV
+  - yaml-cpp
+  - TBB
+  - glog
+  - gflags
+  - grid_map_ros
+  - nav2_core
+  - nav2_smac_planner
+check_geographiclib: true
+
+required_packages:
+  driver_ws: [nav_bridge, livox_ros_driver2, ndt_omp, control_input_msgs, robots_dog_msgs, gnss_driver]
+  algor_ws: [faster_lio, gridmapper, local_planner, multi_map_nav]
+package_cmake_args: {}

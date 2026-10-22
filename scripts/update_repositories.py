@@ -8,7 +8,7 @@ import subprocess
 import yaml
 
 
-def update_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=None):
+def update_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=None, task_ws=None):
     with Path(repos_file).open(encoding='utf-8') as stream:
         repositories = (yaml.safe_load(stream) or {}).get('repositories', {})
     if not repositories:
@@ -18,7 +18,7 @@ def update_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=Non
         if spec.get('type', 'git') != 'git':
             raise ValueError(f'{relative}: unsupported repository type')
         parts = relative.split('/', 1)
-        roots = {'algor_ws': algor_ws, 'driver_ws': driver_ws}
+        roots = {'algor_ws': algor_ws, 'driver_ws': driver_ws, 'task_ws': task_ws}
         override = roots.get(parts[0]) if len(parts) == 2 else None
         path = Path(override) / parts[1] if override else Path(workspace_root) / relative
         # Do not accidentally run pull in a parent repository when a managed
@@ -57,9 +57,10 @@ def main():
     parser.add_argument('--workspace-root', required=True)
     parser.add_argument('--algor-ws')
     parser.add_argument('--driver-ws')
+    parser.add_argument('--task-ws')
     args = parser.parse_args()
     try:
-        update_repositories(args.repos_file, args.workspace_root, args.algor_ws, args.driver_ws)
+        update_repositories(args.repos_file, args.workspace_root, args.algor_ws, args.driver_ws, args.task_ws)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         parser.exit(1, f'[error] {exc}\n')
 
