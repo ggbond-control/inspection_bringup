@@ -1,0 +1,12 @@
+# D1M uses Airy and RTK. Other fields inherit param_default_faster_lio.yaml.
+laser_mapping:
+  ros__parameters:
+    common:
+      lid_topic: "/lidar/airy"                    # Airy PointCloud2 input
+      imu_topic: "/imu_shm_publisher/imu_central" # External IMU input
+    preprocess:
+      lidar_type: 4                              # Airy
+      self_box_half_size: [0.55, 0.35, 0.4]      # Filter box half-size [x, y, z], meters
+    rtk:
+      enable: true                              # Enable the default RTK configuration
+    # Initial alignment inherits score_threshold=0.5 and position=[0, 0, 0].

@@ -1,0 +1,9 @@
+# X30 uses the complete Mid360 default, with RTK disabled.
+# Keep sensor topics and the self-filter box explicit for each model.
+laser_mapping:
+  ros__parameters:
+    common:
+      lid_topic: "/livox/lidar"  # Mid360 point cloud input
+      imu_topic: "/imu/data"    # IMU input
+    preprocess:
+      self_box_half_size: [0.65, 0.35, 0.4]  # Filter box half-size [x, y, z], meters

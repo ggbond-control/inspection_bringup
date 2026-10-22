@@ -1,26 +1,82 @@
-# Copy to robot.yaml once and edit the two required fields. No init script.
-# robot.yaml is ignored by Git; all other settings remain inherited live.
+# Copy to robot.yaml and set this device's model and identity.
+# robot.yaml is ignored by Git. Uncomment only the overrides you need.
+# Restart the affected bringup service after editing; active snapshots do not reload.
+# Supported models: x30 / d1m / cyvet. Use unique IDs matching your fleet list.
+# Robot IDs use uppercase model names: X30-A / D1M-A / CYVET-A.
 model: d1m
 robot_id: D1M-A
 
-# Optional per-robot overrides; dictionary merge, lists replace.
+# Dictionaries merge recursively; lists replace the ENTIRE inherited list.
+# mqtt.sn and mission_execution_agent.robot_id automatically use robot_id.
 # system:
 #   task_hub:
 #     obstacle_snapshot_enabled: false  # 障碍事件与日志总开关，默认关闭
 #     obstacle_photo_enabled: false     # 遇障拍照，需同时开启总开关，默认关闭
 #   mqtt:
 #     host: mqtt.example.com
-#     username: ""
-#     password: ""
+#     port: 1883
+#     username: "your-username"
+#     password: "your-password"
+#   # Algorithm MQTT has independent connection settings; override if used.
+#   algorithm_mqtt:
+#     host: mqtt.example.com
+#     port: 1883
+#     username: "your-username"
+#     password: "your-password"
+#   fleet_leader_election:
+#     robot_ids: [D1M-A, D1M-B]
+
 # navigation:
+#   slam:
+#     parameters:
+#       laser_mapping:
+#         ros__parameters:
+#           initial_alignment:
+#             # Initial localization guess, not the LiDAR mounting extrinsics.
+#             position: [1.0, 2.0, 0.0]  # [x, y, z], meters; replace with actual values
+#             yaw: 90.0                 # Heading in DEGREES, not radians
+#   # Cyvet only (set model: cyvet above). D1M does not start a Livox driver.
+#   # Cyvet inherits MID360s by default. Select this complete file for MID360:
+#   livox:
+#     config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_livox_ros_driver2_mid360.json"
+#     # This example matches the MID360 file selected above.
+#     # For inherited MID360s, use Mid360s as the key and the 169.254.216.x network.
+#     parameters:
+#       MID360:
+#         host_net_info:
+#           host_ip: "169.254.181.1"  # Host interface address; it must be configured on the OS
+#       # Replaces all LiDAR entries: include EVERY device and its full extrinsics.
+#       # Do not use this one-LiDAR example on X30: it would remove its other 3 LiDARs.
+#       lidar_configs:
+#         - ip: "169.254.181.169"
+#           pcl_data_type: 1
+#           pattern_mode: 0
+#           extrinsic_parameter:
+#             roll: 0.0    # Degrees
+#             pitch: 0.0   # Degrees
+#             yaw: 0.0     # Degrees
+#             x: 0.0       # Millimeters (Livox SDK), not meters
+#             y: 0.0
+#             z: 0.0
+#   # Alternatively, select a complete external JSON instead of inline overrides:
+#   # livox:
+#   #   config: /home/cat/Config/livox.json
+#   # Standalone external files cannot be combined with livox.parameters.
+#   nav_bridge:
+#     parameters:
+#       nav_bridge_node:
+#         ros__parameters:
+#           device_id: "YOUR-CYVET-DEVICE-ID"  # Cyvet only; independent of robot_id
 #   local_planner:
 #     parameters:
 #       localPlanner:
 #         ros__parameters:
-#           motionBlockNoPathTimeout: 8.0  # existing D1M parameter; only this field overrides
-#   terrain:
-#     params_file: gridmapper_local.yaml  # gridmapper/config/; existing default file
-# External calibration files must use an absolute path to an existing file.
+#           motionBlockNoPathTimeout: 8.0
+
+# Map path and initial map can be supplied through /navigation_bringup/start.
+# initial_alignment overrides above only set the localization pose guess.
 # services:
 #   service:
 #     workspace_root: /home/cat/Workspace/task_ws
+#     environment:
+#       ROS_DOMAIN_ID: "81"

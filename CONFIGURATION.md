@@ -34,18 +34,37 @@ cp config/robot.example.yaml config/robot.yaml
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 ```
 
 第二台 D1M 只修改 `robot_id`；X30 使用 `model: x30`。`robot_id` 覆盖公共配置
 中的 `mqtt.sn` 和 `mission_execution_agent.robot_id`。有意使用不同身份时，
 可以在本机 `system` 字段中分别覆盖。
 
+Cyvet 使用以下本机身份配置（另一台改为 CYVET-B）：
+
+```yaml
+model: cyvet
+robot_id: CYVET-A
+```
+
+`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块，开启任务执行和集群选主，
+集群列表包含 X30-A、X30-B、CYVET-A、CYVET-B。任务中枢的充电退出地址保留
+部署值 `/inspection_charge_executor/exit_charge`，但 charge 模块关闭，不会由本启动
+提供该服务；Cyvet 导航也关闭充电预检查。没有外部实现时，不应执行充电任务。
+`auto_execute: true` 继承公共值，表示自动执行任务。
+`models/cyvet/services.yaml` 选择 ROS_DOMAIN_ID=81、RUSTICL_ENABLE=panfrost，
+并关闭 hardware 的开机自启；现有已运行的 hardware 服务不会仅因该字段立即停止。
+公共服务配置中的 workspace、日志、动态库路径及其他环境值继续继承。
+不要在型号层重新填写固定 navigate_config_path/system_config_path，否则会绕过型号加载。
+Cyvet 定位调用超时按部署值设为 60 秒；若初始化超过该时间，调用方可能先超时，
+导航启动不会因此自动取消。
+
 需要单机差异时，直接写在同一个文件中：
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 
 system:
   mqtt:
@@ -58,7 +77,7 @@ system:
 # 这里使用 gridmapper 包内已有的默认文件，可省略以继续使用默认。
 navigation:
   terrain:
-    params_file: gridmapper_local.yaml
+    config: gridmapper_local.yaml
 ```
 
 首次安装本次代码后，在 task_ws 中构建并 source：
@@ -114,6 +133,137 @@ scripts/manage_inspection_services.sh --config "$PWD/config/services.yaml" rende
 
 ## 导航子模块参数分层
 
+### faster_lio 公共基线与型号差异
+
+faster_lio 使用一份完整公共基线，包含原 Mid360 和 Airy 配置的全部字段。
+共有参数以 X30/Mid360 为准；RTK 的全部配置保留在 default 中，但默认关闭，
+D1M 型号层启用 RTK，并覆盖 Airy 的输入话题、雷达类型。
+所有型号的 initial_alignment.score_threshold 统一为 0.5，position 统一为 [0, 0, 0]。
+各型号文件均显式列出 common.lid_topic、common.imu_topic 和
+preprocess.self_box_half_size，即使与 default 一致，便于按型号检查和调整。
+X30、Cyvet 当前使用 Mid360 话题；三个型号的过滤盒半尺寸均为 [0.65, 0.35, 0.4] 米。
+
+```text
+config/navigation/param_default_faster_lio.yaml
+  → config/models/<model>/navigation/param_<model>_faster_lio.yaml
+  → robot.yaml 的 navigation.slam.parameters
+  → /tmp/inspection-parameters-<uid>/<内容摘要>.yaml
+  → faster_lio 子 launch 的 config 参数
+```
+
+公共 navigate.yaml 选择参数入口，型号 navigate.yaml 自动继承，无需重复声明：
+
+```yaml
+slam:
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_faster_lio.yaml"
+```
+
+解析器对 `param_default_<用途>.yaml` 自动查找当前型号目录内的
+`param_<model>_<用途>.yaml`。型号文件可省略；存在但格式错误时报错。
+本机 inline 参数优先级最高。D1M 的初始配准位置保持 `[0, 0, 0]`，
+现在直接继承公共默认值，不再重复填写。
+
+配置继续在 bringup 内递归合并为快照，未修改子包源码或引入设备自动覆盖层。
+仅源 YAML 保留注释，生成快照不保留注释；重启导航入口后重新解析。
+原公共 mid360.yaml、airy.yaml 及 D1M 的旧 airy 覆盖已被新文件替代；
+测试目录保留迁移前参数作为回归基准。普通 `config: airy.yaml` 仍引用
+faster_lio 包自己的配置文件，不受本次 bringup 文件整理影响。
+
+### 其他导航模块
+
+gridmapper 的 local/global 参数分别采用平铺命名；两者用途不同，保留各自的完整默认配置：
+
+```text
+config/navigation/param_default_gridmapper_global.yaml
+  → config/models/<model>/navigation/param_<model>_gridmapper_global.yaml
+  → robot.yaml 的 navigation.terrain.parameters
+  → 合并参数快照
+
+config/navigation/param_default_gridmapper_local.yaml
+  → config/models/<model>/navigation/param_<model>_gridmapper_local.yaml（可选）
+  → robot.yaml 的 navigation.terrain.parameters
+  → 合并参数快照
+```
+
+公共 global 地图宽高统一为 500.0 米，各型号直接继承。
+目前没有 global 型号差异，不创建空型号文件。
+local 的 X30 型号层将 min_point_height 覆盖为 -0.7；Cyvet 型号层将
+min_point_height 覆盖为 -0.7、enable_x_passthrough 设为 true、
+x_passthrough_min 设为 0.5、sensor_height_origin 设为 0.4。
+D1M 的 local 参数继续继承公共 default。
+需要选择 global 配置时显式设置：
+
+```yaml
+navigation:
+  terrain:
+    config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_gridmapper_global.yaml"
+```
+
+上述片段用于 robot.yaml；公共或型号 navigate.yaml 中从 terrain 字段开始填写。
+默认 terrain 选择 param_default_gridmapper_local.yaml，参数值及 local 模式保持不变。
+
+### multi_map_nav 公共参数与插件差异
+
+公共入口为 `config/navigation/param_default_multi_map_nav.yaml`，按以下顺序合并：
+
+```text
+param_default_multi_map_nav.yaml
+  → models/<model>/navigation/param_<model>_multi_map_nav.yaml
+  → robot.yaml 的 navigation.global_planner.parameters
+  → 参数快照，通过 params_path 传给子 launch
+```
+
+公共参数以原 new_local 为基准；X30/Cyvet 最终参数与原 new_local 一致，
+D1M 与原 straight_local 一致，但各型号的 normal_xy_tolerance 和
+normal_yaw_tolerance 均按当前要求覆盖为 0.25（分别为米和弧度）。
+各型号文件均显式维护 global_costmap 的 footprint 及上述两个容差字段，
+即使 footprint 与 default 相同也保留。local_costmap 的 footprint 仍继承 default。
+型号文件按字段覆盖，其他节点及 planner_server
+未被覆盖的通用参数继续继承。仅 GridBased.plugin 这个字段切换插件类型，
+不会增加第二个 planner_server，也不在运行中直接替换插件。
+
+| 参数 | 公共默认 / X30 / Cyvet | D1M 覆盖 |
+| --- | --- | --- |
+| inflation_layer.cost_scaling_factor | 5.0 | 3.0 |
+| inflation_layer.inflation_radius | 0.25 | 0.8 |
+| GridBased.cost_travel_multiplier | 10.0 | 2.0 |
+| GridBased.plugin | nav2_smac_planner::SmacPlanner2D | smac_straight_planner::SmacStraightPlanner |
+
+D1M 独有的完整 `straightening` 配置只保存在 D1M 型号文件中，不放进 default。
+原 new_local 独有的 `minimum_turning_radius: 0.0` 放在 X30/Cyvet 型号文件中，
+避免带入 D1M。没有 robot.yaml 时使用公共配置，不额外添加型号专属参数。
+原始两份配置移至 `test/fixtures/multi_map_nav/` 用于完整参数回归比对。
+
+所有型号的 `global_planner.config` 使用同一公共入口（Cyvet 直接继承公共选择）。
+bringup 合并 default、型号及单机参数后，将生成文件通过子 launch 的 params_path 传入。
+bringup 不再提供 params_file 或 params_path 配置字段；完整外部文件也使用 config 指定。
+
+### local_planner 公共参数与运动模型
+
+公共入口为 `config/navigation/param_default_local_planner.yaml`，通用默认值
+以当前 X30 通用参数为基准，默认跟随模式为 omni，保留原始注释。
+`odomTimestampCheckEn` 默认 true，D1M 型号层覆盖为 false；
+X30/Cyvet 继承 true。`motionBlockNoPathTimeout` 默认 3.0 秒，D1M 覆盖为 8.0 秒。
+`initialModel`、`flat`、`offroad` 不放入 default，各型号文件完整独立配置。
+因此 default 本身不表示一套完整的机器人运动模型；自动型号部署应设置 robot.yaml。
+
+| 型号 | 型号文件 | 跟随模式 | lookAheadDis | motionBlockNoPathTimeout |
+| --- | --- | --- | --- | --- |
+| X30 | param_x30_local_planner.yaml | omni | 0.5 | 3.0 |
+| D1M | param_d1m_local_planner.yaml | turn_preferred | 1.5 | 8.0 |
+| Cyvet | param_cyvet_local_planner.yaml | omni | 0.5 | 3.0 |
+
+D1M/Cyvet 型号文件覆盖与 default 不同的规划/跟随参数；X30 直接继承公共值。
+D1M 在型号文件中选择 turn_preferred，全部 turn_* 参数仅在 D1M 文件中定义。
+X30/Cyvet 使用 omni，合并结果不包含 turn_* 参数。
+Cyvet 按提供的实机配置维护：sensorOffsetX 为 0.35，车体长宽为 0.7/0.4，
+使用 correspondences_cyvet.txt 并关闭 gaitSwitchEn；offroad 速度/加减速及
+slowdownDisThre=1.0、curvatureDecelGain=1.25 均按实机值配置。
+
+原配置移至 `test/fixtures/local_planner/`，仅用于回归比对，不参与启动。
+
+### 参数合并规则与本机覆盖
+
 `navigate.yaml` 管理启动行为和文件选择；子模块自身的参数另外按三层合并。
 公共层保留完整参数文件，型号层只写相同节点/字段的差异，单机层写在
 `robot.yaml` 的 `navigation.<模块>.parameters` 中，不需要复制完整文件。
@@ -121,18 +271,22 @@ scripts/manage_inspection_services.sh --config "$PWD/config/services.yaml" rende
 例如当前 D1M 的局部规划：
 
 ```text
-config/navigation/local_planner/d1m.yaml                  # 完整公共基线，超时 3.0
-  → config/models/d1m/navigation/local_planner/d1m.yaml    # 型号差异，超时 8.0
+config/navigation/param_default_local_planner.yaml         # X30 公共默认，超时 3.0
+  → config/models/d1m/navigation/param_d1m_local_planner.yaml # D1M 运动模型与差异，超时 8.0
   → robot.yaml 的 navigation.local_planner.parameters   # 可选单机差异
   → /tmp/inspection-parameters-<uid>/<内容摘要>.yaml       # 自动生成，交给子模块
 ```
 
-型号文件内容沿用原始参数结构：
+型号文件沿用原始参数结构，例如 D1M 的运动模型片段：
 
 ```yaml
-localPlanner:
+/**:
   ros__parameters:
-    motionBlockNoPathTimeout: 8.0
+    initialModel: offroad
+    flat:
+      maxSpeed: 1.2
+    offroad:
+      maxSpeed: 2.2
 ```
 
 若某台机器需要把该参数从型号默认的 8.0 改为 9.0（基于现有字段的增量示例）：
@@ -148,17 +302,19 @@ navigation:
           motionBlockNoPathTimeout: 9.0
 ```
 
-`config/models/d1m/navigate.yaml` 选择公共参数基线：
+公共 `config/navigate.yaml` 选择参数基线，D1M 等型号自动继承：
 
 ```yaml
 local_planner:
-  config: "${INSPECTION_CONFIG_DIR}/navigation/local_planner/d1m.yaml"
+  config: "${INSPECTION_CONFIG_DIR}/navigation/param_default_local_planner.yaml"
 ```
 
 只有显式的 `${INSPECTION_CONFIG_DIR}/navigation/` 引用启用参数分层。解析器
 使用本次实际选中的配置根目录展开它，不要求手动 export，也不受旧 shell
-变量影响；型号文件按公共文件在 `navigation/` 下的相同相对位置查找。
+变量影响；除上述 `param_default_` 命名入口外，型号文件按公共文件在
+`navigation/` 下的相同相对位置查找。
 型号文件缺省时继承公共文件，公共文件不存在则报错，不搜索子模块目录回退。
+型号 navigate.yaml 可省略，但需要选择不同 nav_bridge 实现时应保留。
 本机 `.parameters` 字典递归覆盖，数组整体替换，false、0、空字符串均保留。
 
 普通相对文件路径仍然相对所属子模块包的 config/ 或 params/；普通绝对路径
@@ -166,18 +322,35 @@ local_planner:
 `.parameters`，避免单机增量被忽略。修改参数后重启 navigation；supervisor
 及工作进程共用已解析快照，运行过程中不会因源文件改变而混用参数。
 
-不同传感器或实现保留各自完整基线，例如 mid360.yaml 与 airy.yaml、
-x30_params.yaml 与 d1_max_params.yaml。它们是不同参数方案；同一方案的
-型号调参写在型号层，不需要给默认文件添加删除字段等额外语法。
+nav_bridge 没有公共 default 参数文件。每个型号在 navigate.yaml 中选择
+robot_type（x30/d1m/cyvet）和完整的型号参数文件：
+
+```yaml
+nav_bridge:
+  robot_type: cyvet
+  config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_nav_bridge.yaml"
+```
+
+加载顺序为型号完整文件 → robot.yaml 的 navigation.nav_bridge.parameters → 参数快照。
+device_id、IP 等单机差异可在 parameters 中覆盖。公共 nav_bridge.config 和 livox.config
+留空，由型号层选择完整文件；未指定文件时子 launch 仍使用包内默认配置。
+X30 的充电退出服务在型号层指定为 /inspection_charge_executor/exit_charge；
+其他型号继承公共 /inspection_charge_executor/undock，Cyvet 关闭 charge_precheck。
+nav_bridge_config 是 launch 文件覆盖参数，运行时服务字段为 nav_bridge.config。
+内部传给 nav_bridge 子 launch 的参数仍叫 params_file。子 launch 接受 d1m，
+并保留 d1_max 旧别名；可执行程序名仍为 d1_max_nav_bridge_node。
+cyclonedds_config 是独立 XML 路径，不参与 YAML 合并。
 
 默认已集中管理 nav_bridge、faster_lio、gridmapper、local_planner 和
-multi_map_nav 的 YAML。Livox 支持相同的 JSON 分层，数组整体替换；未显式
-选择 JSON 时，继续由驱动按 mid360/mid360s 选择默认文件，避免固定一个 JSON
-破坏原有型号选择。XML 文件不参与参数字典合并。
+multi_map_nav 的 YAML。Livox 不设公共 default JSON，也不再使用 livox.model。
+livox.config 直接选择型号目录下的完整 JSON，单机 navigation.livox.parameters
+可覆盖其中字段，数组整体替换。X30 选择四雷达 MID360 配置；Cyvet 默认选择
+param_cyvet_livox_ros_driver2_mid360s.json，MID360 版本保留为可选完整文件。
+D1M 将 livox.config 设为空，所有模式的启动序列均不包含 livox。
+XML 文件不参与参数字典合并。
 
-原 `global_planner.params_file` 文件名入口保留。型号、本机、launch 或运行时
-请求显式填写它而没有同时填写 `params_path` 时，清除继承的完整路径；两者
-同时指定则 `params_path` 优先。单独更换 nav_bridge 的 robot_type 时，应
+global_planner 的文件入口统一为 config，launch 覆盖参数为 global_config，
+运行时服务对应 global_planner.config。单独更换 nav_bridge 的 robot_type 时，应
 同步选择对应参数文件；本机、launch 或运行时请求显式切换类型且未指定文件时
 沿用子模块默认，避免继承另一个型号的参数。
 
@@ -225,19 +398,19 @@ export INSPECTION_CONFIG_DIR="$PWD/config"
 
 ```yaml
 nav_bridge:
-  params_file: d1_max_params.yaml
+  config: d1_max_params.yaml
 slam:
   config: mid360.yaml
 terrain:
-  params_file: gridmapper_local.yaml
+  config: gridmapper_local.yaml
 local_planner:
   config: d1m.yaml
 global_planner:
-  params_path: straight_local.yaml
+  config: straight_local.yaml
 ```
 
-例如 `terrain.params_file` 指向 `gridmapper/config/gridmapper_local.yaml`，
-而不是 `config/models/d1m/gridmapper_local.yaml`。`global_planner.params_path`
+例如 `terrain.config` 指向 `gridmapper/config/gridmapper_local.yaml`，
+而不是 `config/models/d1m/gridmapper_local.yaml`。`global_planner.config`
 指向 `multi_map_nav/params/straight_local.yaml`。
 
 绝对路径示例（该文件在当前本地环境实际存在；板卡上应填写板卡的实际路径）：
@@ -262,19 +435,18 @@ realpath config/calibration/d1m.yaml
 
 | bringup 字段 | 子模块参数 | 说明 |
 | --- | --- | --- |
-| `nav_bridge.robot_type` | `robot_type` | 如 `x30`、`d1_max` |
-| `nav_bridge.params_file` | `params_file` | 相对 `nav_bridge/config/`，或绝对路径 |
+| `nav_bridge.robot_type` | `robot_type` | `x30`、`d1m`、`cyvet` |
+| `nav_bridge.config` | `params_file` | 型号完整文件；普通相对路径相对 `nav_bridge/config/` |
 | `nav_bridge.cyclonedds_config` | `cyclonedds_config` | 同上，如已有 `cyvet_cyclonedds.xml` |
 | `livox.launch_file` | 选择 launch 文件 | 默认仍为 `msg_multi_MID360_launch.py` |
-| `livox.user_config_path` | `user_config_path` | 相对 `livox_ros_driver2/config/`，如已有 `MID360_config.json`，或绝对路径 |
+| `livox.config` | `user_config_path` | 型号完整 JSON；普通相对路径相对 `livox_ros_driver2/config/` |
 | `slam.config` | `config` | 相对 `faster_lio/config/`，或绝对路径 |
-| `terrain.params_file` | `params_file` | 相对 `gridmapper/config/`，或绝对路径 |
+| `terrain.config` | `params_file` | 相对 `gridmapper/config/`，或绝对路径 |
 | `local_planner.config` | `config` | 相对 `local_planner/config/`，或绝对路径 |
-| `global_planner.params_file` | `params_file` | 保留旧语义：包内文件名，不含扩展名 |
-| `global_planner.params_path` | `params_path` | 相对 `multi_map_nav/params/`，或绝对路径；优先于上述名称 |
+| `global_planner.config` | `params_path` | 相对 `multi_map_nav/params/`，或绝对路径 |
 
-`global_planner.params_file: straight_local` 保留原有的“不含扩展名的配置名称”
-语义；需要指定文件路径时使用 `params_path`。地图目录等数据路径使用原有语义，
+`global_planner.config` 使用包含扩展名的文件路径，例如 `straight_local.yaml`。
+地图目录等数据路径使用原有语义，
 建议写绝对路径；它们不属于本节的子模块配置文件入口。
 
 system 中的 `gimbal.params_file`、`live_stream.config_path`、`gas.params_file`、
@@ -314,7 +486,7 @@ scripts/manage_inspection_services.sh render
 
 ```yaml
 model: d1m
-robot_id: D1M-001
+robot_id: D1M-A
 services:
   service:
     environment:

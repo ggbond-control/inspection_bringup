@@ -1,0 +1,37 @@
+# Cyvet deployed motion models, geometry and tracking overrides.
+/**:
+  ros__parameters:
+    sensorOffsetX: 0.35  # 传感器相对车体 X 方向偏移（m）
+    initialModel: "offroad"  # 启动时使用的运动模型名称
+    flat:
+      maxSpeed: 2.0  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.5  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.0  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 2.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.0  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 2.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 3.5  # 模型前向最大减速度（m/s2）
+      maxDecelY: 1.5  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
+    offroad:
+      maxSpeed: 1.6  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 1.0  # 模型允许的最大横向速度（m/s）
+      maxYawRate: 1.5  # 模型允许的最大偏航角速度（rad/s）
+      maxAccelX: 1.5  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.5  # 模型横向最大加速度（m/s2）
+      maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 6.0  # 模型前向最大减速度（m/s2）
+      maxDecelY: 3.0  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
+
+localPlanner:
+  ros__parameters:
+    vehicleLength: 0.7  # 机器人车体长度（m）
+    vehicleWidth: 0.4  # 机器人车体宽度（m）
+    correspondencesFile: "correspondences_cyvet.txt"  # 地形体素到候选路径对应关系文件名
+    gaitSwitchEn: false  # 不按目标阶段切换步态
+
+pathFollower:
+  ros__parameters:
+    slowdownDisThre: 1.0  # 距路径末端开始降低前向速度的距离（m）
+    curvatureDecelGain: 0.75  # 曲率导致前向减速的增益

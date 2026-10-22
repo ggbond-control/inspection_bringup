@@ -1,0 +1,7 @@
+nav_bridge:
+  robot_type: cyvet
+  config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_nav_bridge.yaml"
+  readiness:
+    charge_precheck: false
+livox:
+  config: "${INSPECTION_CONFIG_DIR}/models/cyvet/navigation/param_cyvet_livox_ros_driver2_mid360s.json"

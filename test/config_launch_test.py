@@ -93,7 +93,7 @@ class LaunchConfiguration(unittest.TestCase):
         snapshot_path = command[command.index('--config') + 1]
         self.addCleanup(os.unlink, snapshot_path)
         config = supervisor.load_yaml(snapshot_path)
-        self.assertEqual(config['nav_bridge']['robot_type'], 'd1_max')
+        self.assertEqual(config['nav_bridge']['robot_type'], 'd1m')
         self.assertEqual(config['local_planner']['config'], self.package_file('local_planner', 'x30.yaml'))
         self.assertEqual(config['slam']['prior_dir'], '/tmp/inspection-map')
         self.assertIs(config['terrain']['use_gpu'], False)
@@ -109,20 +109,20 @@ class LaunchConfiguration(unittest.TestCase):
     def test_cli_file_path_is_absolute_before_supervisor_snapshot(self):
         custom = Path(self.temp.name) / 'custom.yaml'
         custom.write_text('{}\n')
-        context = context_for(navigation, terrain_params_file=str(custom))
+        context = context_for(navigation, terrain_config=str(custom))
         config = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
-        self.assertEqual(config['terrain']['params_file'], str(custom))
+        self.assertEqual(config['terrain']['config'], str(custom))
 
     def test_cli_relative_paths_use_the_same_package_directories_as_yaml(self):
-        context = context_for(navigation, terrain_params_file='./gridmapper_local.yaml',
+        context = context_for(navigation, terrain_config='./gridmapper_local.yaml',
                               local_planner_config='./d1m.yaml',
-                              global_params_path='straight_local.yaml',
-                              livox_user_config_path='MID360_config.json')
+                              global_config='straight_local.yaml',
+                              livox_config='MID360_config.json')
         config = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
-        self.assertEqual(config['terrain']['params_file'], self.package_file('gridmapper', 'gridmapper_local.yaml'))
+        self.assertEqual(config['terrain']['config'], self.package_file('gridmapper', 'gridmapper_local.yaml'))
         self.assertEqual(config['local_planner']['config'], self.package_file('local_planner', 'd1m.yaml'))
-        self.assertEqual(config['livox']['user_config_path'], self.package_file('livox_ros_driver2', 'MID360_config.json'))
-        self.assertEqual(config['global_planner']['params_path'],
+        self.assertEqual(config['livox']['config'], self.package_file('livox_ros_driver2', 'MID360_config.json'))
+        self.assertEqual(config['global_planner']['config'],
                          str(self.prefix / 'share/multi_map_nav/params/straight_local.yaml'))
 
     def test_runtime_request_resolves_relative_files_before_transition(self):
@@ -136,10 +136,12 @@ class LaunchConfiguration(unittest.TestCase):
         node.map_context = {}
         node.allowed_paths = supervisor.flatten_leaves(config)
         request = SetParameters.Request(parameters=[
-            Parameter('local_planner.config', value='./x30.yaml').to_parameter_msg()])
+            Parameter('local_planner.config', value='./x30.yaml').to_parameter_msg(),
+            Parameter('terrain.config', value='./gridmapper_local.yaml').to_parameter_msg()])
         value, provided, results = node.resolve_request(request)
         self.assertEqual(value['local_planner']['config'], self.package_file('local_planner', 'x30.yaml'))
-        self.assertEqual(provided, {'local_planner.config'})
+        self.assertEqual(value['terrain']['config'], self.package_file('gridmapper', 'gridmapper_local.yaml'))
+        self.assertEqual(provided, {'local_planner.config', 'terrain.config'})
         self.assertTrue(all(result.successful for result in results))
 
     def test_d1m_sequences_and_control_actions_pass_supervisor_validation(self):
@@ -159,10 +161,11 @@ class LaunchConfiguration(unittest.TestCase):
         self.assertEqual(node.layer_sequence(config, 'add', supervisor.MANUAL_LOCALIZED, 'navigation'),
                          ('terrain', 'local_planner', 'global_planner'))
 
-    def test_cli_legacy_global_selector_replaces_managed_path(self):
-        context = context_for(navigation, global_params_file='new_local')
+    def test_cli_global_config_replaces_managed_path(self):
+        context = context_for(navigation, global_config='straight_local.yaml')
         value = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
-        self.assertEqual(value['global_planner']['params_file'], 'new_local')
+        self.assertEqual(value['global_planner']['config'],
+                         str(self.prefix / 'share/multi_map_nav/params/straight_local.yaml'))
         self.assertNotIn('params_path', value['global_planner'])
 
     def test_runtime_selectors_do_not_inherit_incompatible_files(self):
@@ -175,21 +178,23 @@ class LaunchConfiguration(unittest.TestCase):
         node.map_context = {}
         node.allowed_paths = supervisor.flatten_leaves(node.base_config)
         request = SetParameters.Request(parameters=[
-            Parameter('global_planner.params_file', value='new_local').to_parameter_msg(),
+            Parameter('global_planner.config', value='straight_local.yaml').to_parameter_msg(),
             Parameter('nav_bridge.robot_type', value='cyvet').to_parameter_msg()])
         value, _, results = node.resolve_request(request)
         self.assertTrue(all(result.successful for result in results))
         self.assertNotIn('params_path', value['global_planner'])
-        self.assertNotIn('params_file', value['nav_bridge'])
+        self.assertEqual(value['global_planner']['config'],
+                         str(self.prefix / 'share/multi_map_nav/params/straight_local.yaml'))
+        self.assertNotIn('config', value['nav_bridge'])
 
     def test_cli_model_file_uses_layers_and_switching_robot_type_uses_child_default(self):
-        context = context_for(navigation, terrain_params_file=
-            '${INSPECTION_CONFIG_DIR}/navigation/gridmapper/gridmapper_global.yaml',
+        context = context_for(navigation, terrain_config=
+            '${INSPECTION_CONFIG_DIR}/navigation/param_default_gridmapper_global.yaml',
             nav_bridge_robot_type='cyvet')
         value = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
-        self.assertEqual(cfg.read_yaml(value['terrain']['params_file'])['gridmapper_node']
+        self.assertEqual(cfg.read_yaml(value['terrain']['config'])['gridmapper_node']
                          ['ros__parameters']['global_map_width'], 500.0)
-        self.assertNotIn('params_file', value['nav_bridge'])
+        self.assertNotIn('config', value['nav_bridge'])
 
     def test_immediate_mode_forwards_resolved_cli_file_path(self):
         custom = Path(self.temp.name) / 'custom.yaml'
@@ -214,8 +219,8 @@ class LaunchConfiguration(unittest.TestCase):
         external = self.root / 'external.yaml'
         external.write_text('{}\n')
         config = cfg.load_config('navigation')
-        for module, field in [('nav_bridge', 'params_file'), ('terrain', 'params_file'),
-                              ('global_planner', 'params_path'), ('livox', 'user_config_path')]:
+        for module, field in [('nav_bridge', 'config'), ('terrain', 'config'),
+                              ('global_planner', 'config'), ('livox', 'config')]:
             config[module][field] = str(external)
         config['livox']['launch_file'] = 'msg_MID360_launch.py'
         config['bringup']['wait_for_readiness'] = False
@@ -229,21 +234,22 @@ class LaunchConfiguration(unittest.TestCase):
         context = context_for(navigation)
         with patch.object(navigation, 'include_package_launch', side_effect=include):
             navigation.build_navigation_actions(context, config, use_launch_overrides=False)
-        self.assertEqual(captured['nav_bridge'][1]['robot_type'], 'd1_max')
+        self.assertEqual(captured['nav_bridge'][1]['robot_type'], 'd1m')
         self.assertEqual(captured['nav_bridge'][1]['params_file'], str(external))
         self.assertEqual(captured['faster_lio'][1]['config'], config['slam']['config'])
         self.assertEqual(captured['gridmapper'][1]['params_file'], str(external))
         self.assertEqual(captured['local_planner'][1]['config'], config['local_planner']['config'])
-        self.assertEqual(captured['multi_map_nav'][1]['params_file'], 'straight_local')
+        self.assertNotIn('params_file', captured['multi_map_nav'][1])
         self.assertEqual(captured['multi_map_nav'][1]['params_path'], str(external))
         self.assertEqual(captured['livox_ros_driver2'][0], 'msg_MID360_launch.py')
         self.assertEqual(captured['livox_ros_driver2'][1]['user_config_path'], str(external))
+        self.assertNotIn('model', captured['livox_ros_driver2'][1])
 
     def test_legacy_config_does_not_send_new_optional_arguments(self):
         config = cfg.read_yaml(self.root / 'navigate.yaml')
-        for section, field in [('nav_bridge', 'params_file'), ('slam', 'config'),
-                               ('terrain', 'params_file'), ('local_planner', 'config'),
-                               ('global_planner', 'params_path')]:
+        for section, field in [('nav_bridge', 'config'), ('slam', 'config'),
+                               ('terrain', 'config'), ('local_planner', 'config'),
+                               ('global_planner', 'config'), ('livox', 'config')]:
             config[section].pop(field)
         legacy = self.root / 'legacy.yaml'
         legacy.write_text(yaml.safe_dump(config))

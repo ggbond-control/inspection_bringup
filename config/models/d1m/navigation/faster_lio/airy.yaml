@@ -1,8 +1,0 @@
-# D1M-B working-tree parameter differences; other fields inherit the public profile.
-laser_mapping:
-  ros__parameters:
-    initial_alignment:
-      position:
-      - 0.0
-      - 0.0
-      - 0.0

@@ -1,0 +1,23 @@
+nav_bridge_node:
+  ros__parameters:
+    device_id: "E03C1CBAD8D2A104"
+    robot_domain_id: 42
+    robot_service_name: "robotServer"
+    event_topic: "/robotServer/Event"
+    enable_observations: true
+    connect_timeout_ms: 5000
+    reconnect_interval_ms: 2000
+    action_timeout_ms: 10000
+    # 200 ms caused ambiguous velocity/stop ACKs on Cyvet-V1.00.000; use 500 ms.
+    rpc_timeout_ms: 500
+    lease_ms: 5000
+    # 30 Hz produced ambiguous ACKs; 10 Hz passed the attended six-axis check.
+    cmd_vel_rate_hz: 10.0
+    cmd_vel_timeout_ms: 500
+    telemetry_timeout_ms: 2000
+    lateral_sign: 1.0
+    # stand/ready explicitly selects the vendor model; there is no local speed tier.
+    default_control_profile: "slow"
+    imu_frame_id: "imu_link"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"

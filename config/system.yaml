@@ -17,7 +17,7 @@ algorithm:
   transport: mqtt
 
 mission_execution_agent:
-  robot_id: x30-A
+  robot_id: X30-A
   heartbeat_topic: /mission_execution/heartbeat
   fleet_state_topic: /fleet/state
   odometry_topic: /odometry_multi_maps
@@ -44,7 +44,7 @@ mission_execution_agent:
 
 fleet_leader_election:
   cluster_id: company2-fleet
-  robot_ids: [x30-A, x30-B]
+  robot_ids: [X30-A, X30-B]
   data_root: /home/cat/Workspace/task_ws/src/fleet_leader_election/runtime
   heartbeat_interval_seconds: 0.25
   election_timeout_seconds: 1.0
@@ -53,7 +53,7 @@ fleet_leader_election:
   recovery_observation_seconds: 0.5
 
 mqtt:
-  sn: x30-A
+  sn: X30-A
   host: 47.99.202.196
   port: 20402
   username: "jiangxi"
