@@ -256,11 +256,36 @@ ros2 service call /navigation_bringup/start rcl_interfaces/srv/SetParameters \
 "{parameters: [
   {name: 'mode', value: {type: 4, string_value: 'nav'}},
   {name: 'slam.prior_dir', value: {type: 4, string_value: '/home/cat/Workspace/Maps/company2'}},
-  {name: 'global_planner.initial_map', value: {type: 4, string_value: 'map_000'}}
+  {name: 'global_planner.initial_map', value: {type: 4, string_value: 'map_000'}},
+  {name: 'slam.initial_pose', value: {type: 8, double_array_value: [1.0, 2.0, 0.0, 90.0]}}
 ]}"
 ```
 
+This example selects `nav` mode, loads the map directory `company2` and initial
+map `map_000`, and supplies an initial localization guess of x=1 m, y=2 m,
+z=0 m and yaw=90 degrees for this request.
+
 If `global_planner.multi_map_dir` is omitted, it reuses `slam.prior_dir`.
+
+To override the initial localization guess for this request, add this entry to
+the service's `parameters` array:
+
+```yaml
+{name: 'slam.initial_pose', value: {type: 8, double_array_value: [1.0, 2.0, 0.0, 90.0]}}
+```
+
+`slam.initial_pose` accepts 2 to 4 finite numbers `[x, y, z, yaw]`, in meters
+and degrees. Missing trailing values are zero: `[1.0, 2.0]` means
+`[1.0, 2.0, 0.0, 0.0]`. Integer arrays (`type: 7`, `integer_array_value`) are
+also accepted. Other types, invalid lengths and non-finite values return
+`successful: false` without starting or stopping workers.
+
+When this request starts SLAM, the array overrides both
+`laser_mapping.ros__parameters.initial_alignment.position` and `yaw`, above
+defaults, model parameters and `robot.yaml`. It is not cached, written back to
+configuration files, compared with previous requests or used to trigger a restart.
+If SLAM remains running or is not started, the initial pose is not applied.
+Omitting it uses the existing configuration layers.
 
 `mode` accepts:
 

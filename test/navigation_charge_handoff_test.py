@@ -5,9 +5,12 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import yaml
 
 os.environ['ROS_DOMAIN_ID'] = '197'
 os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'LOCALHOST'
@@ -15,6 +18,7 @@ os.environ['RMW_IMPLEMENTATION'] = 'rmw_fastrtps_cpp'
 
 import rclpy
 from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import Int32
 from std_srvs.srv import Trigger
@@ -23,6 +27,53 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('navigation_supervisor', ROOT / 'scripts/navigation_supervisor.py')
 supervisor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(supervisor)
+
+
+class InitialPose(unittest.TestCase):
+    def test_padding_and_validation(self):
+        for value, expected in (([1, 2], [1., 2., 0., 0.]),
+                                ([1, 2, 3], [1., 2., 3., 0.]),
+                                ([1, 2, 3, 90], [1., 2., 3., 90.])):
+            self.assertEqual(supervisor.normalize_initial_pose(value), expected)
+        for value in ([], [1], [1, 2, 3, 4, 5], [True, 2], ['1', 2],
+                      [float('nan'), 2], [1, float('inf')], '1,2'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                supervisor.normalize_initial_pose(value)
+
+    def test_request_is_not_a_transition_parameter(self):
+        node = SimpleNamespace(active_config={'mode': 'nav'}, base_config={},
+                               current_state='nav', allowed_paths={}, result=supervisor.NavigationSupervisor.result)
+        request = SetParameters.Request(parameters=[Parameter(name='slam.initial_pose',
+            value=ParameterValue(type=8, double_array_value=[1., 2.]))])
+        with patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config):
+            config, paths, results = supervisor.NavigationSupervisor.resolve_request(node, request)
+        self.assertTrue(all(result.successful for result in results))
+        self.assertEqual(paths, set())
+        self.assertEqual(supervisor.NavigationSupervisor.select_transition(node, config, 'nav', paths), 'noop')
+        request.parameters[0].value.double_array_value = [1.]
+        with patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config):
+            _, _, results = supervisor.NavigationSupervisor.resolve_request(node, request)
+        self.assertFalse(results[0].successful)
+
+    def test_snapshot_override_does_not_leak_to_next_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'slam.yaml'
+            original = {'laser_mapping': {'ros__parameters': {'initial_alignment': {
+                'position': [9., 8., 7.], 'yaw': 45., 'score_threshold': .5}}}}
+            source.write_text(yaml.safe_dump(original))
+            config = {'slam': {'config': str(source)}, supervisor.REQUEST_INITIAL_POSE: [1., 2., 0., 0.]}
+            runtime = supervisor.NavigationSupervisor.layer_config(None, config, ('slam',))
+            alignment = yaml.safe_load(Path(runtime['slam']['config']).read_text())['laser_mapping']['ros__parameters']['initial_alignment']
+            self.assertEqual(alignment, {'position': [1., 2., 0.], 'yaw': 0., 'score_threshold': .5})
+            self.assertEqual(yaml.safe_load(source.read_text()), original)
+            node = SimpleNamespace(map_context={})
+            supervisor.NavigationSupervisor.commit_success(node, config, 'nav', 'localized')
+            self.assertNotIn(supervisor.REQUEST_INITIAL_POSE, node.active_config)
+            next_runtime = supervisor.NavigationSupervisor.layer_config(None, node.active_config, ('slam',))
+            self.assertEqual(next_runtime['slam']['config'], str(source))
+            bridge = supervisor.NavigationSupervisor.layer_config(None, config, ('nav_bridge',))
+            self.assertEqual(bridge['slam']['config'], str(source))
+            self.assertNotIn(supervisor.REQUEST_INITIAL_POSE, bridge)
 
 
 class StartupOrdering(unittest.TestCase):

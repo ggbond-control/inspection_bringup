@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import copy
+import math
 import os
 import signal
 import subprocess
@@ -12,7 +13,7 @@ import uuid
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bringup_config import apply_module_switches, load_config, resolve_files
+from bringup_config import apply_module_switches, load_config, parameter_snapshot, read_parameter_file, resolve_files
 from process_shutdown import stop_processes
 
 import rclpy
@@ -42,6 +43,15 @@ NAV_EXTENSION_MODULES = (
     "global_planner",
 )
 SUPPORTED_MODULES = MANUAL_MODULES + NAV_EXTENSION_MODULES
+REQUEST_INITIAL_POSE = "_request_initial_pose"
+
+
+def normalize_initial_pose(value):
+    if (not isinstance(value, list) or not 2 <= len(value) <= 4 or
+            any(isinstance(item, bool) or not isinstance(item, (int, float)) or
+                not math.isfinite(item) for item in value)):
+        raise ValueError("slam.initial_pose must contain 2 to 4 finite numbers [x, y, z, yaw_degrees]")
+    return [float(item) for item in value] + [0.0] * (4 - len(value))
 
 
 def as_bool(value):
@@ -217,6 +227,11 @@ class NavigationSupervisor(Node):
         results = []
         for parameter in request.parameters:
             try:
+                if parameter.name == "slam.initial_pose":
+                    config[REQUEST_INITIAL_POSE] = normalize_initial_pose(
+                        parameter_value_to_python(parameter.value))
+                    results.append(self.result(True, f"accepted {parameter.name}"))
+                    continue
                 if parameter.name not in self.allowed_paths:
                     raise ValueError(f"unknown navigation parameter: {parameter.name}")
                 raw_value = parameter_value_to_python(parameter.value)
@@ -521,6 +536,7 @@ class NavigationSupervisor(Node):
 
     def commit_success(self, config, state, manual_profile):
         self.active_config = copy.deepcopy(config)
+        self.active_config.pop(REQUEST_INITIAL_POSE, None)
         self.current_state = state
         self.manual_profile = manual_profile if state == MANUAL else MANUAL_LOCALIZED
         if self.manual_profile == MANUAL_BRIDGE_ONLY:
@@ -572,6 +588,14 @@ class NavigationSupervisor(Node):
 
     def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
+        initial_pose = runtime_config.pop(REQUEST_INITIAL_POSE, None)
+        if initial_pose is not None and "slam" in sequence:
+            parameters = read_parameter_file(runtime_config["slam"]["config"])
+            alignment = parameters.setdefault("laser_mapping", {}).setdefault(
+                "ros__parameters", {}).setdefault("initial_alignment", {})
+            alignment["position"] = initial_pose[:3]
+            alignment["yaw"] = initial_pose[3]
+            runtime_config["slam"]["config"] = parameter_snapshot(parameters, ".yaml")
         runtime_config.pop("launch_module_switches", None)
         runtime_config.setdefault("bringup", {})["start_mode"] = "immediate"
         # A service request cannot report success until module readiness and every
