@@ -76,6 +76,41 @@ class InitialPose(unittest.TestCase):
             self.assertNotIn(supervisor.REQUEST_INITIAL_POSE, bridge)
 
 
+class RestartRequest(unittest.TestCase):
+    def test_request_restart_is_optional_and_not_cached(self):
+        for restart in (True, False):
+            node = SimpleNamespace(active_config={'mode': 'nav'}, base_config={},
+                current_state='nav', allowed_paths={}, map_context={},
+                result=supervisor.NavigationSupervisor.result)
+            request = SetParameters.Request(parameters=[Parameter(name='restart',
+                value=ParameterValue(type=1, bool_value=restart))])
+            with patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config):
+                config, paths, results = supervisor.NavigationSupervisor.resolve_request(node, request)
+            self.assertTrue(all(result.successful for result in results))
+            self.assertEqual(paths, set())
+            self.assertEqual(supervisor.NavigationSupervisor.select_transition(node, config, 'nav', paths),
+                             'full_restart' if restart else 'noop')
+            node.current_state = supervisor.STOPPED
+            self.assertEqual(supervisor.NavigationSupervisor.select_transition(node, config, 'nav', paths),
+                             'full_restart' if restart else 'full_start')
+            runtime = supervisor.NavigationSupervisor.layer_config(node, config, ('nav_bridge',))
+            self.assertNotIn(supervisor.REQUEST_RESTART, runtime)
+            supervisor.NavigationSupervisor.commit_success(node, config, 'nav', 'localized')
+            self.assertNotIn(supervisor.REQUEST_RESTART, node.active_config)
+            self.assertEqual(supervisor.NavigationSupervisor.select_transition(
+                node, node.active_config, 'nav', set()), 'noop')
+
+    def test_restart_rejects_non_bool_without_transition(self):
+        node = SimpleNamespace(active_config={'mode': 'nav'}, base_config={},
+            current_state='nav', allowed_paths={}, result=supervisor.NavigationSupervisor.result)
+        request = SetParameters.Request(parameters=[Parameter(name='restart',
+            value=ParameterValue(type=4, string_value='true'))])
+        with patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config):
+            config, paths, results = supervisor.NavigationSupervisor.resolve_request(node, request)
+        self.assertFalse(results[0].successful)
+        self.assertNotIn(supervisor.REQUEST_RESTART, config)
+
+
 class StartupOrdering(unittest.TestCase):
     def test_restart_request_is_strict_and_not_cached(self):
         node = SimpleNamespace(active_config={'mode': 'nav'}, base_config={},

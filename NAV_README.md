@@ -274,6 +274,18 @@ the service's `parameters` array:
 {name: 'slam.initial_pose', value: {type: 8, double_array_value: [1.0, 2.0, 0.0, 90.0]}}
 ```
 
+To force a full restart even when mode and map parameters are unchanged, add:
+
+```yaml
+{name: 'restart', value: {type: 1, bool_value: true}}
+```
+
+`restart` is an optional request-only boolean. `true` performs a full restart
+when navigation is running, so the supplied initial pose is applied when SLAM
+starts again. If stopped, it starts normally. Omitted or `false` retains normal
+transition selection. The flag is not cached or passed to child workers. Invalid
+ROS types fail validation before any workers are started or stopped.
+
 `slam.initial_pose` accepts 2 to 4 finite numbers `[x, y, z, yaw]`, in meters
 and degrees. Missing trailing values are zero: `[1.0, 2.0]` means
 `[1.0, 2.0, 0.0, 0.0]`. Integer arrays (`type: 7`, `integer_array_value`) are
@@ -426,7 +438,7 @@ local planner; it never relies on local planner cmd_vel publication to acquire
 nav_bridge control.
 
 An explicit non-mode parameter whose value differs from the active runtime
-configuration triggers a full restart. Otherwise a same-mode request succeeds
+configuration or explicit `restart=true` triggers a full restart. Otherwise a same-mode request succeeds
 without restarting modules. The supervisor has one base worker and one worker
 per extension (`terrain`, `local_planner`, `global_planner`), so a warm mode
 switch stops and starts only the extension-module difference.
