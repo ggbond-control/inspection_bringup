@@ -40,6 +40,76 @@ The navigation stack is intentionally decoupled from
 inspection task modules, and use `navigation.launch.py` for the robot
 navigation stack.
 
+## System Dependencies
+
+Install the system dependencies before running `build_navigation.sh` on Ubuntu
+24.04 / ROS 2 Jazzy. The build helper checks dependencies but does not install
+apt packages automatically:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  libgoogle-glog-dev \
+  libgflags-dev \
+  libyaml-cpp-dev \
+  libeigen3-dev \
+  libpcl-dev \
+  libopencv-dev \
+  libtbb-dev \
+  libgeographiclib-dev \
+  opencl-headers \
+  ocl-icd-opencl-dev \
+  mesa-opencl-icd \
+  clinfo \
+  ros-jazzy-pcl-ros \
+  ros-jazzy-navigation2 \
+  ros-jazzy-grid-map \
+  ros-jazzy-rviz-2d-overlay-msgs
+```
+
+The CMake dependency checks are defined in `config/build/navigation.yaml`.
+D1M additionally requires a built `zenoh_ws/install/local_setup.bash` and the
+vendored D1 Max SDK in nav_bridge.
+
+### RK3588 OpenCL: Linux 6.1.118 / Mesa Rusticl / Panthor
+
+The dependency list above includes the OpenCL development files, Mesa ICD and
+`clinfo`. For this RK3588 kernel/Mesa setup, allow the current user to access
+graphics and render device nodes. Missing
+permissions can cause OpenCL initialization failures and, with some drivers,
+crashes:
+
+```bash
+sudo usermod -aG video,render "$USER"
+```
+
+Log out and log in again, or close the SSH session and reconnect, before testing.
+Opening another terminal within the same desktop login may retain the old groups.
+
+Enable the Rusticl driver and inspect available OpenCL devices:
+
+```bash
+export RUSTICL_ENABLE=panthor
+clinfo
+```
+
+For this setup, Rusticl needs explicit driver enablement. Check that `clinfo`
+reports a `rusticl` platform and a `Mali-G610... (Panfrost)` device. This confirms
+device discovery; application execution is a separate check. The displayed device
+name can contain `Panfrost` even when this setup uses `panthor` for enablement.
+The accepted driver name depends on the installed Mesa build; if no device is
+listed, verify its supported driver name and device permissions.
+
+To persist the variable in Zsh, add the following line once to `~/.zshrc`:
+
+```bash
+echo 'export RUSTICL_ENABLE=panthor' >> ~/.zshrc
+source ~/.zshrc
+```
+
+For Bash, use `~/.bashrc` instead.
+```
+
 ## Deployment
 
 Daily navigation builds use one command, with no required path or middleware flags:
@@ -118,12 +188,6 @@ On D1M-A (8 GiB RAM), one faster_lio compiler process was observed using about
 `--interface-underlay` skips the interface build and uses the supplied setup;
 prefer an interface-only or controlled `local_setup.bash` over a historical full
 workspace setup chain.
-
-Install system dependencies before building. The helper checks the CMake
-packages listed in `config/build/navigation.yaml`, including ROS navigation2,
-grid-map, PCL, OpenCV, Eigen, glog, gflags, YAML, TBB and GeographicLib. It does
-not run apt, sudo, sysctl, or change system services. D1M also requires a built
-`zenoh_ws/install/local_setup.bash` and the vendored D1 Max SDK in nav_bridge.
 
 Sources are managed by `config/navigation_deps.repos`. Missing repositories are
 cloned; existing checkouts and local edits are retained. `--fetch-only` clones
