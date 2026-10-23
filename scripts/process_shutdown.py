@@ -5,22 +5,22 @@ import signal
 import time
 
 
-def group_alive(process):
-    if process.poll() is None:
-        return True
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        return False
+def session_groups(process):
+    """Launch children can create process groups while retaining their session."""
+    groups = set()
     # Orphaned zombies cannot handle signals; do not spend the shutdown budget on them.
     for entry in Path('/proc').iterdir():
         try:
             fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
-            if int(fields[2]) == process.pid and fields[0] != 'Z':
-                return True
+            if (int(fields[3]) == process.pid or int(fields[2]) == process.pid) and fields[0] != 'Z':
+                groups.add(int(fields[2]))
         except (OSError, ValueError, IndexError):
             continue
-    return False
+    return groups
+
+
+def group_alive(process):
+    return process.poll() is None or bool(session_groups(process))
 
 
 def stop_processes(processes, logger, interrupt_timeout=10.0, terminate_timeout=5.0,
@@ -40,7 +40,11 @@ def stop_processes(processes, logger, interrupt_timeout=10.0, terminate_timeout=
                     # The launch process forwards SIGINT to its children exactly once.
                     process.send_signal(signum)
                 else:
-                    os.killpg(process.pid, signum)
+                    for group in session_groups(process):
+                        try:
+                            os.killpg(group, signum)
+                        except ProcessLookupError:
+                            pass
             except ProcessLookupError:
                 pass
         deadline = time.monotonic() + timeout

@@ -126,6 +126,23 @@ subprocess.Popen([sys.executable,'-c',"import signal,time,sys; from pathlib impo
         self.assertFalse(thread.is_alive())
         self.assertNotEqual(result[0].returncode, 0)
 
+    def test_orphan_in_separate_process_group_is_cleaned_up(self):
+        process = self.launch('''import subprocess,sys
+subprocess.Popen([sys.executable,'-c',"import signal,time,sys; from pathlib import Path; signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); Path(sys.argv[1]).touch(); time.sleep(60)",sys.argv[1]],process_group=0)
+''', 'separate-group')
+        process.wait(timeout=3)
+        self.assertTrue(group_alive(process))
+        stop_processes({'separate-group': process}, Mock(), interrupt_timeout=.1, terminate_timeout=.1)
+        self.assertFalse(group_alive(process))
+
+    def test_unconfirmed_exit_raises_with_worker_name(self):
+        from unittest.mock import patch
+        with patch('process_shutdown.group_alive', return_value=True), \
+                patch('process_shutdown.session_groups', return_value=set()):
+            with self.assertRaisesRegex(RuntimeError, 'base'):
+                stop_processes({'base': Mock()}, Mock(), interrupt_timeout=0,
+                               terminate_timeout=0, kill_timeout=0)
+
     def test_supervisor_cleanup_survives_repeated_signals(self):
         config = self.directory / 'navigate.yaml'
         config.write_text('''bringup:

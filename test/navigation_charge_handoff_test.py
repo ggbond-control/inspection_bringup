@@ -77,6 +77,76 @@ class InitialPose(unittest.TestCase):
 
 
 class StartupOrdering(unittest.TestCase):
+    def test_restart_request_is_strict_and_not_cached(self):
+        node = SimpleNamespace(active_config={'mode': 'nav'}, base_config={},
+                               current_state='nav', allowed_paths={}, map_context={},
+                               result=supervisor.NavigationSupervisor.result)
+        for value, accepted in ((ParameterValue(type=1, bool_value=True), True),
+                                (ParameterValue(type=1, bool_value=False), True),
+                                (ParameterValue(type=4, string_value='true'), False)):
+            request = SetParameters.Request(parameters=[Parameter(name='restart', value=value)])
+            with patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config):
+                config, paths, results = supervisor.NavigationSupervisor.resolve_request(node, request)
+            self.assertEqual(results[0].successful, accepted)
+            if not accepted:
+                continue
+            expected = 'full_restart' if value.bool_value else 'noop'
+            self.assertEqual(supervisor.NavigationSupervisor.select_transition(node, config, 'nav', paths), expected)
+            runtime = supervisor.NavigationSupervisor.layer_config(None, config, ('nav_bridge',))
+            self.assertNotIn(supervisor.REQUEST_RESTART, runtime)
+            supervisor.NavigationSupervisor.commit_success(node, config, 'nav', 'localized')
+            self.assertNotIn(supervisor.REQUEST_RESTART, node.active_config)
+
+    def test_restart_waits_for_shutdown_before_start(self):
+        order = []
+        node = SimpleNamespace(
+            stop_all_workers=Mock(side_effect=lambda: order.append('stopped')),
+            layer_sequence=Mock(side_effect=[('nav_bridge', 'slam'), ()]),
+            start_layer=Mock(side_effect=lambda *_: (order.append('started') or True, 'ready')),
+            commit_success=Mock(), stop_worker=Mock())
+        self.assertTrue(supervisor.NavigationSupervisor.execute_transition(node, {}, 'nav', 'full_restart', None)[0])
+        self.assertEqual(order, ['stopped', 'started'])
+
+    def test_shutdown_failure_blocks_start_and_keeps_workers_tracked(self):
+        process = Mock()
+        worker = {'process': process}
+        node = SimpleNamespace(
+            shutdown_event=threading.Event(), worker_lock=threading.Lock(),
+            workers={'base': worker}, helpers={}, get_logger=Mock(return_value=Mock()))
+        with patch.object(supervisor, 'stop_processes', side_effect=RuntimeError('still alive')):
+            with self.assertRaisesRegex(RuntimeError, 'still alive'):
+                supervisor.NavigationSupervisor.stop_workers(node, ('base',))
+        self.assertIs(node.workers['base'], worker)
+        node.stop_all_workers = Mock(side_effect=RuntimeError('still alive'))
+        node.start_layer = Mock()
+        with self.assertRaisesRegex(RuntimeError, 'still alive'):
+            supervisor.NavigationSupervisor.execute_transition(node, {}, 'nav', 'full_restart', None)
+        node.start_layer.assert_not_called()
+
+    def test_service_reports_validation_and_shutdown_errors(self):
+        for failure_stage in ('validation', 'shutdown'):
+            with self.subTest(stage=failure_stage):
+                node = SimpleNamespace(
+                    shutdown_event=threading.Event(), request_lock=threading.Lock(),
+                    state_lock=threading.Lock(), in_progress=False, busy_reason='',
+                    refresh_state=Mock(), result=supervisor.NavigationSupervisor.result,
+                    resolve_request=Mock(return_value=({supervisor.REQUEST_RESTART: True}, set(), [])),
+                    target_state=Mock(return_value='nav'), validate_mode_sequences=Mock(),
+                    validate_map_requirements=Mock(return_value='localized'),
+                    normalize_map_config=Mock(), select_transition=Mock(return_value='full_restart'),
+                    current_state='nav', get_logger=Mock(return_value=Mock()),
+                    execute_transition=Mock(side_effect=RuntimeError('workers did not exit')))
+                if failure_stage == 'validation':
+                    node.validate_map_requirements.side_effect = ValueError('missing map')
+                response = supervisor.NavigationSupervisor.on_start_request(
+                    node, SetParameters.Request(), SetParameters.Response())
+                self.assertFalse(response.results[-1].successful)
+                self.assertIn('missing map' if failure_stage == 'validation' else 'workers did not exit',
+                              response.results[-1].reason)
+                if failure_stage == 'validation':
+                    node.execute_transition.assert_not_called()
+                self.assertFalse(node.in_progress)
+
     def test_same_nav_start_does_not_take_control_or_exit_again(self):
         node = SimpleNamespace(run_control_action=Mock(side_effect=AssertionError('unexpected stand')))
         self.assertTrue(supervisor.NavigationSupervisor.execute_transition(

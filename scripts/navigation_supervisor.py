@@ -44,6 +44,7 @@ NAV_EXTENSION_MODULES = (
 )
 SUPPORTED_MODULES = MANUAL_MODULES + NAV_EXTENSION_MODULES
 REQUEST_INITIAL_POSE = "_request_initial_pose"
+REQUEST_RESTART = "_request_restart"
 
 
 def normalize_initial_pose(value):
@@ -227,6 +228,12 @@ class NavigationSupervisor(Node):
         results = []
         for parameter in request.parameters:
             try:
+                if parameter.name == "restart":
+                    if parameter.value.type != ParameterType.PARAMETER_BOOL:
+                        raise ValueError("restart must be a boolean")
+                    config[REQUEST_RESTART] = parameter.value.bool_value
+                    results.append(self.result(True, "accepted restart"))
+                    continue
                 if parameter.name == "slam.initial_pose":
                     config[REQUEST_INITIAL_POSE] = normalize_initial_pose(
                         parameter_value_to_python(parameter.value))
@@ -429,6 +436,8 @@ class NavigationSupervisor(Node):
         return fallback
 
     def select_transition(self, config, target_state, provided_paths):
+        if config.get(REQUEST_RESTART, False):
+            return "full_restart"
         if self.current_state == STOPPED:
             return "full_start"
 
@@ -537,6 +546,7 @@ class NavigationSupervisor(Node):
     def commit_success(self, config, state, manual_profile):
         self.active_config = copy.deepcopy(config)
         self.active_config.pop(REQUEST_INITIAL_POSE, None)
+        self.active_config.pop(REQUEST_RESTART, None)
         self.current_state = state
         self.manual_profile = manual_profile if state == MANUAL else MANUAL_LOCALIZED
         if self.manual_profile == MANUAL_BRIDGE_ONLY:
@@ -588,6 +598,7 @@ class NavigationSupervisor(Node):
 
     def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
+        runtime_config.pop(REQUEST_RESTART, None)
         initial_pose = runtime_config.pop(REQUEST_INITIAL_POSE, None)
         if initial_pose is not None and "slam" in sequence:
             parameters = read_parameter_file(runtime_config["slam"]["config"])
@@ -740,12 +751,19 @@ class NavigationSupervisor(Node):
         with self.worker_lock:
             processes = {name: self.workers[name]["process"] for name in layers
                          if self.workers.get(name) is not None}
-            for name in processes:
-                self.workers[name] = None
             if shutdown:
                 processes.update({f"readiness-{pid}": process for pid, process in self.helpers.items()})
-                self.helpers.clear()
         stop_processes(processes, self.get_logger())
+        # Keep failed shutdowns tracked so a later request cannot start over survivors.
+        with self.worker_lock:
+            for name in layers:
+                worker = self.workers.get(name)
+                if worker is not None and processes.get(name) is worker["process"]:
+                    self.workers[name] = None
+            if shutdown:
+                for pid, process in list(self.helpers.items()):
+                    if processes.get(f"readiness-{pid}") is process:
+                        self.helpers.pop(pid, None)
 
     def stop_all_workers(self):
         self.stop_workers((*reversed(NAV_EXTENSION_MODULES), "base"),
@@ -775,8 +793,7 @@ class NavigationSupervisor(Node):
     def refresh_state(self):
         base_alive = self.worker_alive("base")
         if not base_alive:
-            self.stop_extensions()
-            self.workers["base"] = None
+            self.stop_all_workers()
             self.current_state = STOPPED
             self.manual_profile = None
             self.active_config = None

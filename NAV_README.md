@@ -287,6 +287,27 @@ configuration files, compared with previous requests or used to trigger a restar
 If SLAM remains running or is not started, the initial pose is not applied.
 Omitting it uses the existing configuration layers.
 
+To force a complete navigation stack restart, add a boolean service parameter:
+
+```yaml
+{name: 'restart', value: {type: 1, bool_value: true}}
+```
+
+`restart` defaults to false and is never cached. With true, the supervisor first
+validates all request parameters and map requirements, then stops all managed
+navigation workers together. It waits for their live session processes, including
+child process groups, to exit, escalating SIGINT to SIGTERM and SIGKILL as needed.
+If shutdown cannot be confirmed, the service returns failure and starts no new
+nodes; surviving workers remain tracked for subsequent cleanup. Only after all
+old workers exit does startup proceed in the requested mode, including readiness
+and control actions. The service returns the final startup result.
+
+The supervisor stays alive and retains its successful map cache. This does not
+reload bringup configuration or restart the systemd service. A request may combine
+`restart: true` with `slam.initial_pose` to apply a new localization guess during
+SLAM startup. With no running stack it performs a normal start. Independently
+started external nodes are outside this restart's scope.
+
 `mode` accepts:
 
 ```text
