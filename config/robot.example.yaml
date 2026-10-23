@@ -23,8 +23,6 @@ robot_id: D1M-A
 #     port: 1883
 #     username: "your-username"
 #     password: "your-password"
-#   fleet_leader_election:
-#     robot_ids: [D1M-A, D1M-B]
 
 # navigation:
 #   slam:

@@ -12,9 +12,6 @@ modules:
   mission_execution_agent: true
   fleet_leader_election: true
 
-fleet_leader_election:
-  robot_ids: [X30-A, X30-B, CYVET-A, CYVET-B]
-
 mqtt:
   localization_set_parameter_timeout_sec: 60.0
 

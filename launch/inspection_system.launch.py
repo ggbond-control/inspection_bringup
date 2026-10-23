@@ -1226,7 +1226,6 @@ def launch_setup(context):
                 parameters=[{
                     "robot_id": str(config_value(config, "mission_execution_agent", "robot_id", config_value(config, "mqtt", "sn", "x30"))),
                     "cluster_id": str(config_value(config, "fleet_leader_election", "cluster_id", "inspection-fleet")),
-                    "robot_ids": list(config_value(config, "fleet_leader_election", "robot_ids", [])),
                     "data_root": str(config_value(config, "fleet_leader_election", "data_root", "~/fleet_leader_election/runtime")),
                     "heartbeat_interval_seconds": float(config_value(config, "fleet_leader_election", "heartbeat_interval_seconds", 0.25)),
                     "election_timeout_seconds": float(config_value(config, "fleet_leader_election", "election_timeout_seconds", 1.0)),
