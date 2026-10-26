@@ -128,8 +128,11 @@ Checkout rules (only repositories in the selected `.repos` file are managed;
 - Missing repositories are cloned directly at the resolved branch or pinned tag.
   They use the manifest URL and name that remote according to `--remote`.
   All existing repositories are then preflighted before any checkout begins.
-  Dirty worktrees (including untracked files), unfinished Git operations, and
-  branches occupied in other worktrees stop checkout. Preflight may fetch refs,
+  Unfinished Git operations and branches occupied in other worktrees stop checkout.
+  Local edits (including staged changes and untracked files) are allowed when
+  Git can preserve them. Git checks overwrite conflicts during switch/update;
+  a conflict stops execution before building, and earlier repositories may
+  already have switched. Preflight may fetch refs,
   and repositories cloned earlier in the command remain on disk after failure.
   Ignored local files are also protected against overwrites during switch/update.
 - Checkout alone leaves existing branch commits unchanged. With an update option,

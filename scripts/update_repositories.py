@@ -126,8 +126,6 @@ def checkout_repositories(entries, mode, remote, update):
         try:
             if remote not in git(path, 'remote').splitlines():
                 raise ValueError(f'remote {remote!r} does not exist')
-            if git(path, 'status', '--porcelain', '--untracked-files=all'):
-                raise ValueError('uncommitted changes; commit or stash them before checkout')
             for marker in ('MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD',
                            'REVERT_HEAD', 'sequencer', 'BISECT_START'):
                 marker_path = Path(git(path, 'rev-parse', '--git-path', marker))
@@ -186,9 +184,6 @@ def checkout_repositories(entries, mode, remote, update):
         for relative, path, target, remote_ref in plans:
             if target is None:
                 continue
-            # Recheck cleanliness after the network/preflight interval.
-            if git(path, 'status', '--porcelain', '--untracked-files=all'):
-                raise ValueError(f'{relative}: working tree changed after preflight')
             # An explicit fetch does not extend a single-branch clone's fetch
             # configuration. Add the target so future ordinary pull works too.
             refspec = f'+refs/heads/{target}:{remote_ref}'
@@ -196,6 +191,8 @@ def checkout_repositories(entries, mode, remote, update):
                                     capture_output=True, text=True).stdout.splitlines()
             if refspec not in mapped and f'+refs/heads/*:refs/remotes/{remote}/*' not in mapped:
                 git(path, 'config', '--add', f'remote.{remote}.fetch', refspec)
+            # Let Git preserve compatible index/worktree edits and reject only
+            # overwrites. A dirty worktree alone is not a checkout conflict.
             if ref_exists(path, f'refs/heads/{target}'):
                 git(path, 'switch', '--no-guess', '--no-overwrite-ignore', target)
             else:

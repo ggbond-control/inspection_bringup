@@ -638,19 +638,13 @@ class RepositoryUpdatesTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('origin/master does not exist', result.stderr)
 
-    def test_checkout_rejects_dirty_worktrees_and_unfinished_operations(self):
+    def test_checkout_rejects_unfinished_operations(self):
         for script in SCRIPTS:
-            for state in ('unstaged', 'staged', 'untracked', 'merge', 'rebase'):
+            for state in ('merge', 'rebase'):
                 with self.subTest(script=script, state=state):
                     _, seed, repo, _, command = self.fixture(script)
                     self.publish_branch(seed, 'dev')
-                    if state in ('unstaged', 'staged'):
-                        (repo / 'local.txt').write_text('keep me\n')
-                        if state == 'staged':
-                            self.git(repo, 'add', 'local.txt')
-                    elif state == 'untracked':
-                        (repo / 'new.txt').write_text('keep me\n')
-                    elif state == 'merge':
+                    if state == 'merge':
                         (repo / '.git/MERGE_HEAD').write_text(self.git(repo, 'rev-parse', 'HEAD') + '\n')
                     else:
                         (repo / '.git/rebase-merge').mkdir()
@@ -659,6 +653,83 @@ class RepositoryUpdatesTest(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(self.git(repo, 'branch', '--show-current'), 'main')
                     self.assertEqual(self.git(repo, 'status', '--porcelain'), before)
+
+    def test_checkout_preserves_compatible_edits_and_staging(self):
+        for script in SCRIPTS:
+            for phase in ('switch', 'fast-forward', 'already-on-target'):
+                for state in ('unstaged', 'staged', 'untracked'):
+                    with self.subTest(script=script, phase=phase, state=state):
+                        _, seed, repo, _, command = self.fixture(script)
+                        if phase == 'fast-forward':
+                            self.git(repo, 'branch', 'dev')
+                        elif phase == 'already-on-target':
+                            self.git(repo, 'switch', '-c', 'dev')
+                        self.upstream_commit(seed)
+                        self.publish_branch(seed, 'dev')
+                        local_file = repo / ('new.txt' if state == 'untracked' else 'local.txt')
+                        local_file.write_text('keep me\n')
+                        if state == 'staged':
+                            self.git(repo, 'add', 'local.txt')
+                            # Preserve both staged and unstaged edits to one file.
+                            local_file.write_text('keep me and my unstaged edits\n')
+                        status = self.git(repo, 'status', '--porcelain')
+                        staged = self.git(repo, 'diff', '--cached')
+                        unstaged = self.git(repo, 'diff')
+                        content = local_file.read_bytes()
+                        result = self.run_update(command, '--checkout', 'dev', '--update-only')
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(self.git(repo, 'branch', '--show-current'), 'dev')
+                        self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), self.git(seed, 'rev-parse', 'HEAD'))
+                        self.assertEqual(self.git(repo, 'status', '--porcelain'), status)
+                        self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
+                        self.assertEqual(self.git(repo, 'diff'), unstaged)
+                        self.assertEqual(local_file.read_bytes(), content)
+                        # Repeating checkout on a dirty target branch also works.
+                        result = self.run_update(command, '--checkout', 'dev', '--update-only')
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(local_file.read_bytes(), content)
+                        self.assertEqual(self.git(repo, 'status', '--porcelain'), status)
+
+    def test_checkout_overwrite_conflicts_preserve_edits_and_stop_build(self):
+        for script in SCRIPTS:
+            for phase in ('switch', 'fast-forward'):
+                for state in ('unstaged', 'staged', 'untracked'):
+                    with self.subTest(script=script, phase=phase, state=state):
+                        root, seed, repo, _, command = self.fixture(script)
+                        head = self.git(repo, 'rev-parse', 'HEAD')
+                        if phase == 'fast-forward':
+                            self.git(repo, 'branch', 'dev')
+                        relative = 'new.txt' if state == 'untracked' else 'local.txt'
+                        (seed / relative).write_text('remote content\n')
+                        self.git(seed, 'add', relative)
+                        self.git(seed, 'commit', '-m', 'remote conflicting file')
+                        self.publish_branch(seed, 'dev')
+                        (repo / relative).write_text('local content\n')
+                        if state == 'staged':
+                            self.git(repo, 'add', relative)
+                        status = self.git(repo, 'status', '--porcelain')
+                        staged = self.git(repo, 'diff', '--cached')
+                        self.git(repo, 'config', 'merge.autoStash', 'true')
+                        binary = root / 'bin'
+                        binary.mkdir()
+                        for name in ('colcon', 'cmake'):
+                            builder = binary / name
+                            builder.write_text('#!/bin/sh\ntouch "' + str(root / 'built') + '"\n')
+                            builder.chmod(0o755)
+                        env = dict(self.env, PATH=str(binary) + os.pathsep + self.env['PATH'])
+                        result = subprocess.run([*command, '--checkout', 'dev', '--update-current-branch'],
+                                                env=env, capture_output=True, text=True, timeout=20)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('would be overwritten', result.stderr)
+                        self.assertIn('Checkout stopped; build will not start', result.stderr)
+                        self.assertFalse((root / 'built').exists())
+                        self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+                        self.assertEqual(self.git(repo, 'branch', '--show-current'),
+                                         'main' if phase == 'switch' else 'dev')
+                        self.assertEqual((repo / relative).read_text(), 'local content\n')
+                        self.assertEqual(self.git(repo, 'status', '--porcelain'), status)
+                        self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
+                        self.assertEqual(self.git(repo, 'stash', 'list'), '')
 
     def test_checkout_preflights_all_repositories_before_switching(self):
         for script in SCRIPTS:
@@ -689,6 +760,12 @@ class RepositoryUpdatesTest(unittest.TestCase):
                 self.git(repo, 'branch', 'dev')
                 self.upstream_commit(seed)
                 self.publish_branch(seed, 'dev')
+                (repo / 'local.txt').write_text('staged local edits\n')
+                self.git(repo, 'add', 'local.txt')
+                (repo / 'local.txt').write_text('unstaged local edits\n')
+                (repo / 'untracked.txt').write_text('keep this file\n')
+                status = self.git(repo, 'status', '--porcelain')
+                staged = self.git(repo, 'diff', '--cached')
                 # Real build entry points must forward checkout without update.
                 binary = root / 'bin'
                 binary.mkdir()
@@ -706,9 +783,15 @@ class RepositoryUpdatesTest(unittest.TestCase):
                 self.assertIn('managed repository checkout complete', result.stdout)
                 self.assertEqual(self.git(repo, 'branch', '--show-current'), 'dev')
                 self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
+                self.assertEqual(self.git(repo, 'status', '--porcelain'), status)
+                self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
                 result = self.run_update(command, '--checkout', 'dev', '--update-only')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), self.git(seed, 'rev-parse', 'HEAD'))
+                self.assertEqual(self.git(repo, 'status', '--porcelain'), status)
+                self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
+                self.assertEqual((repo / 'local.txt').read_text(), 'unstaged local edits\n')
+                self.assertEqual((repo / 'untracked.txt').read_text(), 'keep this file\n')
 
     def test_checkout_update_preserves_ahead_and_rejects_divergence_even_with_rebase(self):
         for script in SCRIPTS:

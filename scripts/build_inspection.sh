@@ -50,7 +50,8 @@ Build behavior:
   Managed repository branches are printed by default; checkout is opt-in.
   --check-updates adds remote fetch/status checks but never pulls or checks out.
   Without --checkout, updates use plain git pull and respect Git configuration.
-  Checkout preflights all repositories, requires clean worktrees and real remote branches.
+  Checkout preflights all repositories and requires real remote branches.
+  Local edits are allowed when Git can preserve them during checkout/update.
   With --checkout, updates only fast-forward; local commits are never reset.
   --checkout conflicts with --fetch-only and --build-only.
   Detached checkouts of manifest-pinned tags are kept unchanged.
