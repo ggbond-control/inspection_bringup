@@ -34,7 +34,7 @@ Options:
   --update-current-branch
                       Run git pull in managed repositories, then build.
   --update-only        Update current branches and exit without building.
-  --checkout dev|main  Switch managed repositories to remote-backed dev/main branches.
+  --checkout dev|main  Switch managed repositories to remote-backed dev/main branches and exit.
                       main resolves manifest main_branch/version, then a unique main/jazzy/master.
                       Add an update option for fast-forward synchronization.
   --remote NAME        Checkout remote (default: origin); requires --checkout.
@@ -50,9 +50,10 @@ Build behavior:
   Managed repository branches are printed by default; checkout is opt-in.
   --check-updates adds remote fetch/status checks but never pulls or checks out.
   Without --checkout, updates use plain git pull and respect Git configuration.
-  Checkout preflights all repositories and requires real remote branches.
+  Checkout processes repositories independently; missing remote dev branches are skipped.
   Local edits are allowed when Git can preserve them during checkout/update.
   With --checkout, updates only fast-forward; local commits are never reset.
+  --checkout always exits without building, including when combined with update options.
   --checkout conflicts with --fetch-only and --build-only.
   Detached checkouts of manifest-pinned tags are kept unchanged.
 
@@ -362,7 +363,7 @@ source_if_exists() {
   fi
 }
 
-if [[ "${BUILD_ONLY}" -eq 0 ]]; then
+if [[ "${BUILD_ONLY}" -eq 0 && -z "${CHECKOUT}" ]]; then
   fetch_missing_repositories
 fi
 
@@ -372,6 +373,11 @@ fi
 
 if [[ "${CHECK_BRANCHES}" -eq 1 ]]; then
   print_repository_branches
+fi
+
+if [[ -n "${CHECKOUT}" ]]; then
+  echo "[done] checkout complete; no build performed"
+  exit 0
 fi
 
 if [[ "${FETCH_ONLY}" -eq 1 ]]; then

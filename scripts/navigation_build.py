@@ -93,7 +93,8 @@ def arguments():
     parser.add_argument('--update-current-branch', action='store_true')
     parser.add_argument('--update-only', action='store_true')
     parser.add_argument('--checkout', choices=('dev', 'main'),
-                        help='switch remote-backed branches; main uses manifest preference or unique main/jazzy/master; '
+                        help='switch remote-backed branches and exit without building; '
+                             'main uses manifest preference or unique main/jazzy/master; '
                              'add an update option to fast-forward')
     parser.add_argument('--remote', help='checkout remote (default: origin); requires --checkout')
     args = parser.parse_args()
@@ -460,7 +461,7 @@ class Build:
         self.plan()
         if self.args.plan:
             return
-        if not self.args.build_only and not self.args.check:
+        if not self.args.build_only and not self.args.check and not self.args.checkout:
             STAGE = 'fetch'
             self.fetch()
         if self.args.update_current_branch or self.args.update_only or self.args.checkout:
@@ -469,9 +470,12 @@ class Build:
                 self.repos_file, self.root, self.workspaces['algor_ws'],
                 self.workspaces['driver_ws'], self.workspaces['task_ws'],
                 checkout=self.args.checkout, remote=self.args.remote,
-                update=self.args.update_current_branch or self.args.update_only) or {}
+                update=self.args.update_current_branch or self.args.update_only, clone_depth=1) or {}
         if not self.args.no_branch_check or self.args.check_updates:
             self.branches()
+        if self.args.checkout:
+            info('[done] checkout complete; no build performed')
+            return
         if self.args.fetch_only or self.args.update_only:
             info('[done] ' + ('fetch-only' if self.args.fetch_only else 'update-only') + ' complete')
             return

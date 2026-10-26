@@ -84,12 +84,14 @@ src/inspection_bringup/scripts/build_inspection.sh --update-only
 ```
 
 Both `build_inspection.sh` and `build_navigation.sh` also support explicit checkout:
+`--checkout` always exits after branch operations, without building. Add an update
+option for fast-forward synchronization; run a separate command to build afterward.
 
 ```bash
-# Switch to existing remote dev branches, then build (no merge into existing branches).
+# Switch to existing remote dev branches and exit (no merge into existing branches).
 src/inspection_bringup/scripts/build_inspection.sh --checkout dev
 
-# Switch to each repository's main branch, fast-forward, then build.
+# Switch to each repository's main branch, fast-forward, then exit.
 src/inspection_bringup/scripts/build_navigation.sh --checkout main --update-current-branch
 
 # Switch and fast-forward only; do not build.
@@ -97,13 +99,18 @@ src/inspection_bringup/scripts/build_inspection.sh --checkout dev --update-only
 
 # Select a remote explicitly; existing repositories must have this remote configured.
 src/inspection_bringup/scripts/build_navigation.sh --checkout main --remote gitlab --update-only
+
+# Build separately when ready.
+src/inspection_bringup/scripts/build_navigation.sh
 ```
 
 Checkout rules (only repositories in the selected `.repos` file are managed;
 `inspection_bringup` itself is not implicitly switched):
 
-- `dev` requires an actual `dev` branch on the selected remote. There is no
-  fallback to a main branch, and no branch is pushed or invented by the helper.
+- Repositories are processed independently in manifest order, with no batch
+  preflight. `dev` switches repositories that have a real remote `dev` branch;
+  repositories without it keep their current checkout and print a skip reason.
+  No branch is pushed or invented by the helper, and no extra option is needed.
 - `main` is a mode, not necessarily a literal branch name. An entry's
   `main_branch` wins; otherwise an existing manifest `version` of `main`, `jazzy`
   or `master` is preferred. Without a usable preference, exactly one of those
@@ -125,22 +132,26 @@ Checkout rules (only repositories in the selected `.repos` file are managed;
   Existing targets retain their local commits and track the selected remote.
 - Shallow/single-branch clones fetch the target explicitly and extend their fetch
   mapping when needed, so later ordinary `git pull` also works on the target.
-- Missing repositories are cloned directly at the resolved branch or pinned tag.
+- Missing repositories are cloned when their turn is reached, directly at the
+  resolved branch or pinned tag. If remote `dev` is absent, cloning uses the
+  manifest version or remote default branch and dev checkout is skipped.
   They use the manifest URL and name that remote according to `--remote`.
-  All existing repositories are then preflighted before any checkout begins.
-  Unfinished Git operations and branches occupied in other worktrees stop checkout.
+  Unfinished Git operations and branches occupied in other worktrees fail that
+  repository; other repositories are still processed.
   Local edits (including staged changes and untracked files) are allowed when
   Git can preserve them. Git checks overwrite conflicts during switch/update;
-  a conflict stops execution before building, and earlier repositories may
-  already have switched. Preflight may fetch refs,
-  and repositories cloned earlier in the command remain on disk after failure.
+  a conflict is reported for that repository and processing continues with the
+  next. Successfully switched/cloned repositories remain changed.
   Ignored local files are also protected against overwrites during switch/update.
 - Checkout alone leaves existing branch commits unchanged. With an update option,
   synchronization uses `merge --ff-only` against the fetched remote ref, regardless
-  of `pull.rebase` settings. Divergence stops preflight; local ahead commits are
+  of `pull.rebase` settings. Divergence fails that repository; local ahead commits are
   preserved and reported. There is no reset, automatic stash or automatic rollback.
-  If execution fails after preflight, completed repositories are listed and no
-  build starts; inspect the failing repository too before retrying.
+  The final summary reports switched, skipped and failed counts. Missing dev
+  branches are normal skips. Network/authentication errors and Git conflicts are
+  failures, not skips: after all repositories are processed, any failure returns
+  a nonzero exit status. Completed repositories are listed; inspect failed repositories too
+  before retrying.
 - `--checkout` conflicts with `--fetch-only` and `--build-only`, and navigation's
   read-only `--plan`/`--check`. `--remote` requires `--checkout` (default: `origin`).
 

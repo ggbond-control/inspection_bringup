@@ -583,7 +583,7 @@ class RepositoryUpdatesTest(unittest.TestCase):
                     self.assertEqual(self.git(repo, 'rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/dev')
                     self.assertNotIn('expected=main', result.stdout)
 
-    def test_checkout_rejects_missing_remote_branch_despite_stale_local_refs(self):
+    def test_checkout_skips_missing_remote_branch_despite_stale_local_refs(self):
         for script in SCRIPTS:
             with self.subTest(script=script):
                 _, seed, repo, _, command = self.fixture(script)
@@ -591,17 +591,18 @@ class RepositoryUpdatesTest(unittest.TestCase):
                 self.git(repo, 'fetch', 'origin')
                 self.git(repo, 'branch', 'dev', 'origin/dev')
                 self.git(seed, 'push', 'origin', '--delete', 'dev')
-                result = self.run_update(command, '--checkout', 'dev', '--update-current-branch')
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('origin/dev does not exist', result.stderr)
+                result = self.run_update(command, '--checkout', 'dev', '--update-only')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('skip; remote branch origin/dev does not exist; keep main', result.stdout)
                 self.assertEqual(self.git(repo, 'branch', '--show-current'), 'main')
 
     def test_checkout_missing_dev_never_creates_branch(self):
         for script in SCRIPTS:
             with self.subTest(script=script):
                 _, _, repo, _, command = self.fixture(script)
-                result = self.run_update(command, '--checkout', 'dev', '--update-only')
-                self.assertNotEqual(result.returncode, 0)
+                result = self.run_update(command, '--checkout', 'dev')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('switched=0 skipped=1 failed=0', result.stdout)
                 self.assertNotIn('dev', self.git(repo, 'branch', '--format=%(refname:short)').splitlines())
 
     def test_checkout_main_resolves_all_names_and_rejects_ambiguity(self):
@@ -721,7 +722,7 @@ class RepositoryUpdatesTest(unittest.TestCase):
                                                 env=env, capture_output=True, text=True, timeout=20)
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn('would be overwritten', result.stderr)
-                        self.assertIn('Checkout stopped; build will not start', result.stderr)
+                        self.assertIn('Checkout failed; build will not start', result.stderr)
                         self.assertFalse((root / 'built').exists())
                         self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
                         self.assertEqual(self.git(repo, 'branch', '--show-current'),
@@ -731,26 +732,65 @@ class RepositoryUpdatesTest(unittest.TestCase):
                         self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
                         self.assertEqual(self.git(repo, 'stash', 'list'), '')
 
-    def test_checkout_preflights_all_repositories_before_switching(self):
+    def test_checkout_missing_dev_does_not_block_other_repositories(self):
         for script in SCRIPTS:
-            with self.subTest(script=script):
-                root, seed, repo, manifest, command = self.fixture(script)
-                self.publish_branch(seed, 'dev')
-                bad_remote = root / 'bad.git'
-                self.git(root, 'init', '--bare', str(bad_remote))
-                self.git(seed, 'push', str(bad_remote), 'HEAD:refs/heads/main')
-                second = repo.parent / 'bad'
-                self.git(root, 'clone', '--branch', 'main', str(bad_remote), str(second))
-                data = json.loads(manifest.read_text())
-                relative = next(iter(data['repositories'])).rsplit('/', 1)[0] + '/bad'
-                data['repositories'][relative] = {'type': 'git', 'url': str(bad_remote)}
-                manifest.write_text(json.dumps(data))
-                result = self.run_update(command, '--checkout', 'dev', '--update-only')
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('checkout preflight failed', result.stderr)
-                for path in (repo, second):
-                    self.assertEqual(self.git(path, 'branch', '--show-current'), 'main')
-                    self.assertNotIn('dev', self.git(path, 'branch', '--format=%(refname:short)').splitlines())
+            for missing_first in (False, True):
+                with self.subTest(script=script, missing_first=missing_first):
+                    self.check_independent_checkout(script, missing_first)
+
+    def check_independent_checkout(self, script, missing_first, *, failure=None):
+        root, seed, repo, manifest, command = self.fixture(script)
+        self.publish_branch(seed, 'dev')
+        bad_remote = root / 'bad.git'
+        self.git(root, 'init', '--bare', str(bad_remote))
+        self.git(seed, 'push', str(bad_remote), 'HEAD:refs/heads/main')
+        second = repo.parent / 'bad'
+        self.git(root, 'clone', '--branch', 'main', str(bad_remote), str(second))
+        data = json.loads(manifest.read_text())
+        relative = next(iter(data['repositories'])).rsplit('/', 1)[0] + '/bad'
+        data['repositories'][relative] = {'type': 'git', 'url': str(bad_remote)}
+        if missing_first:
+            data['repositories'] = dict(reversed(list(data['repositories'].items())))
+        if failure == 'network':
+            self.git(second, 'remote', 'set-url', 'origin', str(root / 'unavailable.git'))
+        elif failure == 'clone':
+            shutil.rmtree(second)
+            data['repositories'][relative]['url'] = str(root / 'unavailable.git')
+        elif failure == 'not-git':
+            shutil.rmtree(second / '.git')
+        elif failure == 'conflict':
+            self.git(seed, 'push', str(bad_remote), 'HEAD:refs/heads/dev')
+            (seed / 'local.txt').write_text('remote edits\n')
+            self.git(seed, 'commit', '-am', 'conflicting dev')
+            self.git(seed, 'push', str(bad_remote), 'HEAD:refs/heads/dev')
+            (second / 'local.txt').write_text('local edits\n')
+        manifest.write_text(json.dumps(data))
+        result = self.run_update(command, '--checkout', 'dev', '--update-only')
+        self.assertEqual(self.git(repo, 'branch', '--show-current'), 'dev')
+        self.assertEqual(self.git(repo, 'rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/dev')
+        if failure not in ('clone', 'not-git'):
+            self.assertEqual(self.git(second, 'branch', '--show-current'), 'main')
+            self.assertNotIn('dev', self.git(second, 'branch', '--format=%(refname:short)').splitlines())
+        if failure:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Checkout failed; build will not start', result.stderr)
+            self.assertIn('switched=1 skipped=0 failed=1', result.stdout)
+            expected = {'conflict': 'would be overwritten', 'network': 'ls-remote',
+                        'clone': 'ls-remote', 'not-git': 'not a Git repository'}
+            self.assertIn(expected[failure], result.stderr)
+            if failure == 'conflict':
+                self.assertEqual((second / 'local.txt').read_text(), 'local edits\n')
+        else:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('switched=1 skipped=1 failed=0', result.stdout)
+            self.assertIn('skip; remote branch origin/dev does not exist', result.stdout)
+
+    def test_checkout_failure_does_not_block_other_repositories(self):
+        for script in SCRIPTS:
+            for failure in ('network', 'conflict', 'clone', 'not-git'):
+                for failing_first in (False, True):
+                    with self.subTest(script=script, failure=failure, failing_first=failing_first):
+                        self.check_independent_checkout(script, failing_first, failure=failure)
 
     def test_checkout_only_preserves_local_branch_then_update_fast_forwards(self):
         for script in SCRIPTS:
@@ -779,7 +819,8 @@ class RepositoryUpdatesTest(unittest.TestCase):
                     result = self.run_update(command, '--checkout', 'dev')
                 finally:
                     self.env['PATH'] = old_path
-                # The deliberately incomplete build may fail after checkout.
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('checkout complete; no build performed', result.stdout)
                 self.assertIn('managed repository checkout complete', result.stdout)
                 self.assertEqual(self.git(repo, 'branch', '--show-current'), 'dev')
                 self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)
@@ -792,6 +833,36 @@ class RepositoryUpdatesTest(unittest.TestCase):
                 self.assertEqual(self.git(repo, 'diff', '--cached'), staged)
                 self.assertEqual((repo / 'local.txt').read_text(), 'unstaged local edits\n')
                 self.assertEqual((repo / 'untracked.txt').read_text(), 'keep this file\n')
+
+    def test_checkout_never_invokes_build_or_dependency_tools(self):
+        for script in SCRIPTS:
+            for target in ('dev', 'main'):
+                for update_args in ((), ('--update-current-branch',), ('--update-only',)):
+                    with self.subTest(script=script, target=target, update_args=update_args):
+                        root, seed, repo, _, command = self.fixture(script)
+                        head = self.git(repo, 'rev-parse', 'HEAD')
+                        self.git(repo, 'branch', 'dev')
+                        self.git(repo, 'switch', '-c', 'work')
+                        self.upstream_commit(seed)
+                        self.publish_branch(seed, 'dev')
+                        binary = root / 'bin'
+                        binary.mkdir()
+                        for name in ('colcon', 'cmake', 'rosdep', 'ros2'):
+                            sentinel = binary / name
+                            sentinel.write_text('#!/bin/sh\ntouch "' + str(root / 'build-tool-called') + '"\nexit 17\n')
+                            sentinel.chmod(0o755)
+                        options = ['--checkout', target, *update_args]
+                        if script == 'build_inspection.sh':
+                            options += ['--rosdep']
+                        env = dict(self.env, PATH=str(binary) + os.pathsep + self.env['PATH'])
+                        result = subprocess.run([*command, *options], env=env, capture_output=True,
+                                                text=True, timeout=20)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn('checkout complete; no build performed', result.stdout)
+                        self.assertEqual(self.git(repo, 'branch', '--show-current'), target)
+                        expected = self.git(seed, 'rev-parse', 'HEAD') if update_args else head
+                        self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), expected)
+                        self.assertFalse((root / 'build-tool-called').exists())
 
     def test_checkout_update_preserves_ahead_and_rejects_divergence_even_with_rebase(self):
         for script in SCRIPTS:
@@ -901,11 +972,20 @@ class RepositoryUpdatesTest(unittest.TestCase):
     def test_checkout_missing_clone_does_not_create_dev_when_remote_lacks_it(self):
         for script in SCRIPTS:
             with self.subTest(script=script):
-                _, _, repo, _, command = self.fixture(script)
+                _, _, repo, manifest, command = self.fixture(script)
                 shutil.rmtree(repo)
                 result = self.run_update(command, '--checkout', 'dev', '--update-only')
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(repo.exists())
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(repo.exists())
+                self.assertEqual(self.git(repo, 'branch', '--show-current'), 'main')
+                self.assertNotIn('dev', self.git(repo, 'branch', '--format=%(refname:short)').splitlines())
+                self.assertIn('switched=0 skipped=1 failed=0', result.stdout)
+                # With no manifest branch, use the remote default instead.
+                shutil.rmtree(repo)
+                self.change_spec(manifest, version=None)
+                result = self.run_update(command, '--checkout', 'dev', '--update-only')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git(repo, 'branch', '--show-current'), 'main')
 
     def test_checkout_argument_conflicts_fail_before_repository_changes(self):
         for script in SCRIPTS:
@@ -952,7 +1032,7 @@ class RepositoryUpdatesTest(unittest.TestCase):
                     finally:
                         self.env['PATH'] = old_path
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('Checkout stopped; build will not start', result.stderr)
+                    self.assertIn('Checkout failed; build will not start', result.stderr)
                     self.assertIn('Completed repositories: none', result.stderr)
                     self.assertFalse((root / 'built').exists())
                     self.assertEqual(self.git(repo, 'rev-parse', 'HEAD'), head)

@@ -4,6 +4,7 @@
 import argparse
 from pathlib import Path
 import subprocess
+import sys
 
 import yaml
 
@@ -11,12 +12,25 @@ import yaml
 MAIN_BRANCHES = ('main', 'jazzy', 'master')
 
 
-def managed_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=None, task_ws=None):
+class MissingRemoteBranch(ValueError):
+    """A successful remote query found no requested branch."""
+
+
+def validate_repository(path):
+    # Worktrees have a .git file; do not accept an ordinary directory inside
+    # a parent repository as a managed Git root.
+    if not (path / '.git').exists():
+        raise ValueError(f'not a Git repository: {path}')
+    if Path(git(path, 'rev-parse', '--show-toplevel')).resolve() != path.resolve():
+        raise ValueError(f'not a Git repository root: {path}')
+
+
+def managed_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=None, task_ws=None,
+                         *, require_git=True):
     with Path(repos_file).open(encoding='utf-8') as stream:
         repositories = (yaml.safe_load(stream) or {}).get('repositories', {})
     if not isinstance(repositories, dict) or not repositories:
         raise ValueError(f'no repositories found in {repos_file}')
-    entries = []
     seen = set()
     for relative, spec in repositories.items():
         relative_path = Path(relative)
@@ -30,18 +44,12 @@ def managed_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=No
         roots = {'algor_ws': algor_ws, 'driver_ws': driver_ws, 'task_ws': task_ws}
         override = roots.get(parts[0]) if len(parts) == 2 else None
         path = Path(override) / parts[1] if override else Path(workspace_root) / relative
-        # Do not accidentally run pull in a parent repository when a managed
-        # path is missing or is only an ordinary directory. Worktrees use a file.
-        if not (path / '.git').exists():
-            raise ValueError(f'{relative}: not a Git repository: {path}')
-        top = git(path, 'rev-parse', '--show-toplevel')
-        if Path(top).resolve() != path.resolve():
-            raise ValueError(f'{relative}: not a Git repository root: {path}')
+        if require_git:
+            validate_repository(path)
         if path.resolve() in seen:
             raise ValueError(f'{relative}: duplicate managed repository: {path}')
         seen.add(path.resolve())
-        entries.append((relative, spec, path))
-    return entries
+        yield relative, spec, path
 
 
 def git(path, *args):
@@ -72,7 +80,7 @@ def checkout_target(spec, refs, mode, remote):
     heads = {ref.removeprefix('refs/heads/') for ref in refs if ref.startswith('refs/heads/')}
     if mode == 'dev':
         if 'dev' not in heads:
-            raise ValueError(f'remote branch {remote}/dev does not exist; no local branch created')
+            raise MissingRemoteBranch(f'remote branch {remote}/dev does not exist')
         return 'dev'
     preferred = str(spec.get('main_branch') or version)
     if spec.get('main_branch') and preferred not in MAIN_BRANCHES:
@@ -97,8 +105,13 @@ def clone_repository(path, spec, *, checkout=None, remote='origin', depth=None):
     version = spec.get('version')
     if checkout:
         refs = remote_refs(path.parent, spec['url'])
-        target = checkout_target(spec, refs, checkout, remote)
-        version = target if target is not None else version
+        try:
+            target = checkout_target(spec, refs, checkout, remote)
+            version = target if target is not None else version
+        except MissingRemoteBranch:
+            # Missing sources still need cloning for the build. Use the normal
+            # manifest/default branch, then report the skipped dev checkout.
+            pass
     command = ['git', 'clone', '--origin', remote]
     if depth:
         command += ['--depth', str(depth)]
@@ -109,21 +122,22 @@ def clone_repository(path, spec, *, checkout=None, remote='origin', depth=None):
         raise ValueError(f'clone failed: {path}')
 
 
-def checkout_repositories(entries, mode, remote, update):
-    """Resolve and preflight every repository before changing any local branch.
-
-    Fetching only changes remote refs/objects. Execution is intentionally not a
-    transaction: on a later Git error we report completed repositories, never
-    reset branches or discard changes to manufacture a rollback.
-    """
+def checkout_repositories(entries, mode, remote, update, clone_depth=None):
+    """Process each repository independently, then report actual failures."""
     if mode not in ('dev', 'main'):
         raise ValueError('--checkout must be dev or main')
     if not remote or remote.startswith('-'):
         raise ValueError('invalid --remote')
-    plans = []
+    targets = {}
+    completed = []
+    skipped = []
     errors = []
     for relative, spec, path in entries:
         try:
+            print(f'[checkout] {relative}: checking {remote}', flush=True)
+            if not path.exists():
+                clone_repository(path, spec, checkout=mode, remote=remote, depth=clone_depth)
+            validate_repository(path)
             if remote not in git(path, 'remote').splitlines():
                 raise ValueError(f'remote {remote!r} does not exist')
             for marker in ('MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD',
@@ -149,8 +163,8 @@ def checkout_repositories(entries, mode, remote, update):
                 pinned = refs.get(f'refs/tags/{version}^{{}}', refs[f'refs/tags/{version}'])
                 if current or git(path, 'rev-parse', 'HEAD') != pinned:
                     raise ValueError(f'expected detached pinned tag {version}; restore it before checkout')
-                plans.append((relative, path, None, None))
-                print(f'[checkout-plan] {relative}: keep pinned tag {version}', flush=True)
+                print(f'[checkout] {relative}: keep pinned tag {version}', flush=True)
+                skipped.append(relative)
                 continue
             remote_ref = f'refs/remotes/{remote}/{target}'
             # An explicit refspec works for --depth 1 / single-branch clones,
@@ -171,19 +185,8 @@ def checkout_repositories(entries, mode, remote, update):
                 if update and all(int(count) > 0 for count in counts):
                     raise ValueError(f'{target} diverged from {remote}/{target}; fast-forward required')
             action = 'switch' if exists else 'create tracking branch'
-            print(f'[checkout-plan] {relative}: {current or "detached"} -> {target}; '
+            print(f'[checkout] {relative}: {current or "detached"} -> {target}; '
                   f'{action}; upstream={remote}/{target}; ahead={counts[0]} behind={counts[1]}', flush=True)
-            plans.append((relative, path, target, remote_ref))
-        except ValueError as exc:
-            errors.append(f'{relative}: {exc}')
-    if errors:
-        raise ValueError('checkout preflight failed; no local branches changed:\n  ' + '\n  '.join(errors))
-
-    completed = []
-    try:
-        for relative, path, target, remote_ref in plans:
-            if target is None:
-                continue
             # An explicit fetch does not extend a single-branch clone's fetch
             # configuration. Add the target so future ordinary pull works too.
             refspec = f'+refs/heads/{target}:{remote_ref}'
@@ -204,19 +207,30 @@ def checkout_repositories(entries, mode, remote, update):
             print(f'[checkout] {relative}: {target} upstream={remote}/{target} '
                   f'ahead={counts[0]} behind={counts[1]}', flush=True)
             completed.append(relative)
-    except (OSError, ValueError) as exc:
-        raise ValueError(f'{exc}\nCheckout stopped; build will not start. '
-                         f'Completed repositories: {", ".join(completed) or "none"}. '
-                         'The failing repository may also have changed; no automatic rollback.') from exc
+            targets[relative] = target
+        except MissingRemoteBranch as exc:
+            current = git(path, 'branch', '--show-current') or 'detached'
+            print(f'[checkout] {relative}: skip; {exc}; keep {current}', flush=True)
+            targets[relative] = current
+            skipped.append(relative)
+        except (OSError, ValueError) as exc:
+            errors.append(f'{relative}: {exc}')
+            print(f'[checkout] {relative}: failed; {exc}', file=sys.stderr, flush=True)
+    print(f'[checkout-summary] switched={len(completed)} skipped={len(skipped)} failed={len(errors)}', flush=True)
+    if errors:
+        raise ValueError('Checkout failed; build will not start.\n  ' + '\n  '.join(errors)
+                         + f'\nCompleted repositories: {", ".join(completed) or "none"}. '
+                         'Failed repositories may also have changed; no automatic rollback.')
     print('[done] managed repository checkout complete', flush=True)
-    return {relative: target for relative, _, target, _ in plans if target is not None}
+    return targets
 
 
 def update_repositories(repos_file, workspace_root, algor_ws=None, driver_ws=None, task_ws=None,
-                        *, checkout=None, remote='origin', update=True):
-    entries = managed_repositories(repos_file, workspace_root, algor_ws, driver_ws, task_ws)
+                        *, checkout=None, remote='origin', update=True, clone_depth=None):
+    entries = managed_repositories(repos_file, workspace_root, algor_ws, driver_ws, task_ws,
+                                   require_git=not checkout)
     if checkout:
-        return checkout_repositories(entries, checkout, remote, update)
+        return checkout_repositories(entries, checkout, remote, update, clone_depth)
 
     for relative, spec, path in entries:
 
