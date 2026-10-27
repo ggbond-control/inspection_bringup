@@ -36,6 +36,7 @@ MANUAL_MODULES = (
     "nav_bridge",
     "livox",
     "slam",
+    "gnss",
 )
 NAV_EXTENSION_MODULES = (
     "terrain",

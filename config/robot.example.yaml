@@ -25,6 +25,20 @@ robot_id: D1M-A
 #     password: "your-password"
 
 # navigation:
+#   # D1M G90 receiver and NTRIP overrides; keep credentials on this device.
+#   gnss:
+#     parameters:
+#       gnss_device:
+#         ros__parameters:
+#           port: /dev/wheeltec_gnss
+#           baud: 460800
+#     ntrip_parameters:
+#       ntrip_client:
+#         ros__parameters:
+#           username: "YOUR_CORS_USERNAME"
+#           password: "YOUR_CORS_PASSWORD"
+#           rtk_port: /dev/wheeltec_rtk
+#           rtk_baud: 115200
 #   slam:
 #     parameters:
 #       laser_mapping:

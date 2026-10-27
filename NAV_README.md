@@ -40,6 +40,38 @@ The navigation stack is intentionally decoupled from
 inspection task modules, and use `navigation.launch.py` for the robot
 navigation stack.
 
+## D1M G90 and NTRIP
+
+D1M starts `gnss` immediately after the SLAM readiness step in every localized
+mode (manual with a map, nav and add). Manual without a map starts only the
+bridge. X30 and Cyvet do not include GNSS in their sequences. Warm mode switches
+retain GNSS with SLAM; a full restart stops and restarts both G90 and NTRIP.
+
+`config/models/d1m/navigate.yaml` selects `device: g90`, `ntrip: true` and two
+complete parameter files under `config/models/d1m/navigation/`:
+
+- `param_d1m_gnss_driver_g90.yaml`: main serial port `/dev/wheeltec_gnss` at
+  460800 baud, `/fix_g90`, `/rtk_pvh_g90` and receiver output settings.
+- `param_d1m_gnss_driver_ntrip.yaml`: CORS settings, credentials, RTCM injection
+  port `/dev/wheeltec_rtk` at 115200 baud and GGA input `/fix_g90`.
+
+Device overrides use `navigation.gnss.parameters` for the receiver and
+`navigation.gnss.ntrip_parameters` for NTRIP in `robot.yaml`; see
+`config/robot.example.yaml`. These override the corresponding model files.
+The child launch accepts `config` and `ntrip_config`; its original standalone
+command still works:
+
+```bash
+ros2 launch gnss_driver driver.launch.py device:=g90 ntrip:=true
+```
+
+GNSS readiness checks only `/gnss_device` and `/ntrip_client` node discovery.
+Missing satellite fixes, disconnected serial ports or unavailable CORS networks
+do not block navigation while the nodes reconnect. It does not wait for RTK fixed
+status. Faster_lio consumes `/rtk_pvh_g90` and handles observation quality.
+If SLAM localization initialization remains pending, the subsequent GNSS step
+also waits; GNSS is not a prerequisite for SLAM initialization in this sequence.
+
 ## System Dependencies
 
 Install the system dependencies before running `build_navigation.sh` on Ubuntu

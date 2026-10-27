@@ -152,14 +152,42 @@ class LaunchConfiguration(unittest.TestCase):
         for mode in ('manual', 'nav', 'add'):
             with self.subTest(mode=mode):
                 self.assertNotIn('livox', node.mode_sequence(config, mode))
+                sequence = node.mode_sequence(config, mode)
+                self.assertEqual(sequence[sequence.index('slam') + 1], 'gnss')
                 self.assertEqual(node.startup_control_action(config, mode), 'acquire_control')
         self.assertEqual(node.control_action(config, 'nav'), 'acquire_control')
         self.assertEqual(node.control_action(config, 'add'), '')
         self.assertEqual(node.run_control_action(config, 'add'), (True, 'no control action configured'))
         self.assertEqual(node.layer_sequence(config, 'add', supervisor.MANUAL_LOCALIZED, 'base'),
-                         ('nav_bridge', 'acquire_control', 'release_control', 'slam'))
+                         ('nav_bridge', 'acquire_control', 'release_control', 'slam', 'gnss'))
         self.assertEqual(node.layer_sequence(config, 'add', supervisor.MANUAL_LOCALIZED, 'navigation'),
                          ('terrain', 'local_planner', 'global_planner'))
+
+    def test_gnss_two_parameter_layers_and_model_scope(self):
+        self.robot['navigation'] = {'gnss': {
+            'parameters': {'gnss_device': {'ros__parameters': {'baud': 230400}}},
+            'ntrip_parameters': {'ntrip_client': {'ros__parameters': {'username': 'test-user'}}}}}
+        self.write_robot()
+        config = cfg.load_config('navigation')
+        receiver = cfg.read_yaml(config['gnss']['config'])['gnss_device']['ros__parameters']
+        ntrip = cfg.read_yaml(config['gnss']['ntrip_config'])['ntrip_client']['ros__parameters']
+        self.assertEqual(receiver['baud'], 230400)
+        self.assertEqual(receiver['port'], '/dev/wheeltec_gnss')
+        self.assertEqual(ntrip['username'], 'test-user')
+        self.assertEqual(ntrip['rtk_baud'], 115200)
+        self.assertEqual(ntrip['fix_topic'], receiver['fix_topic'])
+        self.assertNotIn('parameters', config['gnss'])
+        self.assertNotIn('ntrip_parameters', config['gnss'])
+        node = object.__new__(supervisor.NavigationSupervisor)
+        node.module_names = supervisor.SUPPORTED_MODULES
+        self.assertNotIn('gnss', node.mode_sequence(config, 'manual', supervisor.MANUAL_BRIDGE_ONLY))
+        self.robot.pop('navigation')
+        for model in ('x30', 'cyvet'):
+            self.robot['model'] = model
+            self.write_robot()
+            config = cfg.load_config('navigation')
+            for mode in ('manual', 'nav', 'add'):
+                self.assertNotIn('gnss', node.mode_sequence(config, mode))
 
     def test_cli_global_config_replaces_managed_path(self):
         context = context_for(navigation, global_config='straight_local.yaml')
@@ -237,6 +265,9 @@ class LaunchConfiguration(unittest.TestCase):
         self.assertEqual(captured['nav_bridge'][1]['robot_type'], 'd1m')
         self.assertEqual(captured['nav_bridge'][1]['params_file'], str(external))
         self.assertEqual(captured['faster_lio'][1]['config'], config['slam']['config'])
+        self.assertEqual(captured['gnss_driver'][1], {
+            'config': config['gnss']['config'], 'ntrip_config': config['gnss']['ntrip_config'],
+            'device': 'g90', 'ntrip': 'true', 'export_polyline': 'false'})
         self.assertEqual(captured['gridmapper'][1]['params_file'], str(external))
         self.assertEqual(captured['local_planner'][1]['config'], config['local_planner']['config'])
         self.assertNotIn('params_file', captured['multi_map_nav'][1])

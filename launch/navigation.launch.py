@@ -39,6 +39,8 @@ MODULE_ARGUMENTS = (
     ("nav_bridge_cyclonedds_config", "nav_bridge", "cyclonedds_config", "cyclonedds_config"),
     ("livox_config", "livox", "config", "user_config_path"),
     ("slam_config", "slam", "config", "config"),
+    ("gnss_config", "gnss", "config", "config"),
+    ("gnss_ntrip_config", "gnss", "ntrip_config", "ntrip_config"),
     ("terrain_config", "terrain", "config", "params_file"),
     ("local_planner_config", "local_planner", "config", "config"),
     ("global_config", "global_planner", "config", "params_path"),
@@ -94,7 +96,7 @@ def apply_launch_overrides(context, config):
             cursor = cursor.setdefault(key, {})
         cursor[parts[-1]] = cast(value)
     switches = {}
-    for module in ("nav_bridge", "livox", "slam", "terrain", "local_planner", "global_planner"):
+    for module in ("nav_bridge", "livox", "slam", "gnss", "terrain", "local_planner", "global_planner"):
         value = LaunchConfiguration("enable_" + module).perform(context)
         if value != "":
             switches[module] = as_bool(value)
@@ -811,6 +813,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("enable_livox", default_value="", description="Start MID360 Livox driver."),
         DeclareLaunchArgument("enable_slam", default_value="", description="Start faster_lio localization."),
+        DeclareLaunchArgument("enable_gnss", default_value="", description="Start GNSS receiver and optional NTRIP."),
         DeclareLaunchArgument("enable_terrain", default_value="", description="Start gridmapper local terrain."),
         DeclareLaunchArgument("enable_local_planner", default_value="", description="Start local planner."),
         DeclareLaunchArgument("enable_global_planner", default_value="", description="Start multi-map navigation."),
@@ -1160,6 +1163,19 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         context, "enable_global_planner", sequence, "global_planner", use_launch_overrides
     )
 
+    gnss_launch = include_package_launch(
+        "gnss_driver", "driver.launch.py", "true",
+        launch_arguments={
+            **optional_module_arguments(context, config, "gnss", use_launch_overrides),
+            "device": str(config.get("gnss", {}).get("device", "g90")),
+            "ntrip": as_bool_text(as_bool(config.get("gnss", {}).get("ntrip", False))),
+            "export_polyline": as_bool_text(as_bool(config.get("gnss", {}).get("export_polyline", False))),
+        },
+    )
+    gnss_enabled = sequence_module_enabled(
+        context, "enable_gnss", sequence, "gnss", use_launch_overrides
+    )
+
     def detail_path(section):
         if state_dir and run_id:
             return readiness_failure_detail_path(state_dir, run_id, section)
@@ -1198,6 +1214,15 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
             ),
             module_readiness_failure_reason(config, "slam", ["/laser_mapping"], wait_timeout, detail_path("slam")),
             detail_path("slam"),
+        ),
+        "gnss": (
+            gnss_enabled,
+            gnss_launch,
+            module_readiness_action_with_overrides(
+                context, config, "gnss", ["/gnss_device"], wait_timeout, use_launch_overrides, detail_path("gnss")
+            ),
+            module_readiness_failure_reason(config, "gnss", ["/gnss_device"], wait_timeout, detail_path("gnss")),
+            detail_path("gnss"),
         ),
         "terrain": (
             terrain_enabled,

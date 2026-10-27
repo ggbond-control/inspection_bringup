@@ -6,12 +6,14 @@ bringup:
         - nav_bridge
         - acquire_control
         - slam
+        - gnss
     nav:
       # Inherit control_action: acquire_control; start_control_action is invalid.
       sequence:
         - nav_bridge
         - acquire_control
         - slam
+        - gnss
         - terrain
         - local_planner
         - global_planner
@@ -24,6 +26,7 @@ bringup:
         - acquire_control
         - release_control
         - slam
+        - gnss
         - terrain
         - local_planner
         - global_planner
@@ -34,3 +37,8 @@ nav_bridge:
   config: "${INSPECTION_CONFIG_DIR}/models/d1m/navigation/param_d1m_nav_bridge.yaml"
 livox:
   config: ""
+gnss:
+  device: g90
+  config: "${INSPECTION_CONFIG_DIR}/models/d1m/navigation/param_d1m_gnss_driver_g90.yaml"
+  ntrip: true
+  ntrip_config: "${INSPECTION_CONFIG_DIR}/models/d1m/navigation/param_d1m_gnss_driver_ntrip.yaml"

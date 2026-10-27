@@ -27,6 +27,8 @@ FILE_FIELDS = {
         ("nav_bridge", "cyclonedds_config"): ("nav_bridge", "config"),
         ("livox", "config"): ("livox_ros_driver2", "config"),
         ("slam", "config"): ("faster_lio", "config"),
+        ("gnss", "config"): ("gnss_driver", "config"),
+        ("gnss", "ntrip_config"): ("gnss_driver", "config"),
         ("terrain", "config"): ("gridmapper", "config"),
         ("local_planner", "config"): ("local_planner", "config"),
         ("global_planner", "config"): ("multi_map_nav", "params"),
@@ -208,16 +210,17 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
             if module == 'navigation' and parts[-1] != 'cyclonedds_config':
                 if not isinstance(value, str):
                     raise ValueError(f'{origin}: {".".join(parts)}: expected a file path string')
-                overrides = cursor.get('parameters', {})
+                override_key = 'ntrip_parameters' if parts == ('gnss', 'ntrip_config') else 'parameters'
+                overrides = cursor.get(override_key, {})
                 if not isinstance(overrides, dict):
-                    raise ValueError(f'{origin}: {parts[0]}.parameters must be a mapping')
+                    raise ValueError(f'{origin}: {parts[0]}.{override_key} must be a mapping')
                 managed = layered_parameter_file(value, root, model, overrides, origin)
                 if managed is not None:
                     cursor[parts[-1]] = managed
-                    consumed.add(parts[0])
+                    consumed.add((parts[0], override_key))
                     continue
                 if overrides:
-                    raise ValueError(f'{origin}: {parts[0]}.parameters requires a managed '
+                    raise ValueError(f'{origin}: {parts[0]}.{override_key} requires a managed '
                                      '${INSPECTION_CONFIG_DIR}/navigation/ or models/ file; '
                                      'standalone paths use complete files')
             cursor[parts[-1]] = file_path(
@@ -225,10 +228,11 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                 check_exists=(module != "services"), config_dir=root)
     if module == 'navigation':
         for section, values in config.items():
-            if isinstance(values, dict) and 'parameters' in values:
-                if section not in consumed:
-                    raise ValueError(f'{origin}: {section}.parameters has no managed parameter file')
-                values.pop('parameters')
+            for key in ('parameters', 'ntrip_parameters'):
+                if isinstance(values, dict) and key in values:
+                    if (section, key) not in consumed:
+                        raise ValueError(f'{origin}: {section}.{key} has no managed parameter file')
+                    values.pop(key)
     return config
 
 

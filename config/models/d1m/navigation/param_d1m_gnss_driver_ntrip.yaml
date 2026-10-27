@@ -1,0 +1,23 @@
+ntrip_client:
+  ros__parameters:
+    # CORS endpoint: 8001 ITRF2008 / 8002 WGS84 / 8003 CGCS2000.
+    host: "103.143.19.54"
+    port: 8002
+    mountpoint: "RTCM33GRCEJpro"  # Five-constellation, sixteen-frequency corrections.
+    # Configure device credentials through robot.yaml; keep shared values empty.
+    username: ""
+    password: ""
+    ntrip_version: "Ntrip/2.0"
+    # RTCM3 injection uses G90 UART2, independently of the main port.
+    rtk_port: /dev/wheeltec_rtk
+    rtk_baud: 115200
+    # VRS stations require periodic rover GGA positions.
+    send_gga: true
+    gga_interval_sec: 2.0
+    fix_topic: /fix_g90
+    # Indoor test coordinates are disabled for normal operation.
+    enable_fallback_coordinates: false
+    fallback_latitude: 30.28892
+    fallback_longitude: 119.98097
+    reconnect_sec: 3.0
+    status_topic: /ntrip/status

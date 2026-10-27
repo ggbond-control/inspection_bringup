@@ -1,0 +1,17 @@
+gnss_device:
+  ros__parameters:
+    # G90 / UM982 dual-antenna RTK receiver.
+    is_rtk: true
+    # Main receiver serial port; separate from the RTCM injection port.
+    port: /dev/wheeltec_gnss
+    baud: 460800
+    timeout_sec: 0.1
+    reconnect_sec: 2.0
+    # RTK topic matches faster_lio's rtk.topic.
+    frame_id: gps
+    fix_topic: /fix_g90
+    rtk_topic: /rtk_pvh_g90
+    odom_topic: /odometry_from_g90
+    publish_navsat_fix: true
+    publish_heading_gnss: true
+    heading_gnss_topic: /heading_gnss
