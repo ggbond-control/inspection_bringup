@@ -1,4 +1,4 @@
-# nav_bridge and MID360 configuration; localization/planner profiles reuse Cyvet.
+# nav_bridge and MID360 configuration; localization/planner profiles use TANK overlays.
 # Module config paths inherit shared defaults and automatically load TANK overlays.
 nav_bridge:
   robot_type: tank

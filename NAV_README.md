@@ -146,12 +146,20 @@ For Bash, use `~/.bashrc` instead.
 
 TANK has a nav_bridge model file, a MID360 configuration and a build profile.
 Its `param_tank_faster_lio.yaml`, `param_tank_gridmapper_local.yaml`,
-`param_tank_local_planner.yaml` and `param_tank_multi_map_nav.yaml` initially copy
-the Cyvet model overrides. Shared default config paths automatically load these
+`param_tank_local_planner.yaml` and `param_tank_multi_map_nav.yaml` use independent
+TANK overrides. Shared default config paths automatically load these
 TANK overlays; no duplicate default paths are needed in the model navigate file.
-This includes Cyvet geometry, motion models, footprint and
-`correspondences_cyvet.txt`, with gait switching disabled and RTK disabled.
-The files are independent so later TANK changes do not affect Cyvet.
+The chassis is 1.10 x 0.70 m; the sensor is 0.45 m forward of body center, with
+zero lateral offset. SLAM's input-frame self-filter has half-size [0.55, 0.35, 0.5]
+and offset [-0.45, 0, 0]. The current SLAM `base_link` shares the sensor's planar
+origin, so both costmaps use X=[-1.00, 0.10], Y=[-0.35, 0.35], plus the inherited
+0.05 m footprint padding. A future TF origin change must also update these footprints.
+Local planning uses `tracking_mode: differential`, with gait switching and RTK disabled.
+The motion profile's Y limits are retained for compatibility but unused by this follower.
+Gridmapper's sensor height (0.5 m), height bounds and X passthrough threshold
+(0.65 m) remain deployment settings, independent of the chassis footprint.
+These TANK changes do not affect other models. Rebuild faster_lio for
+`self_box_offset` support and local_planner for the differential follower and path table.
 Full navigation startup sequence adaptation remains pending.
 The repository manifest continues to place nav_bridge in `driver_ws/src/nav_bridge`.
 

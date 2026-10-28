@@ -1,8 +1,8 @@
-# TANK initially reuses Cyvet motion models, geometry and tracking overrides.
+# TANK differential chassis: 1.10 x 0.70 m; sensor 0.45 m ahead of body center.
 /**:
   ros__parameters:
-    sensorOffsetX: 0.35  # 传感器相对车体 X 方向偏移（m）
-    sensorOffsetY: 0.05  # 传感器相对车体 Y 方向偏移（m）
+    sensorOffsetX: 0.45  # 传感器相对车体中心向前偏移（m）
+    sensorOffsetY: 0.0   # 传感器相对车体中心横向偏移（m）
     initialModel: "flat"  # 启动时使用的运动模型名称
     flat:
       maxSpeed: 1.2  # 模型允许的最大前向速度（m/s）
@@ -17,12 +17,14 @@
 
 localPlanner:
   ros__parameters:
-    vehicleLength: 0.7  # 机器人车体长度（m）
-    vehicleWidth: 0.4  # 机器人车体宽度（m）
+    vehicleLength: 1.10  # 车体实际长度（m），不含碰撞余量
+    vehicleWidth: 0.70   # 车体实际宽度（m），不含碰撞余量
     correspondencesFile: "correspondences_tank.txt"  # 地形体素到候选路径对应关系文件名
     gaitSwitchEn: false  # 不按目标阶段切换步态
 
 pathFollower:
   ros__parameters:
+    tracking_mode: differential  # 差速底盘，不输出横向速度
+    twoWayDrive: false          # 默认不倒车
     slowdownDisThre: 1.0  # 距路径末端开始降低前向速度的距离（m）
     curvatureDecelGain: 0.75  # 曲率导致前向减速的增益

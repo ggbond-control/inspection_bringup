@@ -1,4 +1,4 @@
-# TANK initially reuses the Cyvet Mid360 localization profile, with RTK disabled.
+# TANK Mid360 localization, with RTK disabled.
 # Keep sensor topics and the self-filter box explicit for each model.
 laser_mapping:
   ros__parameters:
@@ -6,4 +6,6 @@ laser_mapping:
       lid_topic: "/livox/lidar"  # Mid360 point cloud input
       imu_topic: "/livox/imu"    # IMU input
     preprocess:
-      self_box_half_size: [0.1, 0.1, 0.1]  # Filter box half-size [x, y, z], meters
+      # Input frame: body center 0.45 m behind LiDAR; X=[-1.00, 0.10], Y=[-0.35, 0.35].
+      self_box_half_size: [0.55, 0.35, 0.5]  # 过滤盒半尺寸 [x, y, z]，开启后会滤除盒内点
+      self_box_offset: [-0.45, 0.0, 0.0]    # 过滤盒中心在输入点云坐标系中的位置 [x, y, z]，单位米

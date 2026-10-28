@@ -189,7 +189,7 @@ class LaunchConfiguration(unittest.TestCase):
             for mode in ('manual', 'nav', 'add'):
                 self.assertNotIn('gnss', node.mode_sequence(config, mode))
 
-    def test_tank_localization_and_planner_profiles_match_cyvet(self):
+    def test_tank_geometry_and_differential_profile_layers(self):
         profiles = {}
         for model in ('cyvet', 'tank'):
             self.robot = {'model': model, 'robot_id': model.upper() + '-A'}
@@ -197,10 +197,31 @@ class LaunchConfiguration(unittest.TestCase):
             config = cfg.load_config('navigation')
             profiles[model] = {section: cfg.read_yaml(config[section]['config'])
                                for section in ('slam', 'terrain', 'local_planner', 'global_planner')}
-        self.assertEqual(profiles['tank'], profiles['cyvet'])
+        preprocess = profiles['tank']['slam']['laser_mapping']['ros__parameters']['preprocess']
+        self.assertEqual(preprocess['self_box_half_size'], [0.55, 0.35, 0.5])
+        self.assertEqual(preprocess['self_box_offset'], [-0.45, 0.0, 0.0])
+        cyvet_preprocess = profiles['cyvet']['slam']['laser_mapping']['ros__parameters']['preprocess']
+        self.assertEqual(cyvet_preprocess['self_box_offset'], [0.0, 0.0, 0.0])
+        motion = profiles['tank']['local_planner']['/**']['ros__parameters']
+        self.assertEqual(motion['sensorOffsetX'], 0.45)
+        self.assertEqual(motion['sensorOffsetY'], 0.0)
         local = profiles['tank']['local_planner']['localPlanner']['ros__parameters']
+        self.assertEqual(local['vehicleLength'], 1.10)
+        self.assertEqual(local['vehicleWidth'], 0.70)
         self.assertFalse(local['gaitSwitchEn'])
-        self.assertEqual(local['correspondencesFile'], 'correspondences_cyvet.txt')
+        self.assertEqual(local['correspondencesFile'], 'correspondences_tank.txt')
+        follower = profiles['tank']['local_planner']['pathFollower']['ros__parameters']
+        self.assertEqual(follower['tracking_mode'], 'differential')
+        self.assertFalse(follower['twoWayDrive'])
+        global_params = profiles['tank']['global_planner']
+        for section in ('global_costmap', 'local_costmap'):
+            footprint = yaml.safe_load(global_params[section][section]['ros__parameters']['footprint'])
+            expected = [[0.10, 0.35], [0.10, -0.35], [-1.00, -0.35], [-1.00, 0.35]]
+            self.assertEqual(footprint, expected)
+            self.assertAlmostEqual(max(p[0] for p in footprint) - min(p[0] for p in footprint),
+                                   local['vehicleLength'])
+            self.assertAlmostEqual(max(p[1] for p in footprint) - min(p[1] for p in footprint),
+                                   local['vehicleWidth'])
 
     def test_tank_bridge_parameters_and_service_snapshot(self):
         self.robot = {'model': 'tank', 'robot_id': 'TANK-A', 'navigation': {

@@ -1,7 +1,9 @@
-# TANK initially reuses Cyvet local mapping; other parameters inherit the default.
+# TANK local mapping; deployed height/passthrough settings are sensor-relative.
+# These bounds are independent of vehicleLength/vehicleWidth and the SLAM self box.
 gridmapper_node:
   ros__parameters:
     min_point_height: -0.7      # Points below this z are ignored (meters)
+    max_point_height: 0.8         # Points above this z are ignored
     enable_x_passthrough: true # Enable X-axis passthrough filter
-    x_passthrough_min: 0.5     # Minimum X value to keep (meters)
-    sensor_height_origin: 0.4  # Original sensor height (meters)
+    x_passthrough_min: 0.65     # Minimum X value to keep (meters)
+    sensor_height_origin: 0.5  # Original sensor height (meters)
