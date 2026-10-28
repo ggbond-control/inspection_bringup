@@ -142,6 +142,67 @@ source ~/.zshrc
 For Bash, use `~/.bashrc` instead.
 ```
 
+## TANK nav_bridge Configuration
+
+TANK has a nav_bridge model file, a MID360 configuration and a build profile.
+Its `param_tank_faster_lio.yaml`, `param_tank_gridmapper_local.yaml`,
+`param_tank_local_planner.yaml` and `param_tank_multi_map_nav.yaml` initially copy
+the Cyvet model overrides. Shared default config paths automatically load these
+TANK overlays; no duplicate default paths are needed in the model navigate file.
+This includes Cyvet geometry, motion models, footprint and
+`correspondences_cyvet.txt`, with gait switching disabled and RTK disabled.
+The files are independent so later TANK changes do not affect Cyvet.
+Full navigation startup sequence adaptation remains pending.
+The repository manifest continues to place nav_bridge in `driver_ws/src/nav_bridge`.
+
+`livox.config` selects `param_tank_livox_ros_driver2_mid360.json` in the TANK
+model's navigation directory: host IP `192.168.1.99`, LiDAR IP `192.168.1.176`.
+Ports, multicast and zero extrinsics follow the Cyvet MID360 configuration.
+Configure the host network interface separately; this JSON does not assign its IP.
+
+Install the HTTP backend build dependencies:
+
+```bash
+sudo apt install -y libcurl4-openssl-dev libjsoncpp-dev pkg-config
+```
+
+`config/build/tank.yaml` enables TANK and explicitly disables X30, D1 Max and
+Cyvet. D1M explicitly disables TANK; the shared profile leaves backend selection
+to nav_bridge's CMake defaults (X30 on, other backends off for a fresh build).
+Changing from a previously configured backend to an unconfigured model requires
+clearing the nav_bridge CMake cache or explicitly setting its backend switches;
+the runtime robot_type does not select build options. Check/build with:
+
+```bash
+scripts/build_navigation.sh --model tank --plan
+scripts/build_navigation.sh --model tank
+```
+
+This remains the normal navigation build, not a bridge-only build. Model selection
+for runtime uses `robot.yaml`; `--model` only selects this build's configuration.
+
+```yaml
+model: tank
+robot_id: TANK-A
+navigation:
+  nav_bridge:
+    parameters:
+      nav_bridge_node:
+        ros__parameters:
+          host_ip: "192.168.1.20"
+          host_port: 10050
+          enable_motion_output: false  # Query-only diagnosis; control services fail.
+```
+
+`config/models/tank/navigation/param_tank_nav_bridge.yaml` is the complete bridge
+baseline; the device overrides above are merged into a runtime snapshot.
+Parameters are startup-only: editing files requires restarting the navigation
+system service to reload them. TANK disables charge precheck because the backend
+does not provide charging support. Its stand/release services use the existing
+names but represent local output enable/disable, not a confirmed remote-control
+handoff. Readonly diagnosis must use a standalone bridge launch, since the normal
+bringup control action requires stand to succeed.
+
 ## Deployment
 
 Daily navigation builds use one command, with no required path or middleware flags:

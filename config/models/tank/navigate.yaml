@@ -1,0 +1,9 @@
+# nav_bridge and MID360 configuration; localization/planner profiles reuse Cyvet.
+# Module config paths inherit shared defaults and automatically load TANK overlays.
+nav_bridge:
+  robot_type: tank
+  config: "${INSPECTION_CONFIG_DIR}/models/tank/navigation/param_tank_nav_bridge.yaml"
+  readiness:
+    charge_precheck: false
+livox:
+  config: "${INSPECTION_CONFIG_DIR}/models/tank/navigation/param_tank_livox_ros_driver2_mid360.json"

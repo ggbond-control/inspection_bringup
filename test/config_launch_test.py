@@ -189,6 +189,46 @@ class LaunchConfiguration(unittest.TestCase):
             for mode in ('manual', 'nav', 'add'):
                 self.assertNotIn('gnss', node.mode_sequence(config, mode))
 
+    def test_tank_localization_and_planner_profiles_match_cyvet(self):
+        profiles = {}
+        for model in ('cyvet', 'tank'):
+            self.robot = {'model': model, 'robot_id': model.upper() + '-A'}
+            self.write_robot()
+            config = cfg.load_config('navigation')
+            profiles[model] = {section: cfg.read_yaml(config[section]['config'])
+                               for section in ('slam', 'terrain', 'local_planner', 'global_planner')}
+        self.assertEqual(profiles['tank'], profiles['cyvet'])
+        local = profiles['tank']['local_planner']['localPlanner']['ros__parameters']
+        self.assertFalse(local['gaitSwitchEn'])
+        self.assertEqual(local['correspondencesFile'], 'correspondences_cyvet.txt')
+
+    def test_tank_bridge_parameters_and_service_snapshot(self):
+        self.robot = {'model': 'tank', 'robot_id': 'TANK-A', 'navigation': {
+            'nav_bridge': {'parameters': {'nav_bridge_node': {'ros__parameters': {
+                'host_ip': '192.168.1.20', 'host_port': 10051,
+                'enable_motion_output': False}}}}}}
+        self.write_robot()
+        config = cfg.load_config('navigation')
+        self.assertEqual(config['nav_bridge']['robot_type'], 'tank')
+        self.assertFalse(config['nav_bridge']['readiness']['charge_precheck'])
+        parameters = cfg.read_yaml(config['nav_bridge']['config'])['nav_bridge_node']['ros__parameters']
+        self.assertEqual(parameters['host_ip'], '192.168.1.20')
+        self.assertEqual(parameters['host_port'], 10051)
+        self.assertFalse(parameters['enable_motion_output'])
+        self.assertEqual(parameters['max_linear_speed'], 1.2)
+        node = object.__new__(supervisor.NavigationSupervisor)
+        snapshot = node.layer_config(config, ('nav_bridge', 'acquire_control'))
+        self.assertEqual(cfg.resolve_files(snapshot, 'navigation', 'test')['nav_bridge'], config['nav_bridge'])
+        captured = {}
+        def include(package, filename, enabled, launch_arguments=None):
+            captured[package] = launch_arguments or {}
+            return DeclareLaunchArgument('mock_' + package, default_value='')
+        config['bringup']['sequence'] = ['nav_bridge', 'acquire_control']
+        with patch.object(navigation, 'include_package_launch', side_effect=include):
+            navigation.build_navigation_actions(context_for(navigation), config, use_launch_overrides=False)
+        self.assertEqual(captured['nav_bridge']['robot_type'], 'tank')
+        self.assertEqual(captured['nav_bridge']['params_file'], config['nav_bridge']['config'])
+
     def test_cli_global_config_replaces_managed_path(self):
         context = context_for(navigation, global_config='straight_local.yaml')
         value = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))

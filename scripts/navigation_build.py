@@ -328,6 +328,10 @@ class Build:
                 if missing:
                     raise ValueError(f'{workspace}: required packages absent from manifest/discovery: {", ".join(missing)}')
         bridge_args = self.config.get('package_cmake_args', {}).get('nav_bridge', [])
+        if not self.args.skip_driver_build and '-DNAV_BRIDGE_BUILD_TANK=ON' in bridge_args:
+            self.probe('find_package(CURL REQUIRED)\nfind_package(PkgConfig REQUIRED)\n'
+                       'pkg_check_modules(TANK_JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)\n',
+                       self.base_env, 'TANK CURL/JsonCpp/pkg-config dependencies')
         if not self.args.skip_driver_build and '-DNAV_BRIDGE_BUILD_D1_MAX=ON' in bridge_args:
             arch = {'arm64': 'aarch64', 'amd64': 'x86_64'}.get(platform.machine(), platform.machine())
             sdk = self.workspaces['driver_ws'] / f'src/nav_bridge/third_party/robot_sdk/lib/{arch}/librobot_sdk.so.0.2.1'
