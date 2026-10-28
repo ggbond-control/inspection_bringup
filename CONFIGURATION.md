@@ -262,6 +262,51 @@ slowdownDisThre=1.0、curvatureDecelGain=1.25 均按实机值配置。
 
 原配置移至 `test/fixtures/local_planner/`，仅用于回归比对，不参与启动。
 
+### 安全停车参数
+
+安全停车沿用上述三层合并机制，不新增模块别名或配置映射。
+`param_default_local_planner.yaml` 包含 `localPlanner` 的 `terrainTimeout`、
+`localizationHealthTimeout`，以及原名节点 `cmd_vel_guard` 的全部六项参数：
+`frequency`、`health_timeout`、`data_timeout`、`command_timeout`、
+`rtk_max_speed`、`rtk_max_yaw_rate`。原有里程计检查参数仍在 `/**` 段维护。
+`param_default_faster_lio.yaml` 包含 `laser_mapping.ros__parameters.navigation_health`
+下的 `data_timeout`、`rtk_max_age`、`max_position_sigma`、`max_attitude_sigma_deg`。
+默认值与接入前节点实际采用的默认值一致，不调整停车、恢复或定位算法。
+
+local_planner 子 launch 的 `config` 同时传给规划器、跟随器和门控。
+门控先读取包内 `navigation_safety.yaml`，再读取 `config`，后者覆盖前者；
+旧机型文件没有 `cmd_vel_guard` 段时仍使用包内默认值。
+使用 bringup 部署时在这里维护参数，无需同步修改导航包内默认文件。
+
+单机覆盖示例（数值仅示范配置位置，不是调参建议）：
+
+```yaml
+navigation:
+  local_planner:
+    parameters:
+      localPlanner:
+        ros__parameters:
+          terrainTimeout: 0.4
+      cmd_vel_guard:
+        ros__parameters:
+          data_timeout: 0.4
+  slam:
+    parameters:
+      laser_mapping:
+        ros__parameters:
+          navigation_health:
+            data_timeout: 0.3
+```
+
+这些超时检查的对象不同，仍分别配置：规划器 `terrainTimeout` 约束地形；
+门控 `data_timeout` 同时约束里程计、地形和路径接收间隔，路径不检查时间戳年龄；
+SLAM `navigation_health.data_timeout` 约束雷达数据和处理结果更新。
+不能只改其中一项就认为其他检查也被放宽。
+修改 `robot.yaml` 后需重启相关导航进程，使 bringup 重新生成参数快照；
+运行中的节点不随文件编辑自动更新。可用 `ros2 param get /cmd_vel_guard data_timeout`、
+`ros2 param get /localPlanner terrainTimeout` 和
+`ros2 param get /laser_mapping navigation_health.data_timeout` 核对实际值。
+
 ### 参数合并规则与本机覆盖
 
 `navigate.yaml` 管理启动行为和文件选择；子模块自身的参数另外按三层合并。

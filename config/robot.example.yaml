@@ -47,6 +47,8 @@ robot_id: D1M-A
 #             # Initial localization guess, not the LiDAR mounting extrinsics.
 #             position: [1.0, 2.0, 0.0]  # [x, y, z], meters; replace with actual values
 #             yaw: 90.0                 # Heading in DEGREES, not radians
+#           navigation_health:
+#             data_timeout: 0.3  # 雷达数据/处理结果超时（s）；独立于地形超时
 #   # Cyvet only (set model: cyvet above). D1M does not start a Livox driver.
 #   # Cyvet inherits MID360s by default. Select this complete file for MID360:
 #   livox:
@@ -84,6 +86,16 @@ robot_id: D1M-A
 #       localPlanner:
 #         ros__parameters:
 #           motionBlockNoPathTimeout: 8.0
+#           terrainTimeout: 0.3  # 规划器地形超时（s），超时发布空路径
+#           localizationHealthTimeout: 0.2
+#       cmd_vel_guard:
+#         ros__parameters:
+#           frequency: 50.0
+#           health_timeout: 0.2
+#           data_timeout: 0.3  # 同时约束里程计、地形及路径接收，不只是地形
+#           command_timeout: 0.2
+#           rtk_max_speed: 0.4
+#           rtk_max_yaw_rate: 0.4
 
 # Map path and initial map can be supplied through /navigation_bringup/start.
 # initial_alignment overrides above only set the localization pose guess.

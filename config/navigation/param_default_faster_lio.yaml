@@ -30,6 +30,13 @@ laser_mapping:
     localization:
       map_update_en: false                     # 重定位时是否允许把当前点云写入先验地图
 
+    # 导航健康输出与安全停车门限；不改变匹配、融合、重定位算法。
+    navigation_health:
+      data_timeout: 0.3                        # 雷达时间戳年龄或处理结果更新间隔上限（s）
+      rtk_max_age: 0.3                         # RTK 兜底时已接受的位置/航向观测最大年龄（s），相对雷达帧时间
+      max_position_sigma: 1.0                  # RTK 兜底允许的位置标准差上限（m）
+      max_attitude_sigma_deg: 10.0             # RTK 兜底允许的姿态标准差上限（deg）
+
     # RTK fallback：只在 LiDAR LOST/RECOVERING 时辅助 EKF，TRACKING 时不参与融合。
     rtk:
       # 1. 总开关与运行范围

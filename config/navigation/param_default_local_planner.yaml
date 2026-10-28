@@ -11,6 +11,8 @@
 
 localPlanner:
   ros__parameters:
+    terrainTimeout: 0.4  # 地形时间戳年龄及有效接收间隔上限（s），超时发布空路径
+    localizationHealthTimeout: 0.2  # 定位健康消息有效期及接收间隔上限（s）
     localPlannerFreq: 20.0  # 局部规划主循环频率（Hz）
     vehicleLength: 1.0  # 机器人车体长度（m）
     vehicleWidth: 0.47  # 机器人车体宽度（m）
@@ -75,6 +77,16 @@ localPlanner:
     finalGaitExitDist: 1.2  # 退出最终目标步态回到巡航的距离阈值（m）
     gaitRequestCooldown: 2.0  # 两次步态切换请求的最小间隔（s）
     gaitConfirmTimeout: 4.0  # 等待步态切换确认的超时（s）
+
+# 独立速度门控；与 localPlanner/pathFollower 共用同一份 bringup 合并配置。
+cmd_vel_guard:
+  ros__parameters:
+    frequency: 50.0  # 速度检查和输出频率（Hz），停车时也持续输出零速度
+    health_timeout: 0.2  # 定位健康消息有效期及接收间隔上限（s）
+    data_timeout: 0.4  # 里程计、地形新鲜度及有效路径接收间隔上限（s）；不检查路径时间戳年龄
+    command_timeout: 0.2  # 有可用路径时，速度指令接收间隔上限（s）
+    rtk_max_speed: 0.4  # RTK 兜底导航的平移速度模长上限（m/s）
+    rtk_max_yaw_rate: 0.4  # RTK 兜底导航的偏航角速度上限（rad/s）
 
 pathFollower:
   ros__parameters:

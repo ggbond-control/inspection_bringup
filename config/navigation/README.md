@@ -29,6 +29,14 @@ initialModel、flat、offroad 仅在型号文件中维护。
 Cyvet 的传感器偏移、运动模型、车体尺寸、路径对应文件及跟随参数按提供的实机配置维护。
 原始完整参数移至 test/fixtures/local_planner 用于回归比对。
 
+安全停车参数也在公共默认文件中维护：local_planner 文件包含
+localPlanner 的 terrainTimeout/localizationHealthTimeout 和原名节点
+cmd_vel_guard 的六项参数；faster_lio 文件包含 navigation_health 的四项参数。
+沿用型号层和 robot.yaml 的 parameters 覆盖，默认值保持节点原有值。
+local_planner 子 launch 将合并文件同时传给三个节点；门控包内
+navigation_safety.yaml 仅提供后备默认值。编辑单机参数后重启相关导航进程。
+不同模块的超时仍各自生效，配置示例及含义见 CONFIGURATION.md 的“安全停车参数”。
+
 | ROS 包 | 子模块提交 | 公共基线来源 |
 | --- | --- | --- |
 | `nav_bridge` | `e7b00010fb2e3e83f6d4b6886e8e294c53151a64` | `config/x30_params.yaml`、`config/d1_max_params.yaml` |
