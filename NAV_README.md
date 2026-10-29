@@ -266,6 +266,16 @@ scripts/build_navigation.sh --plan
 # Does not fetch, update or compile. Missing sources must be fetched first.
 scripts/build_navigation.sh --check
 
+# Incrementally rebuild selected managed packages (package.xml names, not repo names).
+# Reuse installed dependencies; no fetch, interface/dependency builds or native rebuilds.
+scripts/build_navigation.sh --select local_planner
+scripts/build_navigation.sh --select faster_lio gridmapper local_planner -j2
+scripts/build_navigation.sh --select nav_bridge --model tank
+
+# Inspect selection or check package/source/installed-underlay paths without building.
+scripts/build_navigation.sh --select local_planner --plan
+scripts/build_navigation.sh --select local_planner --check
+
 # Explicitly rebuild GTSAM, or both third-party projects.
 scripts/build_navigation.sh --rebuild-gtsam
 scripts/build_navigation.sh --rebuild-third-party
@@ -289,6 +299,20 @@ On D1M-A (8 GiB RAM), one faster_lio compiler process was observed using about
 `--interface-underlay` skips the interface build and uses the supplied setup;
 prefer an interface-only or controlled `local_setup.bash` over a historical full
 workspace setup chain.
+
+`--select` accepts one or more package names discovered by colcon in the managed
+repositories, including `inspection_interfaces`. It respects `COLCON_IGNORE`,
+rejects missing or ambiguous packages before building, and builds selected packages
+in interface -> driver -> algorithm workspace order. Dependencies must already be
+installed unless explicitly selected; this is an incremental build after initial
+deployment. Existing local overlays come from the selected output root. For
+example, `faster_lio` requires the installed GTSAM artifacts and algorithm builds
+require the driver overlay. Missing prerequisites fail rather than starting a full
+dependency build. Package-specific CMake switches still follow the model profile.
+`--select --check` checks discovery, required overlay paths and native library
+artifacts; package-level dependency resolution happens during CMake configuration.
+It cannot be combined with repository fetch/update/checkout or native rebuild modes.
+Without `--select`, the original full build flow is unchanged.
 
 Sources are managed by `config/navigation_deps.repos`. Missing repositories are
 cloned; existing checkouts and local edits are retained. `--fetch-only` clones
