@@ -5,6 +5,10 @@ laser_mapping:
     common:
       lid_topic: "/livox/lidar"  # Mid360 point cloud input
       imu_topic: "/livox/imu"    # IMU input
+    publish:
+      # Navigation center is 0.45 m behind the old horizon origin; no extra rotation.
+      # Raw body/IMU outputs and the input self-filter remain in their original frames.
+      horizon_offset: [-0.45, 0.0, 0.0]
     preprocess:
       # Input frame: body center 0.45 m behind LiDAR; X=[-1.00, 0.10], Y=[-0.35, 0.35].
       self_box_half_size: [0.55, 0.35, 0.5]  # 过滤盒半尺寸 [x, y, z]，开启后会滤除盒内点

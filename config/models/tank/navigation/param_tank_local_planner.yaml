@@ -1,19 +1,20 @@
 # TANK differential chassis: 1.10 x 0.70 m; sensor 0.45 m ahead of body center.
 /**:
   ros__parameters:
-    sensorOffsetX: 0.45  # 传感器相对车体中心向前偏移（m）
-    sensorOffsetY: 0.0   # 传感器相对车体中心横向偏移（m）
+    # SLAM horizon odometry and terrain points already use the navigation center.
+    sensorOffsetX: 0.0  # Do not apply the physical LiDAR offset a second time.
+    sensorOffsetY: 0.0
     initialModel: "flat"  # 启动时使用的运动模型名称
     flat:
-      maxSpeed: 1.2  # 模型允许的最大前向速度（m/s）
-      maxSpeedY: 0.6  # 模型允许的最大横向速度（m/s）
+      maxSpeed: 1.0  # 模型允许的最大前向速度（m/s）
+      maxSpeedY: 0.0  # 模型允许的最大横向速度（m/s）
       maxYawRate: 0.6  # 模型允许的最大偏航角速度（rad/s）
-      maxAccelX: 2.5  # 模型前向最大加速度（m/s2）
+      maxAccelX: 0.6  # 模型前向最大加速度（m/s2）
       maxAccelY: 1.0  # 模型横向最大加速度（m/s2）
-      maxAccelYawRate: 2.5  # 模型偏航最大角加速度（rad/s2）
-      maxDecelX: 3.5  # 模型前向最大减速度（m/s2）
-      maxDecelY: 1.5  # 模型横向最大减速度（m/s2）
-      maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
+      maxAccelYawRate: 0.9  # 模型偏航最大角加速度（rad/s2）
+      maxDecelX: 2.0  # 模型前向最大减速度（m/s2）
+      maxDecelY: 2.5  # 模型横向最大减速度（m/s2）
+      maxDecelYawRate: 1.4  # 模型偏航最大角减速度（rad/s2）
 
 localPlanner:
   ros__parameters:
@@ -21,10 +22,24 @@ localPlanner:
     vehicleWidth: 0.70   # 车体实际宽度（m），不含碰撞余量
     correspondencesFile: "correspondences_tank.txt"  # 地形体素到候选路径对应关系文件名
     gaitSwitchEn: false  # 不按目标阶段切换步态
+    obstacleTraversityThre: 0.7  # 障碍可通行性阈值，低于此值视为障碍
 
 pathFollower:
   ros__parameters:
     tracking_mode: differential  # 差速底盘，不输出横向速度
+    differential:
+      response_delay: 0.5        # 指令及反馈延迟预留时间（s），非速度 PID
+      braking_decel: 1.0         # 保守物理制动减速度（m/s2），区别于 maxDecelX 指令斜率
+      angular_decel: 0.8         # 保守角制动减速度（rad/s2）
+      turn_enter_angle: 0.55    # 航向偏差超过此值时先停车再转向（rad）
+      turn_exit_angle: 0.20     # 航向偏差小于此值时恢复路径跟踪（rad）
+      position_hysteresis: 0.15 # 最终对齐期间离开位置容差的额外距离（m）
+      stopped_speed: 0.08       # 判定平移停稳的速度阈值（m/s）
+      stopped_yaw_rate: 0.08    # 判定旋转停稳的角速度阈值（rad/s）
+      settle_time: 0.1          # 连续停稳后才允许最终朝向对齐（s）
+      lateral_accel: 0.5        # 曲率限速使用的横向加速度上限（m/s2）
+      raw_vel_timeout: 0.5      # /raw_vel 接收超时，超时后使用有效里程计差分（s）
+    pathFollowerFreq: 10.0  # 路径跟随控制循环频率（Hz）
     twoWayDrive: false          # 默认不倒车
     slowdownDisThre: 1.0  # 距路径末端开始降低前向速度的距离（m）
-    curvatureDecelGain: 0.75  # 曲率导致前向减速的增益
+    curvatureDecelGain: 1.5  # 曲率导致前向减速的增益

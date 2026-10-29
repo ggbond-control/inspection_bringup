@@ -1,0 +1,27 @@
+# Cyvet differences; identity comes from robot.yaml, not the model profile.
+modules:
+  sensor_gimbal: false
+  charge: false
+  sensors: false
+  alarm: false
+  light: false
+  gas: false
+  sensor_rs485: false
+  acoustic: false
+  algorithm_transport: false
+  # mission_execution_agent: true
+  # fleet_leader_election: true
+
+mqtt:
+  localization_set_parameter_timeout_sec: 60.0
+  topic_vendor_prefix: guquan
+
+live_stream:
+  request_on_startup: false
+  gimbal:
+    enabled: false
+  acoustic:
+    enabled: false
+
+task_hub:
+  charge_exit_executor_service_name: /inspection_charge_executor/exit_charge

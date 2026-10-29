@@ -1,14 +1,14 @@
-# TANK: 1.10 x 0.70 m; current SLAM base_link is at the sensor's planar origin.
-# Body center is 0.45 m behind that origin; padding inherits the 0.05 m default.
+# TANK: 1.10 x 0.70 m; SLAM base_link now follows the centered horizon position.
+# Padding inherits the 0.05 m default.
 global_costmap:
   global_costmap:
     ros__parameters:
-      footprint: "[[0.10, 0.35], [0.10, -0.35], [-1.00, -0.35], [-1.00, 0.35]]"
+      footprint: "[[0.55, 0.35], [0.55, -0.35], [-0.55, -0.35], [-0.55, 0.35]]"
 
 local_costmap:
   local_costmap:
     ros__parameters:
-      footprint: "[[0.10, 0.35], [0.10, -0.35], [-1.00, -0.35], [-1.00, 0.35]]"
+      footprint: "[[0.55, 0.35], [0.55, -0.35], [-0.55, -0.35], [-0.55, 0.35]]"
 
 planner_server:
   ros__parameters:
@@ -17,5 +17,5 @@ planner_server:
 
 multi_map_nav_node:
   ros__parameters:
-    normal_xy_tolerance: 0.25   # Position tolerance (meters)
-    normal_yaw_tolerance: 0.25  # Heading tolerance (radians)
+    normal_xy_tolerance: 0.4   # Position tolerance (meters)
+    normal_yaw_tolerance: 0.5  # Heading tolerance (radians)
