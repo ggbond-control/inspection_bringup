@@ -1,0 +1,7 @@
+# Build the HTTP chassis backend in driver_ws; other navigation stages are unchanged.
+package_cmake_args:
+  nav_bridge:
+    - -DNAV_BRIDGE_BUILD_TANK=ON
+    - -DNAV_BRIDGE_BUILD_X30=OFF
+    - -DNAV_BRIDGE_BUILD_D1_MAX=OFF
+    - -DNAV_BRIDGE_BUILD_CYVET=OFF

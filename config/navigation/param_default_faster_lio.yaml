@@ -14,6 +14,7 @@ laser_mapping:
       blind: 0.1                                 # 雷达盲区半径，单位米
       self_box_filter_en: true                   # 是否滤除雷达/机器人自身附近的点
       self_box_half_size: [0.65, 0.35, 0.4]      # 自身过滤盒半尺寸 [x, y, z]，单位米
+      self_box_offset: [0.0, 0.0, 0.0]           # 过滤盒中心在输入点云坐标系中的位置 [x, y, z]，单位米
       time_scale: 0.001                          # 点时间字段到秒的缩放系数，需与传感器输出一致
 
     mapping:
@@ -160,6 +161,8 @@ laser_mapping:
         gravity: [0.00001, 0.00001]             # 初始重力方向误差协方差
 
     publish:
+      # New horizon origin in the original horizon axes, meters; zero preserves legacy output.
+      horizon_offset: [0.0, 0.0, 0.0]
       path_publish_en: true                     # 是否发布轨迹 path
       scan_publish_en: true                     # 是否发布点云；关闭可减少带宽和日志/可视化负载
       dense_publish_en: false                   # 是否发布稠密世界坐标系点云

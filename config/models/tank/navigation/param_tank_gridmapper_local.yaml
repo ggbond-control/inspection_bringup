@@ -1,0 +1,12 @@
+# TANK local mapping: input cloud and odometry share the centered horizon origin.
+# Z offset is zero; retain the current height bounds/reference height.
+gridmapper_node:
+  ros__parameters:
+    min_point_height: -0.7      # Points below this z are ignored (meters)
+    max_point_height: 0.8         # Points above this z are ignored
+    enable_x_passthrough: true # Enable X-axis passthrough filter
+    # Old sensor X=0.65 becomes center X=1.10 at the 0.5 m reference height.
+    # Gridmapper scales this whole threshold with estimated height, so slope behavior differs.
+    x_passthrough_min: 1.10
+    pitch_downward_retention_forward_min: 0.45  # Old sensor X=0 in the new horizon axes.
+    sensor_height_origin: 0.5  # Original sensor height (meters)

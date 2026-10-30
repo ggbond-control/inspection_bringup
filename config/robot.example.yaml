@@ -2,6 +2,7 @@
 # robot.yaml is ignored by Git. Uncomment only the overrides you need.
 # Restart the affected bringup service after editing; active snapshots do not reload.
 # Supported models: x30 / d1m / cyvet. Use unique IDs matching your fleet list.
+# tank / TANK-A: nav_bridge configuration and build only; full navigation is pending.
 # Robot IDs use uppercase model names: X30-A / D1M-A / CYVET-A.
 model: d1m
 robot_id: D1M-A
@@ -81,6 +82,10 @@ robot_id: D1M-A
 #       nav_bridge_node:
 #         ros__parameters:
 #           device_id: "YOUR-CYVET-DEVICE-ID"  # Cyvet only; independent of robot_id
+#           # TANK only (set model: tank and robot_id: TANK-A):
+#           # host_ip: "192.168.1.20"
+#           # host_port: 10050
+#           # enable_motion_output: false  # Query-only; stand/release return failure.
 #   local_planner:
 #     parameters:
 #       localPlanner:

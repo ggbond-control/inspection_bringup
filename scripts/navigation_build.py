@@ -66,6 +66,8 @@ def arguments():
                         help='jobs per package; packages run sequentially (default: 1)')
     parser.add_argument('--config', type=Path, help='build YAML overrides for the selected model')
     parser.add_argument('--model', help='override model read from config/robot.yaml')
+    parser.add_argument('--select', nargs='+', action='extend', default=[], metavar='PACKAGE',
+                        help='incrementally build only these managed ROS packages; reuse installed dependencies')
     parser.add_argument('--workspace-root', type=Path)
     parser.add_argument('--driver-ws', type=Path)
     parser.add_argument('--algor-ws', type=Path)
@@ -115,6 +117,15 @@ def arguments():
     if args.remote is not None and (not args.remote or args.remote.startswith('-')):
         parser.error('invalid --remote')
     args.remote = args.remote or 'origin'
+    if args.select:
+        if any(not re.fullmatch(r'[a-zA-Z0-9_]+', name) for name in args.select):
+            parser.error('--select expects ROS package names, not repository paths')
+        if (args.fetch_only or args.update_only or args.update_current_branch or args.check_updates or
+                args.checkout or args.third_party_only or args.rebuild_gtsam or args.rebuild_third_party):
+            parser.error('--select cannot fetch/update repositories or rebuild third-party libraries')
+        if args.interface_underlay and 'inspection_interfaces' in args.select:
+            parser.error('--select inspection_interfaces conflicts with --interface-underlay')
+        args.select = list(dict.fromkeys(args.select))
     return args
 
 
@@ -247,6 +258,99 @@ class Build:
         if self.config.get('package_cmake_args'):
             info('[plan] package CMake settings: ' + json.dumps(self.config['package_cmake_args'], sort_keys=True))
 
+    def select_packages(self):
+        for tool in ('colcon', 'cmake'):
+            if not shutil.which(tool):
+                raise ValueError(f'required command not found: {tool}')
+        self.base_env = self.environment(self.underlays)
+        available = {}
+        for workspace in ('task_ws', 'driver_ws', 'algor_ws'):
+            repos = [self.repo_path(p) for p in self.repositories
+                     if p.startswith(workspace + '/src/') and self.repo_path(p).is_dir()]
+            if not repos:
+                continue
+            with tempfile.TemporaryDirectory(prefix='navigation-discovery-') as logs:
+                names = run(['colcon', '--log-base', logs, 'list', '--base-paths', *repos, '--names-only'],
+                            env=self.base_env, capture=True).splitlines()
+            self.repo_paths[workspace] = repos
+            for name in names:
+                if not re.fullmatch(r'[a-zA-Z0-9_]+', name):
+                    raise ValueError(f'invalid discovered package name: {name}')
+                if name in available:
+                    raise ValueError(f'ambiguous package in managed workspaces: {name}')
+                available[name] = workspace
+        unknown = sorted(set(self.args.select) - available.keys())
+        if unknown:
+            raise ValueError('selected packages not found in managed sources (or COLCON_IGNORE): ' +
+                             ', '.join(unknown) + '; available: ' + ', '.join(sorted(available)))
+        for name in self.args.select:
+            workspace = available[name]
+            if ((workspace == 'driver_ws' and self.args.skip_driver_build) or
+                    (workspace == 'algor_ws' and self.args.skip_algor_build)):
+                raise ValueError(f'--select {name} conflicts with --skip-{workspace.split("_")[0]}-build')
+        self.packages = {workspace: [name for name in self.args.select if available[name] == workspace]
+                         for workspace in ('task_ws', 'driver_ws', 'algor_ws')}
+        self.packages = {workspace: names for workspace, names in self.packages.items() if names}
+        if set(self.packages.get('task_ws', [])) - {'inspection_interfaces'}:
+            raise ValueError('--select supports only inspection_interfaces in task_ws')
+        for workspace, names in self.packages.items():
+            info(f'[select] {workspace}: {" ".join(names)}')
+            info(f'[plan] {workspace}: source={self.workspaces[workspace]}; output={self.output(workspace)}')
+        info(f'[plan] model={self.model or "default"}; Release; sequential; jobs={self.args.jobs}')
+        selected_options = {name: values for name, values in self.config.get('package_cmake_args', {}).items()
+                            if name in self.args.select}
+        if selected_options:
+            info('[plan] package CMake settings: ' + json.dumps(selected_options, sort_keys=True))
+
+    def selected_environment(self, workspace):
+        setups = list(self.underlays)
+        if workspace != 'task_ws':
+            if not self.interface.is_file():
+                raise ValueError(f'interface underlay not found: {self.interface}; run a full build first '
+                                 'or also select inspection_interfaces')
+            setups.append(self.interface)
+        if workspace == 'algor_ws':
+            setups.append(self.output('driver_ws') / 'install/local_setup.bash')
+        own = self.output(workspace) / 'install/local_setup.bash'
+        if own.is_file():
+            setups.append(own)
+        env = self.environment(setups)
+        return env
+
+    def execute_selected(self):
+        global STAGE
+        STAGE = 'selection'
+        self.select_packages()
+        info('[plan] selected packages only; no fetch, implicit dependency builds or third-party rebuilds')
+        if self.args.plan:
+            return
+        # Check existing overlays before building anything. Earlier selected stages
+        # may create their own overlays, so those are validated after that stage.
+        for workspace in self.packages:
+            needs_interface = workspace != 'task_ws' and 'inspection_interfaces' not in self.args.select
+            if needs_interface and not self.interface.is_file():
+                raise ValueError(f'interface underlay not found: {self.interface}; run a full build first '
+                                 'or also select inspection_interfaces')
+            driver = self.output('driver_ws') / 'install/local_setup.bash'
+            if workspace == 'algor_ws' and 'driver_ws' not in self.packages and not driver.is_file():
+                raise ValueError(f'driver underlay not found: {driver}; run a full build first')
+        for name, library in (('faster_lio', 'gtsam'), ('livox_ros_driver2', 'livox_sdk2')):
+            if name in self.args.select and not all(p.is_file() for p in self.artifacts(library)):
+                raise ValueError(f'{name}: installed {library} incomplete in {self.prefix}; '
+                                 'run a full build or --third-party-only first')
+        if self.args.check:
+            info('[done] selected package names, source discovery, required overlay paths and library artifacts checked; '
+                 'no build performed; package dependencies are resolved during CMake configuration')
+            return
+        with self.lock():
+            for workspace, names in self.packages.items():
+                STAGE = workspace
+                self.env = self.selected_environment(workspace)
+                self.use_third_party()
+                self.colcon(workspace, names, self.repo_paths[workspace])
+            self.write_metadata()
+        info('[done] selected navigation packages built')
+
     def environment(self, setups):
         env = dict(os.environ)
         for key in list(env):
@@ -328,6 +432,10 @@ class Build:
                 if missing:
                     raise ValueError(f'{workspace}: required packages absent from manifest/discovery: {", ".join(missing)}')
         bridge_args = self.config.get('package_cmake_args', {}).get('nav_bridge', [])
+        if not self.args.skip_driver_build and '-DNAV_BRIDGE_BUILD_TANK=ON' in bridge_args:
+            self.probe('find_package(CURL REQUIRED)\nfind_package(PkgConfig REQUIRED)\n'
+                       'pkg_check_modules(TANK_JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)\n',
+                       self.base_env, 'TANK CURL/JsonCpp/pkg-config dependencies')
         if not self.args.skip_driver_build and '-DNAV_BRIDGE_BUILD_D1_MAX=ON' in bridge_args:
             arch = {'arm64': 'aarch64', 'amd64': 'x86_64'}.get(platform.machine(), platform.machine())
             sdk = self.workspaces['driver_ws'] / f'src/nav_bridge/third_party/robot_sdk/lib/{arch}/librobot_sdk.so.0.2.1'
@@ -458,6 +566,9 @@ class Build:
 
     def execute(self):
         global STAGE
+        if self.args.select:
+            self.execute_selected()
+            return
         self.plan()
         if self.args.plan:
             return

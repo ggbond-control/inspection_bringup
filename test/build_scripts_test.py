@@ -8,10 +8,34 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import importlib.util
+from unittest.mock import patch
 
 
 BRINGUP_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS = ('build_inspection.sh', 'build_navigation.sh')
+
+
+class TankBuildProfile(unittest.TestCase):
+    def test_tank_and_d1m_profiles_leave_other_models_at_cmake_defaults(self):
+        spec = importlib.util.spec_from_file_location('navigation_build', BRINGUP_DIR / 'scripts/navigation_build.py')
+        import sys
+        with patch.object(sys, 'path', [str(BRINGUP_DIR / 'scripts'), *sys.path]):
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        for model, enabled in (('tank', True), ('d1m', False), ('x30', False), ('cyvet', False)):
+            with self.subTest(model=model), patch.object(sys, 'argv', ['build_navigation.sh', '--model', model, '--plan']), \
+                    patch.dict(os.environ, {'INSPECTION_CONFIG_DIR': str(BRINGUP_DIR / 'config')}):
+                build = module.Build(module.arguments())
+                options = build.config['package_cmake_args'].get('nav_bridge', [])
+                if model in ('x30', 'cyvet'):
+                    self.assertEqual(options, [])
+                else:
+                    self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if enabled else 'OFF'), options)
+                if enabled:
+                    for backend in ('X30', 'D1_MAX', 'CYVET'):
+                        self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=OFF', options)
+                self.assertEqual(build.repo_path('driver_ws/src/nav_bridge'), build.workspaces['driver_ws'] / 'src/nav_bridge')
 
 
 def navigation_support(bringup, setup):
@@ -239,6 +263,96 @@ elif name == 'ros2':
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('missing managed repositories', result.stderr)
         self.assertFalse(any(c['name'] == 'cmake' for c in commands))
+
+    def selected_underlay(self):
+        install = self.root / 'driver_ws/install'
+        install.mkdir(parents=True, exist_ok=True)
+        (install / 'local_setup.bash').write_text('export AMENT_PREFIX_PATH=/selected-driver\n')
+
+    def test_navigation_select_builds_only_requested_package_and_reuses_driver_overlay(self):
+        self.selected_underlay()
+        result, commands = self.run_build(SCRIPTS[1], ['--select', 'algor_ws_package'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        self.assertEqual(len(builds), 1)
+        self.assertIn('algor_ws_package', builds[0]['args'])
+        self.assertNotIn('driver_ws_package', builds[0]['args'])
+        self.assertEqual(builds[0]['ament'], '/selected-driver')
+        self.assertFalse(any(c['name'] == 'cmake' for c in commands))
+        self.assertFalse((self.root / 'driver_ws/third_party/install').exists())
+
+    def test_navigation_select_multiple_packages_orders_workspaces_and_deduplicates(self):
+        result, commands = self.run_build(SCRIPTS[1], [
+            '--select', 'algor_ws_package', 'driver_ws_package', '--select', 'algor_ws_package'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        names = [c['args'][c['args'].index('--packages-select') + 1:
+                           c['args'].index('--build-base')] for c in builds]
+        self.assertEqual(names, [['driver_ws_package'], ['algor_ws_package']])
+
+    def test_navigation_select_unknown_or_skipped_package_fails_before_build(self):
+        for options, message in [(['--select', 'faster_slam'], 'not found'),
+                                 (['--select', 'driver_ws_package', '--skip-driver-build'], 'conflicts')]:
+            with self.subTest(options=options):
+                result, commands = self.run_build(SCRIPTS[1], options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(any('build' in c['args'] for c in commands))
+
+    def test_navigation_select_check_and_plan_do_not_build(self):
+        self.selected_underlay()
+        for mode in ['--check', '--plan']:
+            result, commands = self.run_build(SCRIPTS[1], ['--select', 'algor_ws_package', mode])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('[select] algor_ws: algor_ws_package', result.stdout)
+            self.assertFalse(any('build' in c['args'] or '--build' in c['args'] for c in commands))
+
+    def test_navigation_select_requires_existing_dependencies_without_building_them(self):
+        result, commands = self.run_build(SCRIPTS[1], ['--select', 'algor_ws_package'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('driver underlay not found', result.stderr)
+        self.assertFalse(any('build' in c['args'] for c in commands))
+
+    def test_navigation_select_uses_manifest_name_and_checks_native_library(self):
+        self.selected_underlay()
+        (self.root / 'algor_ws/src/algor_ws_package/package.xml').write_text(
+            '<package><name>faster_lio</name></package>')
+        result, commands = self.run_build(SCRIPTS[1], ['--select', 'faster_lio', '--check'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('installed gtsam incomplete', result.stderr)
+        self.assertFalse(any('build' in c['args'] for c in commands))
+        installed_libraries(self.root / 'driver_ws/third_party/install')
+        result, commands = self.run_build(SCRIPTS[1], ['--select', 'faster_lio', '--check'], fresh=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('[select] algor_ws: faster_lio', result.stdout)
+        self.assertFalse(any('build' in c['args'] for c in commands))
+
+    def test_navigation_select_can_build_interface_first(self):
+        source = self.root / 'task_ws/src/inspection_interfaces'
+        source.mkdir()
+        (source / 'package.xml').write_text('<package><name>inspection_interfaces</name></package>')
+        manifest = self.bringup / 'config/navigation_deps.repos'
+        data = json.loads(manifest.read_text())
+        data['repositories']['task_ws/src/inspection_interfaces'] = {'type': 'git', 'url': 'unused'}
+        manifest.write_text(json.dumps(data))
+        result = subprocess.run([
+            'bash', str(self.bringup / 'scripts' / SCRIPTS[1]), '--workspace-root', str(self.root),
+            '--select', 'driver_ws_package', 'inspection_interfaces'],
+            env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [json.loads(line) for line in self.log.read_text().splitlines()]
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        names = [c['args'][c['args'].index('--packages-select') + 1] for c in builds]
+        self.assertEqual(names, ['inspection_interfaces', 'driver_ws_package'])
+        self.assertFalse(any(c['name'] == 'cmake' for c in commands))
+
+    def test_navigation_select_rejects_repository_operations_before_running_tools(self):
+        for options in [['--select'], ['--select', '../faster-slam'],
+                        ['--select', 'driver_ws_package', '--fetch-only'],
+                        ['--select', 'driver_ws_package', '--rebuild-gtsam']]:
+            result, commands = self.run_build(SCRIPTS[1], options)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(commands, [])
 
     def test_default_entry_builds_interfaces_first_without_path_options(self):
         installed_libraries(self.root / 'driver_ws/third_party/install')

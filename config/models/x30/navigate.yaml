@@ -1,7 +1,5 @@
 nav_bridge:
   robot_type: x30
   config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_nav_bridge.yaml"
-  readiness:
-    charge_executor_exit_service: /inspection_charge_executor/exit_charge
 livox:
-  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2.json"
+  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2_mid360.json"

@@ -142,6 +142,75 @@ source ~/.zshrc
 For Bash, use `~/.bashrc` instead.
 ```
 
+## TANK nav_bridge Configuration
+
+TANK has a nav_bridge model file, a MID360 configuration and a build profile.
+Its `param_tank_faster_lio.yaml`, `param_tank_gridmapper_local.yaml`,
+`param_tank_local_planner.yaml` and `param_tank_multi_map_nav.yaml` use independent
+TANK overrides. Shared default config paths automatically load these
+TANK overlays; no duplicate default paths are needed in the model navigate file.
+The chassis is 1.10 x 0.70 m; the sensor is 0.45 m forward of body center, with
+zero lateral offset. SLAM's input-frame self-filter has half-size [0.55, 0.35, 0.5]
+and offset [-0.45, 0, 0]. The current SLAM `base_link` shares the sensor's planar
+origin, so both costmaps use X=[-1.00, 0.10], Y=[-0.35, 0.35], plus the inherited
+0.05 m footprint padding. A future TF origin change must also update these footprints.
+Local planning uses `tracking_mode: differential`, with gait switching and RTK disabled.
+The motion profile's Y limits are retained for compatibility but unused by this follower.
+Gridmapper's sensor height (0.5 m), height bounds and X passthrough threshold
+(0.65 m) remain deployment settings, independent of the chassis footprint.
+These TANK changes do not affect other models. Rebuild faster_lio for
+`self_box_offset` support and local_planner for the differential follower and path table.
+Full navigation startup sequence adaptation remains pending.
+The repository manifest continues to place nav_bridge in `driver_ws/src/nav_bridge`.
+
+`livox.config` selects `param_tank_livox_ros_driver2_mid360.json` in the TANK
+model's navigation directory: host IP `192.168.1.99`, LiDAR IP `192.168.1.176`.
+Ports, multicast and zero extrinsics follow the Cyvet MID360 configuration.
+Configure the host network interface separately; this JSON does not assign its IP.
+
+Install the HTTP backend build dependencies:
+
+```bash
+sudo apt install -y libcurl4-openssl-dev libjsoncpp-dev pkg-config
+```
+
+`config/build/tank.yaml` enables TANK and explicitly disables X30, D1 Max and
+Cyvet. D1M explicitly disables TANK; the shared profile leaves backend selection
+to nav_bridge's CMake defaults (X30 on, other backends off for a fresh build).
+Changing from a previously configured backend to an unconfigured model requires
+clearing the nav_bridge CMake cache or explicitly setting its backend switches;
+the runtime robot_type does not select build options. Check/build with:
+
+```bash
+scripts/build_navigation.sh --model tank --plan
+scripts/build_navigation.sh --model tank
+```
+
+This remains the normal navigation build, not a bridge-only build. Model selection
+for runtime uses `robot.yaml`; `--model` only selects this build's configuration.
+
+```yaml
+model: tank
+robot_id: TANK-A
+navigation:
+  nav_bridge:
+    parameters:
+      nav_bridge_node:
+        ros__parameters:
+          host_ip: "192.168.1.20"
+          host_port: 10050
+          enable_motion_output: false  # Query-only diagnosis; control services fail.
+```
+
+`config/models/tank/navigation/param_tank_nav_bridge.yaml` is the complete bridge
+baseline; the device overrides above are merged into a runtime snapshot.
+Parameters are startup-only: editing files requires restarting the navigation
+system service to reload them. TANK disables charge precheck because the backend
+does not provide charging support. Its stand/release services use the existing
+names but represent local output enable/disable, not a confirmed remote-control
+handoff. Readonly diagnosis must use a standalone bridge launch, since the normal
+bringup control action requires stand to succeed.
+
 ## Deployment
 
 Daily navigation builds use one command, with no required path or middleware flags:
@@ -197,6 +266,16 @@ scripts/build_navigation.sh --plan
 # Does not fetch, update or compile. Missing sources must be fetched first.
 scripts/build_navigation.sh --check
 
+# Incrementally rebuild selected managed packages (package.xml names, not repo names).
+# Reuse installed dependencies; no fetch, interface/dependency builds or native rebuilds.
+scripts/build_navigation.sh --select local_planner
+scripts/build_navigation.sh --select faster_lio gridmapper local_planner -j2
+scripts/build_navigation.sh --select nav_bridge --model tank
+
+# Inspect selection or check package/source/installed-underlay paths without building.
+scripts/build_navigation.sh --select local_planner --plan
+scripts/build_navigation.sh --select local_planner --check
+
 # Explicitly rebuild GTSAM, or both third-party projects.
 scripts/build_navigation.sh --rebuild-gtsam
 scripts/build_navigation.sh --rebuild-third-party
@@ -220,6 +299,20 @@ On D1M-A (8 GiB RAM), one faster_lio compiler process was observed using about
 `--interface-underlay` skips the interface build and uses the supplied setup;
 prefer an interface-only or controlled `local_setup.bash` over a historical full
 workspace setup chain.
+
+`--select` accepts one or more package names discovered by colcon in the managed
+repositories, including `inspection_interfaces`. It respects `COLCON_IGNORE`,
+rejects missing or ambiguous packages before building, and builds selected packages
+in interface -> driver -> algorithm workspace order. Dependencies must already be
+installed unless explicitly selected; this is an incremental build after initial
+deployment. Existing local overlays come from the selected output root. For
+example, `faster_lio` requires the installed GTSAM artifacts and algorithm builds
+require the driver overlay. Missing prerequisites fail rather than starting a full
+dependency build. Package-specific CMake switches still follow the model profile.
+`--select --check` checks discovery, required overlay paths and native library
+artifacts; package-level dependency resolution happens during CMake configuration.
+It cannot be combined with repository fetch/update/checkout or native rebuild modes.
+Without `--select`, the original full build flow is unchanged.
 
 Sources are managed by `config/navigation_deps.repos`. Missing repositories are
 cloned; existing checkouts and local edits are retained. `--fetch-only` clones
@@ -607,7 +700,7 @@ nav_bridge:
     charge_exit_timeout_seconds: 300.0
 
 livox:
-  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2.json"
+  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2_mid360.json"
   readiness:
     type: topics
     topics:
