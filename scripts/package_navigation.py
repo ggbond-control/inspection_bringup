@@ -2,7 +2,10 @@
 """Build a model-independent navigation deb using a persistent Docker build cache."""
 
 import argparse
+import base64
+from contextlib import contextmanager
 import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -17,17 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = Path('/opt/inspection/navigation')
 IMAGE = 'inspection-navigation-builder:jazzy-amd64'
 SOURCES = {
-    'inspection_interfaces': 'task_ws/src/inspection_interfaces',
-    'robots_dog_msgs': 'driver_ws/src/robots_dog_msgs',
-    'control_input_msgs': 'driver_ws/src/control_input_msgs',
-    'livox_ros_driver2': 'driver_ws/src/livox_ros_driver2',
-    'gnss_driver': 'driver_ws/src/gnss_driver',
-    'ndt_omp': 'driver_ws/src/ndt_omp',
-    'faster_lio': 'algor_ws/src/faster-slam',
-    'gridmapper': 'algor_ws/src/gridmapper',
-    'local_planner': 'algor_ws/src/local_planner',
-    'multi_map_nav': 'algor_ws/src/multi_map_nav_ros2',
-    'smac_straight_planner': 'algor_ws/src/smac_straight_planner',
+    'inspection_interfaces': 'inspection_interfaces',
+    'robots_dog_msgs': 'robots_dog_msgs',
+    'control_input_msgs': 'control_intput_msgs',
+    'livox_ros_driver2': 'livox_ros_driver2',
+    'gnss_driver': 'gnss_driver',
+    'ndt_omp': 'ndt_omp',
+    'faster_lio': 'faster_slam',
+    'gridmapper': 'gridmapper',
+    'local_planner': 'local_planner',
+    'multi_map_nav': 'multi_map_nav_ros2',
+    'smac_straight_planner': 'smac_straight_planner',
 }
 NATIVE = {
     'gtsam': ('https://github.com/borglab/gtsam.git', '4.2.0'),
@@ -58,6 +61,106 @@ def write(path, text):
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def version_tuple(tag):
+    match = re.fullmatch(r'v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag)
+    return tuple(map(int, match.groups())) if match else None
+
+
+def resolve_revision(listing, requested):
+    """Select exact tag, nearest lower stable version, or a tagless default HEAD."""
+    tags, peeled = {}, {}
+    default_ref, head = None, None
+    for line in listing.splitlines():
+        value, ref = line.split('\t', 1)
+        if value.startswith('ref: ') and ref == 'HEAD':
+            default_ref = value[5:]
+        elif ref == 'HEAD':
+            head = value
+        elif ref.startswith('refs/tags/'):
+            tag = ref[len('refs/tags/'):]
+            if tag.endswith('^{}'):
+                peeled[tag[:-3]] = value
+            else:
+                tags[tag] = value
+    if not tags:
+        if not default_ref or not head:
+            raise ValueError('tagless repository has no advertised default branch HEAD')
+        return {'ref': default_ref, 'branch': default_ref.removeprefix('refs/heads/'),
+                'tag': None, 'commit': head, 'selection': 'default-branch'}
+    if requested in tags:
+        chosen = requested
+        selection = 'exact-tag'
+    else:
+        target = version_tuple(requested)
+        candidates = [(version_tuple(tag), tag) for tag in tags
+                      if version_tuple(tag) is not None and version_tuple(tag) <= target]
+        if not candidates:
+            raise ValueError(f'no version tag <= {requested}; repository has tags, '
+                             'so default-branch fallback is disabled')
+        _, chosen = max(candidates)
+        selection = 'lower-tag'
+    return {'ref': 'refs/tags/' + chosen, 'tag': chosen, 'branch': None,
+            'commit': peeled.get(chosen, tags[chosen]), 'selection': selection}
+
+
+@contextmanager
+def github_access():
+    if not sys.stdin.isatty():
+        raise ValueError('run in an interactive terminal to enter the GitHub token securely')
+    token = getpass.getpass('GitHub read-only token (hidden): ').strip()
+    if not token or any(c.isspace() for c in token):
+        raise ValueError('a nonempty GitHub token without whitespace is required')
+    encoded = base64.b64encode(('x-access-token:' + token).encode()).decode()
+    # Git consumes credentials only from this child environment, never argv/config.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_CONFIG_')}
+    env.update(GIT_CONFIG_COUNT='3', GIT_CONFIG_KEY_0='credential.helper',
+               GIT_CONFIG_VALUE_0='', GIT_CONFIG_KEY_1='http.https://github.com/.extraheader',
+               GIT_CONFIG_VALUE_1='Authorization: Basic ' + encoded,
+               GIT_CONFIG_KEY_2='core.hooksPath', GIT_CONFIG_VALUE_2='/dev/null',
+               GIT_TERMINAL_PROMPT='0', GIT_ASKPASS='/bin/false',
+               GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null')
+    for key in list(env):
+        if key.startswith(('GIT_TRACE', 'GIT_CURL_VERBOSE')):
+            del env[key]
+    try:
+        yield env
+    finally:
+        env.clear()
+
+
+def remote_git(args, env):
+    result = subprocess.run(['git', *map(str, args)], env=env, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        # Git diagnostics can contain authentication data. Do not relay them.
+        raise ValueError('remote Git operation failed; check token read access, repository URL '
+                         'and network (credentials and Git diagnostics suppressed)')
+    return result.stdout.strip()
+
+
+def fetch_source(url, requested, destination, env):
+    listing = remote_git(['ls-remote', '--symref', url, 'HEAD', 'refs/tags/*'], env)
+    try:
+        revision = resolve_revision(listing, requested)
+    except ValueError as exc:
+        raise ValueError(f'{url}: {exc}') from exc
+    print(f'[source] {url}: {requested} -> {revision["tag"] or revision["branch"]} '
+          f'({revision["selection"]}, {revision["commit"][:12]})', flush=True)
+    if not destination.exists():
+        run(['git', 'init', '-q', destination])
+    if not (destination / '.git').is_dir():
+        raise ValueError(f'not a managed Git source cache: {destination}')
+    # Fetch only into our local cache; no remote mutation or developer checkout.
+    remote_git(['-C', destination, 'fetch', '--no-tags', '--depth', '1', url, revision['ref']], env)
+    actual = output(['git', '-C', destination, 'rev-parse', 'FETCH_HEAD^{commit}'])
+    if actual != revision['commit']:
+        raise ValueError(f'{url}: remote ref moved during fetch; retry to resolve a consistent revision')
+    remote_git(['-C', destination, 'checkout', '--detach', '--force', actual], env)
+    if (destination / '.gitmodules').exists():
+        raise ValueError(f'{url}: submodules require explicit release support')
+    return dict(revision, url=url, requested_tag=requested)
 
 
 def snapshot(source, destination):
@@ -165,13 +268,23 @@ def environment():
 
 
 def build_native(work, jobs):
+    inputs = json.loads((work / 'inputs.json').read_text())
+    state = work / 'build-state.json'
+    previous = json.loads(state.read_text()) if state.exists() else {}
     for name in NATIVE:
         stamp = work / f'{name}.installed'
+        commit = inputs['native'][name]['commit']
         artifact = PREFIX / 'vendor/lib' / ('libgtsam.so' if name == 'gtsam'
                                            else 'liblivox_lidar_sdk_shared.so')
         if stamp.exists() and artifact.is_file():
-            print(f'[cache] reuse {name}', flush=True)
-            continue
+            installed = stamp.read_text().strip()
+            legacy = (installed == 'complete' and
+                      previous.get('native', {}).get(name, {}).get('commit') == commit)
+            if installed == commit or legacy:
+                write(stamp, commit + '\n')
+                print(f'[cache] reuse {name} {commit[:12]}', flush=True)
+                continue
+        stamp.unlink(missing_ok=True)
         args = ['-DCMAKE_BUILD_TYPE=Release', f'-DCMAKE_INSTALL_PREFIX={PREFIX}/vendor',
                 '-DCMAKE_INSTALL_LIBDIR=lib', '-DCMAKE_C_FLAGS=-march=x86-64 -mtune=generic',
                 '-DCMAKE_CXX_FLAGS=-march=x86-64 -mtune=generic',
@@ -184,7 +297,7 @@ def build_native(work, jobs):
         run(['cmake', '-S', work / 'native-src' / name, '-B', build, *args])
         run(['cmake', '--build', build, '-j', jobs])
         run(['cmake', '--install', build])
-        write(stamp, 'complete\n')
+        write(stamp, commit + '\n')
 
 
 def installed_files(work):
@@ -312,6 +425,10 @@ def inside(args):
         raise ValueError('builder image changed; use a new --work-dir for an ABI-clean build')
     if args.select and previous.get('release_recipe_sha256') != manifest['release_recipe_sha256']:
         raise ValueError('release recipe changed; run without --select to apply it to all packages')
+    if args.select and any(previous.get('native', {}).get(n, {}).get('commit') !=
+                           manifest['native'][n]['commit'] for n in NATIVE):
+        raise ValueError('native dependency revision changed; run without --select '
+                         'to rebuild dependencies and all managed consumers')
     selected = selected_packages(args.select, work / 'sources') if args.select else list(SOURCES)
     changed = {n for n in SOURCES if manifest['packages'][n]['sha256'] !=
                previous.get('packages', {}).get(n, {}).get('sha256')}
@@ -352,7 +469,7 @@ def inside(args):
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--version', required=True, help='Debian version, e.g. 0.1.0 or 0.1.1')
-    p.add_argument('--workspace-root', type=Path, default=Path.home() / 'Workspace')
+    p.add_argument('--tag', help='requested ggbond-control release tag, e.g. v0.3.5')
     p.add_argument('--work-dir', type=Path, default=Path.home() / '.cache/inspection-navigation-deb/amd64')
     p.add_argument('-j', '--jobs', type=int, default=1)
     mode = p.add_mutually_exclusive_group()
@@ -365,6 +482,12 @@ def arguments():
         p.error('--jobs must be positive')
     if not re.fullmatch(r'[0-9][A-Za-z0-9.+~:-]*', args.version):
         p.error('invalid Debian version')
+    if not args.inside and not args.package_only and not args.tag:
+        p.error('--tag is required unless using --package-only')
+    if args.tag and version_tuple(args.tag) is None:
+        p.error('--tag must be a stable version such as v0.3.5 (or 0.3.5)')
+    if args.package_only and args.tag:
+        p.error('--package-only uses the previous source snapshot; omit --tag')
     return args
 
 
@@ -388,20 +511,31 @@ def main():
             manifest = {'builder_image': output(['docker', 'image', 'inspect', '--format', '{{.Id}}', IMAGE]),
                         'packages': {}, 'native': {}, 'architecture': 'amd64', 'ros': 'jazzy',
                         'release_recipe_sha256': digest(Path(__file__))}
-            for name, relative in SOURCES.items():
-                source = args.workspace_root.expanduser().resolve() / relative
-                if ET.parse(source / 'package.xml').getroot().findtext('name') != name:
-                    raise ValueError(f'package name mismatch: {source}')
-                sha = snapshot(source, work / 'sources' / name)
-                manifest['packages'][name] = {'sha256': sha,
-                    'commit': output(['git', '-C', source, 'rev-parse', 'HEAD']),
-                    'dirty': bool(output(['git', '-C', source, 'status', '--porcelain']))}
-            release_adjustments(work / 'sources')
-            for name, (url, branch) in NATIVE.items():
-                source = work / 'native-src' / name
-                if not source.exists():
-                    run(['git', 'clone', '--depth', '1', '--branch', branch, url, source])
-                manifest['native'][name] = {'url': url, 'commit': output(['git', '-C', source, 'rev-parse', 'HEAD'])}
+            manifest['requested_tag'] = args.tag
+            with github_access() as git_env:
+                for name, repository in SOURCES.items():
+                    source = work / 'repositories' / name
+                    revision = fetch_source(f'https://github.com/ggbond-control/{repository}.git',
+                                            args.tag, source, git_env)
+                    if ET.parse(source / 'package.xml').getroot().findtext('name') != name:
+                        raise ValueError(f'package name mismatch: {source}')
+                    sha = snapshot(source, work / 'sources' / name)
+                    manifest['packages'][name] = dict(revision, sha256=sha, dirty=False)
+                release_adjustments(work / 'sources')
+                for name, (url, fixed_ref) in NATIVE.items():
+                    source = work / 'native-src' / name
+                    if url.startswith('https://github.com/ggbond-control/'):
+                        revision = fetch_source(url, args.tag, source, git_env)
+                    else:
+                        if not source.exists():
+                            run(['git', 'clone', '--depth', '1', '--branch', fixed_ref, url, source])
+                        commit = output(['git', '-C', source, 'rev-parse', 'HEAD'])
+                        fixed_commit = output(['git', '-C', source, 'rev-parse', fixed_ref + '^{commit}'])
+                        if commit != fixed_commit:
+                            raise ValueError(f'{name}: cached checkout does not match pinned {fixed_ref}')
+                        revision = {'url': url, 'tag': fixed_ref, 'commit': commit,
+                                    'selection': 'fixed-upstream-tag'}
+                    manifest['native'][name] = revision
             write(work / 'inputs.json', json.dumps(manifest, indent=2))
         (work / 'install').mkdir(exist_ok=True)
         (work / 'home').mkdir(exist_ok=True)

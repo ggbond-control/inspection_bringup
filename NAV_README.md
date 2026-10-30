@@ -291,11 +291,6 @@ scripts/build_navigation.sh --workspace-root /workspaces/robot
 scripts/build_navigation.sh --interface-underlay /workspaces/common/install/local_setup.bash
 ```
 
-For a model-independent amd64 Debian runtime bundle, use the separate
-[release packaging guide](packaging/navigation/README.md). Its persistent cache
-supports incremental full builds, `--select` with dependent packages, and
-`--package-only`; it excludes nav_bridge and inspection_bringup.
-
 `BUILD_JOBS` supplies the job default; `-j`/`--jobs` takes precedence. The default
 is one. `--output-root` isolates ROS build/install/log outputs; it continues to
 reuse the shared third-party prefix. It does not switch services to those outputs.
