@@ -18,4 +18,7 @@ planner_server:
 multi_map_nav_node:
   ros__parameters:
     normal_xy_tolerance: 0.4   # Position tolerance (meters)
+    coarse_xy_tolerance: 0.6
+    coarse_yaw_tolerance: 0.7
+    position_only_xy_tolerance: 0.6
     normal_yaw_tolerance: 0.5  # Heading tolerance (radians)

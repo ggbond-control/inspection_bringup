@@ -84,6 +84,18 @@ class Configuration(unittest.TestCase):
                     self.assertEqual(resolved['livox']['config'], '')
                 self.assertEqual(resolved, raw)
 
+    def test_arrival_profiles_are_explicit_and_relaxed_for_every_model(self):
+        for model in ('x30', 'd1m', 'cyvet', 'tank'):
+            with self.subTest(model=model):
+                self.robot(model=model)
+                config = cfg.load_config('navigation')
+                params = cfg.read_yaml(config['global_planner']['config'])['multi_map_nav_node']['ros__parameters']
+                self.assertEqual(params['default_arrival_mode'], 'precise')
+                self.assertNotIn('default_align_final_yaw', params)
+                self.assertGreaterEqual(params['coarse_xy_tolerance'], params['normal_xy_tolerance'])
+                self.assertGreaterEqual(params['coarse_yaw_tolerance'], params['normal_yaw_tolerance'])
+                self.assertGreaterEqual(params['position_only_xy_tolerance'], params['normal_xy_tolerance'])
+
     def test_multi_map_nav_profiles_preserve_all_original_parameters(self):
         for model, profile in [('x30', 'new_local'), ('cyvet', 'new_local'), ('d1m', 'straight_local')]:
             with self.subTest(model=model):
