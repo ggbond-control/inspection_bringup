@@ -362,3 +362,10 @@ src/inspection_bringup/scripts/manage_inspection_services.sh uninstall
 When a new sensor module is added, add its package dependency to `package.xml`
 and include its launch file from `launch/sensors.launch.py` with an `enable_*`
 launch argument.
+
+云台双坐标控制和自动手动对焦共用独立的 `task_hub.gimbal_odometry_topic`
+（默认 `/odometry_horizon`，要求world中的horizon位姿），有效期由
+`task_hub.gimbal_odometry_timeout_seconds` 控制（默认1秒）。目标默认world坐标；
+任务显式指定子地图 `data.target_frame_id` 时，将 `task_hub.gimbal_map_relations_file`
+配置为导航使用的同一份 `map_relations.csv`，先转换目标到world。
+导航和其他业务仍使用原有 `task_hub.odometry_topic`。

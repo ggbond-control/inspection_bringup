@@ -440,6 +440,18 @@ def generate_launch_description():
             description="Heartbeat topic for gimbal module.",
         ),
         DeclareLaunchArgument(
+            "gimbal_odometry_topic", default_value="",
+            description="World-frame horizon pose topic for gimbal pointing and manual focus.",
+        ),
+        DeclareLaunchArgument(
+            "gimbal_odometry_timeout_seconds", default_value="",
+            description="Maximum gimbal odometry message and reception age in seconds.",
+        ),
+        DeclareLaunchArgument(
+            "gimbal_map_relations_file", default_value="",
+            description="Navigation map_relations.csv for explicit submap gimbal targets.",
+        ),
+        DeclareLaunchArgument(
             "odometry_topic",
             default_value="/odometry_multi_maps",
             description="Navigation odometry topic used for current map frame and position.",
@@ -732,6 +744,17 @@ def launch_setup(context):
         "odometry_topic": override_or_config(
             context, "odometry_topic", config, "task_hub", "odometry_topic", "/odometry_multi_maps"
         ),
+        "gimbal_odometry_topic": override_or_config(
+            context, "gimbal_odometry_topic", config, "task_hub", "gimbal_odometry_topic", "/odometry_horizon"
+        ),
+        "gimbal_odometry_timeout_seconds": ParameterValue(
+            override_or_config_typed(context, "gimbal_odometry_timeout_seconds", config,
+                                     "task_hub", "gimbal_odometry_timeout_seconds", 1.0, float),
+            value_type=float,
+        ),
+        "gimbal_map_relations_file": os.path.expanduser(override_or_config(
+            context, "gimbal_map_relations_file", config, "task_hub", "gimbal_map_relations_file", ""
+        )),
         "robot_basic_state_topic": override_or_config(
             context,
             "robot_basic_state_topic",

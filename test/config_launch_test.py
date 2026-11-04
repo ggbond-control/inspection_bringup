@@ -372,6 +372,28 @@ class LaunchConfiguration(unittest.TestCase):
         gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
         self.assertEqual(gimbal['gimbal_params_file'], self.package_file('sensor_gimbal', 'stub_params.yaml'))
 
+    def test_gimbal_pose_parameters_are_separate_and_support_config_and_cli(self):
+        self.robot['system']['task_hub'] = {
+            'gimbal_odometry_topic': '/horizon_custom',
+            'gimbal_odometry_timeout_seconds': 2.5,
+            'gimbal_map_relations_file': '/tmp/maps/map_relations.csv',
+        }
+        self.write_robot()
+        for overrides, topic, timeout in [({}, '/horizon_custom', 2.5),
+                ({'gimbal_odometry_topic': '/horizon_cli',
+                  'gimbal_odometry_timeout_seconds': '0.75'}, '/horizon_cli', .75)]:
+            context = context_for(system, **overrides)
+            with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                    patch.object(system, 'Node', wraps=system.Node) as factory:
+                system.launch_setup(context)
+            node = next(call.kwargs for call in factory.call_args_list
+                        if call.kwargs.get('name') == 'task_hub_node')
+            params = evaluate_parameters(context, normalize_parameters(node['parameters']))[0]
+            self.assertEqual(params['gimbal_odometry_topic'], topic)
+            self.assertEqual(params['gimbal_odometry_timeout_seconds'], timeout)
+            self.assertEqual(params['gimbal_map_relations_file'], '/tmp/maps/map_relations.csv')
+            self.assertEqual(params['odometry_topic'], '/odometry_multi_maps')
+
     def test_obstacle_switches_default_off_and_are_forwarded_as_bool(self):
         for enabled, photo in [(None, None), (False, False), (False, True),
                                (True, False), (True, True)]:
