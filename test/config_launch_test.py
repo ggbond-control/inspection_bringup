@@ -458,6 +458,19 @@ class LaunchConfiguration(unittest.TestCase):
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
             self.assertEqual(params[0]['sn'], 'D1M-TEST')
 
+    def test_both_platform_launches_forward_single_point_journal_directory(self):
+        self.robot['system'].setdefault('mqtt', {})['navigation_to_pose_directory'] = '/tmp/point-journal'
+        self.write_robot()
+        for module in (system, platform):
+            context = context_for(module)
+            with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                    patch.object(module, 'Node', wraps=module.Node) as factory:
+                module.launch_setup(context)
+            node = next(call.kwargs for call in factory.call_args_list
+                        if call.kwargs.get('name') == 'platform_mqtt_bridge_node')
+            params = evaluate_parameters(context, normalize_parameters(node['parameters']))
+            self.assertEqual(params[0]['navigation_to_pose_directory'], '/tmp/point-journal')
+
     def test_only_d1m_extends_charge_command_timeout(self):
         for model, expected in [('x30', {}), ('d1m', {'charge_command_timeout_sec': '180.0'})]:
             with self.subTest(model=model):
