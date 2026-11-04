@@ -234,19 +234,25 @@ class LaunchConfiguration(unittest.TestCase):
     def test_tank_bridge_parameters_and_service_snapshot(self):
         for model in ('tank', 'r750'):
             with self.subTest(model=model):
+                overrides = {'host_ip': '192.168.1.20', 'host_port': 10051} if model == 'tank' \
+                    else {'serial_port': '/dev/ttyACM1'}
                 self.robot = {'model': model, 'robot_id': model.upper() + '-A', 'navigation': {
                     'nav_bridge': {'parameters': {'nav_bridge_node': {'ros__parameters': {
-                        'host_ip': '192.168.1.20', 'host_port': 10051,
-                        'enable_motion_output': False}}}}}}
+                        **overrides, 'enable_motion_output': False}}}}}}
                 self.write_robot()
                 config = cfg.load_config('navigation')
                 self.assertEqual(config['nav_bridge']['robot_type'], model)
                 self.assertFalse(config['nav_bridge']['readiness']['charge_precheck'])
                 parameters = cfg.read_yaml(config['nav_bridge']['config'])['nav_bridge_node']['ros__parameters']
-                self.assertEqual(parameters['host_ip'], '192.168.1.20')
-                self.assertEqual(parameters['host_port'], 10051)
+                for key, value in overrides.items():
+                    self.assertEqual(parameters[key], value)
                 self.assertFalse(parameters['enable_motion_output'])
-                self.assertEqual(parameters['max_linear_speed'], 1.2)
+                if model == 'tank':
+                    self.assertEqual(parameters['max_linear_speed'], 1.2)
+                else:
+                    self.assertEqual(parameters['serial_baud'], 230400)
+                    self.assertEqual(parameters['max_linear_speed'], 0.7)
+                    self.assertEqual(parameters['telemetry_timeout_ms'], 1000)
                 node = object.__new__(supervisor.NavigationSupervisor)
                 snapshot = node.layer_config(config, ('nav_bridge', 'acquire_control'))
                 self.assertEqual(cfg.resolve_files(snapshot, 'navigation', 'test')['nav_bridge'], config['nav_bridge'])

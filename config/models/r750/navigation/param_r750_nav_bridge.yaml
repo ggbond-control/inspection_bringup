@@ -1,30 +1,28 @@
+# TARKBOT R750 串口底盘（X-Protocol，独占 /dev/ttyACM0，勿与 tarkbot_robot 同时运行）。
+# Startup parameters: override through robot.yaml and restart to apply.
 nav_bridge_node:
   ros__parameters:
-    # Startup parameters: override through robot.yaml and restart to apply.
-    host_ip: "49.235.44.225"  # Replace with the actual chassis endpoint on deployment.
-    host_port: 10050
-    connect_timeout_ms: 500
-    http_timeout_ms: 3000
-    move_timeout_ms: 1000       # HTTP response deadline, not the send period.
-    move_failure_limit: 3      # Consecutive transport failures before disconnect.
-    state_failure_limit: 3
-    move_failure_timeout_ms: 2000  # Maximum unacknowledged motion age.
-    reconnect_interval_ms: 2000
+    serial_port: "/dev/ttyACM0"
+    serial_baud: 230400
+    connect_timeout_ms: 5000      # 打开串口后等待首帧遥测的时间
+    reconnect_interval_ms: 2000   # 链路失效后的重开间隔
 
-    # Device requires approximately 3 Hz or more; each tick uses the latest command.
-    cmd_vel_rate_hz: 10.0
-    cmd_vel_timeout_ms: 500
-    max_linear_speed: 1.2       # m/s; may be reduced, never exceed 1.2.
-    max_angular_speed: 1.0      # rad/s; provisional, confirm on hardware.
+    # 下位机需要持续速度帧；每拍只发最新指令，无积压、无补发。
+    cmd_vel_rate_hz: 10.0         # 允许 3..100 Hz
+    cmd_vel_timeout_ms: 500       # 上层速度有效时间，超时后改发零速度
+    max_linear_speed: 0.7         # m/s，发送前限幅
+    max_angular_speed: 0.8        # rad/s，发送前限幅
 
-    state_poll_interval_ms: 1000
-    battery_poll_interval_ms: 3000
-    raw_vel_poll_rate_hz: 10.0  # Observed chassis velocity; separate HTTP polling.
-    raw_vel_timeout_ms: 500
-    # Must exceed state_poll_interval_ms + 2 * http_timeout_ms.
-    telemetry_timeout_ms: 10000
-    state_publish_rate_hz: 10.0
-    # Acquire only when Idle is confirmed and the existing brake is off.
+    # 0x10 遥测失效时间（标称 50 Hz），超时判定断链并重开串口。
+    telemetry_timeout_ms: 1000
+    state_publish_rate_hz: 10.0   # ROS 状态/诊断发布频率，允许 (0,100]
+
+    # true: 遥测连通后自动允许输出并开始发送零速度；
+    # 断线重连不会重新允许输出，只有显式 ready/stand 会。
     startup_acquire_control: true
-    # false is query-only: no control requests, including zero speed or teardown.
+    # false = 只读诊断：不发送任何速度帧，包括启动与退出。
     enable_motion_output: true
+
+    # 3S 锂电池电压-电量线性映射区间。
+    battery_empty_voltage: 9.9
+    battery_full_voltage: 12.6

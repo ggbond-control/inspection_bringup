@@ -83,9 +83,12 @@ robot_id: D1M-A
 #       nav_bridge_node:
 #         ros__parameters:
 #           device_id: "YOUR-CYVET-DEVICE-ID"  # Cyvet only; independent of robot_id
-#           # TANK/R750 only (set model: tank or model: r750):
+#           # TANK only (set model: tank):
 #           # host_ip: "49.235.44.225"  # Placeholder carried from TANK; replace per deployment.
 #           # host_port: 10050
+#           # R750 only (set model: r750, serial X-Protocol chassis):
+#           # serial_port: "/dev/ttyACM0"  # 独占使用，勿与 tarkbot_robot 同时运行。
+#           # serial_baud: 230400
 #           # enable_motion_output: false  # Query-only; stand/release return failure.
 #   local_planner:
 #     parameters:
