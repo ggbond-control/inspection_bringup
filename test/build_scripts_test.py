@@ -17,13 +17,16 @@ SCRIPTS = ('build_inspection.sh', 'build_navigation.sh')
 
 
 class TankBuildProfile(unittest.TestCase):
-    def test_tank_and_d1m_profiles_leave_other_models_at_cmake_defaults(self):
+    def test_chassis_profiles_leave_other_models_at_cmake_defaults(self):
         spec = importlib.util.spec_from_file_location('navigation_build', BRINGUP_DIR / 'scripts/navigation_build.py')
         import sys
         with patch.object(sys, 'path', [str(BRINGUP_DIR / 'scripts'), *sys.path]):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-        for model, enabled in (('tank', True), ('d1m', False), ('x30', False), ('cyvet', False)):
+        all_backends = ('X30', 'D1_MAX', 'CYVET', 'TANK', 'R750')
+        chassis = {'tank': 'TANK', 'r750': 'R750'}
+        cases = (('tank', True), ('r750', True), ('d1m', False), ('x30', False), ('cyvet', False))
+        for model, enabled in cases:
             with self.subTest(model=model), patch.object(sys, 'argv', ['build_navigation.sh', '--model', model, '--plan']), \
                     patch.dict(os.environ, {'INSPECTION_CONFIG_DIR': str(BRINGUP_DIR / 'config')}):
                 build = module.Build(module.arguments())
@@ -31,10 +34,11 @@ class TankBuildProfile(unittest.TestCase):
                 if model in ('x30', 'cyvet'):
                     self.assertEqual(options, [])
                 else:
-                    self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if enabled else 'OFF'), options)
+                    self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if model == 'tank' else 'OFF'), options)
                 if enabled:
-                    for backend in ('X30', 'D1_MAX', 'CYVET'):
-                        self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=OFF', options)
+                    for backend in all_backends:
+                        if backend != 'TANK' and backend != chassis[model]:
+                            self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=OFF', options)
                 self.assertEqual(build.repo_path('driver_ws/src/nav_bridge'), build.workspaces['driver_ws'] / 'src/nav_bridge')
 
 
