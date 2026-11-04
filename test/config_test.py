@@ -105,6 +105,11 @@ class Configuration(unittest.TestCase):
                 expected = cfg.read_yaml(ROOT / 'test/fixtures/multi_map_nav' / f'{profile}.yaml')
                 expected['multi_map_nav_node']['ros__parameters']['normal_xy_tolerance'] = 0.25
                 expected['multi_map_nav_node']['ros__parameters']['normal_yaw_tolerance'] = 0.25
+                event_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
+                    'multi_map_nav_node']['ros__parameters']
+                expected['multi_map_nav_node']['ros__parameters'].update({
+                    key: value for key, value in event_defaults.items()
+                    if key == 'global_replanning_mode' or key.startswith('event_replan_')})
                 self.assertEqual(actual, expected)
                 model_data = cfg.read_yaml(self.root / 'models' / model / 'navigation' /
                                            f'param_{model}_multi_map_nav.yaml')
@@ -126,6 +131,21 @@ class Configuration(unittest.TestCase):
         self.assertEqual(planner['cost_travel_multiplier'], 4.0)
         self.assertEqual(planner['tolerance'], 0.1)
         self.assertIn('straightening', planner)
+
+    def test_event_replanning_is_opt_in_and_uses_one_global_mode_field(self):
+        for model in ('x30', 'd1m', 'cyvet', 'tank'):
+            self.robot(model=model)
+            config = cfg.load_config('navigation')
+            params = cfg.read_yaml(config['global_planner']['config'])
+            self.assertEqual(params['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'periodic')
+            self.robot(model=model, navigation={'global_planner': {'parameters': {
+                'multi_map_nav_node': {'ros__parameters': {'global_replanning_mode': 'event_driven',
+                                                         'event_replan_max_replans': 1}}}}})
+            event = cfg.read_yaml(cfg.load_config('navigation')['global_planner']['config'])
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'event_driven')
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['event_replan_max_replans'], 1)
+            self.assertEqual(event['planner_server'], params['planner_server'])
+            self.assertEqual(event['global_costmap'], params['global_costmap'])
 
     def test_defaults_model_robot_merge_and_identity(self):
         self.write('models/d1m/system.yaml', {'mqtt': {'port': 2345}, 'modules': {'gas': False}})

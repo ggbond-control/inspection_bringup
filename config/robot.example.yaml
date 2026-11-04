@@ -86,6 +86,12 @@ robot_id: D1M-A
 #           # host_ip: "192.168.1.20"
 #           # host_port: 10050
 #           # enable_motion_output: false  # Query-only; stand/release return failure.
+#   global_planner:
+#     parameters:
+#       multi_map_nav_node:
+#         ros__parameters:
+#           global_replanning_mode: event_driven  # 默认 periodic；重启导航后生效
+#           event_replan_max_replans: 2
 #   local_planner:
 #     parameters:
 #       localPlanner:

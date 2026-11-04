@@ -21,6 +21,23 @@ minimum_turning_radius 参数，D1M 叠加插件、膨胀参数和专属 straigh
 容差覆盖为 0.25；global_costmap 的 footprint 和这两个容差在各型号文件中显式填写。
 其他尚未迁移模块仍沿用原文件名和同相对路径的型号覆盖规则。
 
+全局重规划默认 `periodic`，沿用原 Nav2 流程。可在 robot.yaml 中只覆盖一个模式字段：
+
+```yaml
+navigation:
+  global_planner:
+    parameters:
+      multi_map_nav_node:
+        ros__parameters:
+          global_replanning_mode: event_driven
+```
+
+新模式正常只在新目标/新导航段规划，持续局部阻塞或明显偏离路径时有限重规划。
+同处 `event_replan_*` 参数控制每段重试次数、冷却、规划超时、持续恢复超时和偏离判定。
+默认仍为周期模式，所有型号继承；启动文件按模式加载事件 BT 和专用进展检测器，
+局部规划器由上层逐段协商，无需另配模式。启用前同时部署新版 multi_map_nav 与
+local_planner，修改参数后重启导航。全局地图不增加实时障碍层，stop 策略也不改为绕障。
+
 local_planner 使用 `param_default_local_planner.yaml` 和各型号的
 `param_<model>_local_planner.yaml`。公共参数以 X30 部署值为基准，
 odomTimestampCheckEn 默认 true，D1M 型号层设为 false；
