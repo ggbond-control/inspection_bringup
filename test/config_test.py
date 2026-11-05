@@ -138,12 +138,16 @@ class Configuration(unittest.TestCase):
             config = cfg.load_config('navigation')
             params = cfg.read_yaml(config['global_planner']['config'])
             self.assertEqual(params['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'periodic')
+            self.assertEqual(params['multi_map_nav_node']['ros__parameters']['event_replan_server_timeout_ms'], 1000)
             self.robot(model=model, navigation={'global_planner': {'parameters': {
                 'multi_map_nav_node': {'ros__parameters': {'global_replanning_mode': 'event_driven',
-                                                         'event_replan_max_replans': 1}}}}})
+                                                         'event_replan_max_replans': 1,
+                                                         'event_replan_server_timeout_ms': 1500}}}}})
             event = cfg.read_yaml(cfg.load_config('navigation')['global_planner']['config'])
             self.assertEqual(event['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'event_driven')
             self.assertEqual(event['multi_map_nav_node']['ros__parameters']['event_replan_max_replans'], 1)
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['event_replan_server_timeout_ms'], 1500)
+            self.assertEqual(event['bt_navigator'], params['bt_navigator'])
             self.assertEqual(event['planner_server'], params['planner_server'])
             self.assertEqual(event['global_costmap'], params['global_costmap'])
 

@@ -92,6 +92,7 @@ robot_id: D1M-A
 #         ros__parameters:
 #           global_replanning_mode: event_driven  # 默认 periodic；重启导航后生效
 #           event_replan_max_replans: 2
+#           event_replan_server_timeout_ms: 1000  # 请求应答超时，毫秒；仅事件模式
 #   local_planner:
 #     parameters:
 #       localPlanner:

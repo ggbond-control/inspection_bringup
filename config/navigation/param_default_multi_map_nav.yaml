@@ -109,6 +109,7 @@ multi_map_nav_node:
     global_replanning_mode: periodic
     event_replan_max_replans: 2  # Per segment; excludes its first plan
     event_replan_cooldown: 2.0  # Seconds between accepted plan and retry
+    event_replan_server_timeout_ms: 1000  # Action acknowledgement timeout; event mode only
     event_replan_planning_timeout: 10.0
     event_replan_recovery_timeout: 30.0  # Persistent blockage; not reset by a new path
     event_replan_deviation_distance: 1.0  # Metres from the cached path
