@@ -113,6 +113,29 @@ class LaunchConfiguration(unittest.TestCase):
         config = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
         self.assertEqual(config['terrain']['config'], str(custom))
 
+    def test_global_startup_budget_survives_supervisor_layering_and_robot_override(self):
+        for mode in ('periodic', 'event_driven'):
+            for override, expected in ((None, 60.0), (90.0, 90.0)):
+                with self.subTest(mode=mode, override=override):
+                    self.robot['navigation'] = {'global_planner': {
+                        'parameters': {'multi_map_nav_node': {'ros__parameters': {
+                            'global_replanning_mode': mode}}}}}
+                    if override is not None:
+                        self.robot['navigation']['global_planner']['readiness'] = {
+                            'timeout_seconds': override}
+                    self.write_robot()
+                    config = cfg.load_config('navigation')
+                    node = object.__new__(supervisor.NavigationSupervisor)
+                    layer = node.layer_config(config, ('global_planner',))
+                    context = context_for(navigation)
+                    action = navigation.module_readiness_action_with_overrides(
+                        context, layer, 'global_planner', [], 10.0, False)
+                    command = [perform_substitutions(context, part) for part in action.cmd]
+                    self.assertEqual(command[command.index('--timeout') + 1], str(expected))
+                    self.assertIn('/multi_map_nav/health', command)
+                    self.assertEqual(config['local_planner']['readiness']['timeout_seconds'], 10.0)
+                    self.assertEqual(config['bringup']['wait_timeout_seconds'], 10.0)
+
     def test_cli_relative_paths_use_the_same_package_directories_as_yaml(self):
         context = context_for(navigation, terrain_config='./gridmapper_local.yaml',
                               local_planner_config='./d1m.yaml',

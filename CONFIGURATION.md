@@ -302,10 +302,27 @@ navigation:
 门控 `data_timeout` 同时约束里程计、地形和路径接收间隔，路径不检查时间戳年龄；
 SLAM `navigation_health.data_timeout` 约束雷达数据和处理结果更新。
 不能只改其中一项就认为其他检查也被放宽。
-修改 `robot.yaml` 后需重启相关导航进程，使 bringup 重新生成参数快照；
+修改 `robot.yaml` 后需重启相关导航进程，使 bringup 重新生成参数快照。
 运行中的节点不随文件编辑自动更新。可用 `ros2 param get /cmd_vel_guard data_timeout`、
 `ros2 param get /localPlanner terrainTimeout` 和
 `ros2 param get /laser_mapping navigation_health.data_timeout` 核对实际值。
+
+### 全局导航启动等待
+
+全局导航模块的启动健康检查默认等待 60 秒，包含 Nav2 服务发现、生命周期切换与
+初始地图同步；两种全局规划模式使用同一启动预算。只有
+`/multi_map_nav/health` 报告 `OK` 才继续，明确的 `ERROR`/`STALE` 仍立即失败，
+超过期限仍未就绪则停止启动。此字段只约束启动，不改变规划 action 的应答或计算期限。
+可在 `robot.yaml` 中按机器覆盖：
+
+```yaml
+navigation:
+  global_planner:
+    readiness:
+      timeout_seconds: 60.0
+```
+
+自定义 `navigate.yaml` 若显式保留了旧的 10 秒期限，也需要更新该字段。
 
 ### 参数合并规则与本机覆盖
 
