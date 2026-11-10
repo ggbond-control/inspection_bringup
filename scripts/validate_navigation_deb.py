@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pkgutil
 import signal
+import struct
 import subprocess
 import time
 
@@ -17,6 +18,7 @@ from ament_index_python.packages import get_package_prefix, get_package_share_di
 def main():
     prefix = Path('/opt/inspection/navigation')
     manifest = json.loads((prefix / 'share/navigation_release/manifest.json').read_text())
+    assert subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip() == manifest['architecture']
     for name in manifest['packages']:
         assert Path(get_package_prefix(name)) == prefix, name
         subprocess.run(['ros2', 'pkg', 'executables', name], check=True)
@@ -42,8 +44,11 @@ def main():
         if not p.is_file() or p.is_symlink():
             continue
         with p.open('rb') as stream:
-            if stream.read(4) != b'\x7fELF':
+            header = stream.read(20)
+            if header[:4] != b'\x7fELF':
                 continue
+            machine = struct.unpack('<H' if header[5] == 1 else '>H', header[18:20])[0]
+            assert machine == {'amd64': 62, 'arm64': 183}[manifest['architecture']], (p, machine)
         result = subprocess.run(['ldd', str(p)], capture_output=True, text=True)
         assert result.returncode == 0 and 'not found' not in result.stdout, (p, result.stdout, result.stderr)
         count += 1

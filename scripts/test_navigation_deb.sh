@@ -6,16 +6,23 @@ if [[ $# -lt 1 || $# -gt 2 || ! -f "$1" ]]; then
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEB_PATH="$(realpath "$1")"
+DEB_ARCH="$(dpkg-deb -f "${DEB_PATH}" Architecture)"
+HOST_ARCH="$(dpkg --print-architecture)"
+if [[ "${DEB_ARCH}" != "${HOST_ARCH}" || ( "${HOST_ARCH}" != amd64 && "${HOST_ARCH}" != arm64 ) ]]; then
+  echo "Run this check on the matching amd64/arm64 host (deb=${DEB_ARCH}, host=${HOST_ARCH})" >&2
+  exit 2
+fi
 UPGRADE_MOUNT=()
 if [[ $# -eq 2 ]]; then
   [[ -f "$2" ]] || exit 2
+  [[ "$(dpkg-deb -f "$2" Architecture)" == "${DEB_ARCH}" ]] || exit 2
   UPGRADE_MOUNT=(-v "$(realpath "$2"):/tmp/navigation-upgrade.deb:ro")
 fi
-docker run --rm \
+docker run --rm --platform "linux/${DEB_ARCH}" \
   "${UPGRADE_MOUNT[@]}" \
   -v "${DEB_PATH}:/tmp/navigation.deb:ro" \
   -v "${SCRIPT_DIR}/validate_navigation_deb.py:/tmp/validate_navigation_deb.py:ro" \
-  --entrypoint bash osrf/ros:jazzy-desktop-full -ec '
+  --entrypoint bash ros:jazzy-ros-base -ec '
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y --no-install-recommends /tmp/navigation.deb

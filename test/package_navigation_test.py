@@ -16,6 +16,92 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_arm64_host_uses_arm_container_and_rejects_amd64_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            release.write(root / 'inputs.json', '{"architecture": "arm64"}')
+            argv = ['package_navigation.py', '--version', '0.3.5', '--package-only', '--work-dir', str(root)]
+            def output(args, **kwargs):
+                if args[:2] == ['dpkg', '--print-architecture']:
+                    return 'arm64'
+                if '{{.Architecture}}' in args:
+                    return 'arm64'
+                self.fail(f'unexpected output command: {args}')
+            with patch.object(release.sys, 'argv', argv), \
+                    patch.object(release, 'output', side_effect=output), \
+                    patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as inspect, \
+                    patch.object(release, 'run') as run, \
+                    patch.object(release, 'github_access') as auth:
+                release.main()
+                command = run.call_args.args[0]
+                self.assertIn('linux/arm64', command)
+                self.assertIn('inspection-navigation-builder:jazzy-arm64', command)
+                self.assertIn('--package-only', command)
+                auth.assert_not_called()
+                run.reset_mock()
+                inspect.return_value = subprocess.CompletedProcess([], 1)
+                release.main()
+                build = run.call_args_list[0].args[0]
+                self.assertEqual(build[:2], ['docker', 'build'])
+                self.assertIn('linux/arm64', build)
+                run.reset_mock()
+                release.write(root / 'inputs.json', '{"architecture": "amd64"}')
+                with self.assertRaisesRegex(ValueError, 'cache architecture differs'):
+                    release.main()
+                run.assert_not_called()
+
+    def test_arm64_colcon_uses_arm_flags_and_rejects_foreign_snapshot_before_building(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = {'architecture': 'arm64', 'builder_image': 'test',
+                        'packages': {name: {'sha256': name} for name in release.SOURCES}}
+            release.write(root / 'inputs.json', json.dumps(manifest))
+            args = type('Arguments', (), {'package_only': False, 'select': None,
+                                         'jobs': 1, 'version': '0.3.5'})()
+            with patch.object(release, 'Path', return_value=root), \
+                    patch.object(release, 'host_architecture', return_value='arm64'), \
+                    patch.object(release, 'build_native') as native, \
+                    patch.object(release, 'environment', return_value={}), \
+                    patch.object(release, 'run') as run, \
+                    patch.object(release, 'assemble'):
+                release.inside(args)
+                command = run.call_args.args[0]
+                self.assertEqual(command[0], 'colcon')
+                self.assertIn('-DCMAKE_CXX_FLAGS=-march=armv8-a -mtune=generic', command)
+                self.assertFalse(any('x86-64' in str(arg) for arg in command))
+                native.reset_mock()
+                run.reset_mock()
+                manifest['architecture'] = 'amd64'
+                release.write(root / 'inputs.json', json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, 'cache architecture differs'):
+                    release.inside(args)
+                native.assert_not_called()
+                run.assert_not_called()
+
+    def test_debian_control_and_artifact_names_follow_manifest_architecture(self):
+        for architecture in ('amd64', 'arm64'):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                prefix = root / 'install'
+                for name in release.SOURCES:
+                    release.write(prefix / 'share/ament_index/resource_index/packages' / name, '')
+                    (root / 'sources' / name).mkdir(parents=True)
+                for name in release.NATIVE:
+                    (root / 'native-src' / name).mkdir(parents=True)
+                with patch.object(release, 'PREFIX', prefix), \
+                        patch.object(release, 'output', return_value='shlibs:Depends=libc6'):
+                    release.assemble(root, '0.3.5', {'architecture': architecture})
+                deb = root / 'dist' / f'navigation_0.3.5_{architecture}.deb'
+                actual = subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Architecture'], text=True).strip()
+                self.assertEqual(actual, architecture)
+                recorded = json.loads(Path(str(deb) + '.manifest.json').read_text())
+                self.assertEqual(recorded['architecture'], architecture)
+
+    def test_unsupported_host_architecture_is_rejected(self):
+        with patch.object(release, 'output', return_value='armhf'):
+            with self.assertRaisesRegex(ValueError, 'unsupported native architecture'):
+                release.host_architecture()
+
     def test_cli_rejects_missing_invalid_or_irrelevant_tag_before_build(self):
         script = Path(release.__file__)
         for extra, message in [([], '--tag is required'),
@@ -29,15 +115,17 @@ class Packaging(unittest.TestCase):
     def test_package_only_never_reads_remote_sources_or_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            release.write(root / 'inputs.json', '{}')
-            release.write(root / 'build-state.json', '{"requested_tag": "v0.3.4"}')
+            release.write(root / 'inputs.json', '{"architecture": "amd64"}')
+            previous = {'requested_tag': 'v0.3.4', 'architecture': 'amd64'}
+            release.write(root / 'build-state.json', json.dumps(previous))
             args = type('Arguments', (), {'package_only': True, 'version': '0.3.5'})()
             with patch.object(release, 'Path', return_value=root), \
+                    patch.object(release, 'host_architecture', return_value='amd64'), \
                     patch.object(release, 'assemble') as assemble, \
                     patch.object(release, 'github_access') as auth, \
                     patch.object(release, 'fetch_source') as fetch:
                 release.inside(args)
-                assemble.assert_called_once_with(root, '0.3.5', {'requested_tag': 'v0.3.4'})
+                assemble.assert_called_once_with(root, '0.3.5', previous)
                 auth.assert_not_called()
                 fetch.assert_not_called()
                 release.write(root / 'build-in-progress', 'incomplete')
@@ -132,7 +220,7 @@ class Packaging(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             prefix = root / 'install'
-            release.write(root / 'inputs.json', json.dumps({'native': {'gtsam': {'commit': 'new'}}}))
+            release.write(root / 'inputs.json', json.dumps({'architecture': 'arm64', 'native': {'gtsam': {'commit': 'new'}}}))
             release.write(root / 'gtsam.installed', 'old\n')
             release.write(prefix / 'vendor/lib/libgtsam.so', 'library')
             with patch.object(release, 'PREFIX', prefix), \
@@ -140,6 +228,9 @@ class Packaging(unittest.TestCase):
                     patch.object(release, 'run') as run:
                 release.build_native(root, 2)
                 self.assertEqual(run.call_count, 3)
+                configure = run.call_args_list[0].args[0]
+                self.assertIn('-DCMAKE_CXX_FLAGS=-march=armv8-a -mtune=generic', configure)
+                self.assertFalse(any('x86-64' in str(arg) for arg in configure))
                 self.assertEqual((root / 'gtsam.installed').read_text(), 'new\n')
                 run.reset_mock()
                 release.build_native(root, 2)

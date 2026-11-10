@@ -18,7 +18,10 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = Path('/opt/inspection/navigation')
-IMAGE = 'inspection-navigation-builder:jazzy-amd64'
+CPU_FLAGS = {
+    'amd64': '-march=x86-64 -mtune=generic',
+    'arm64': '-march=armv8-a -mtune=generic',
+}
 SOURCES = {
     'inspection_interfaces': 'inspection_interfaces',
     'robots_dog_msgs': 'robots_dog_msgs',
@@ -39,6 +42,7 @@ NATIVE = {
 RUNTIME_DEPENDS = [
     'ros-jazzy-ros-base', 'ros-jazzy-navigation2', 'ros-jazzy-grid-map',
     'ros-jazzy-pcl-ros', 'ros-jazzy-tf-transformations',
+    'ros-jazzy-example-interfaces',
     'ros-jazzy-rmw-fastrtps-cpp', 'ros-jazzy-rmw-cyclonedds-cpp',
     'python3-yaml', 'python3-numpy', 'python3-scipy', 'python3-serial',
 ]
@@ -51,6 +55,25 @@ def run(args, **kwargs):
 
 def output(args, **kwargs):
     return subprocess.check_output([str(a) for a in args], text=True, **kwargs).strip()
+
+
+def host_architecture():
+    architecture = output(['dpkg', '--print-architecture'])
+    if architecture not in CPU_FLAGS:
+        raise ValueError(f'unsupported native architecture: {architecture}; use amd64 or arm64')
+    return architecture
+
+
+def builder_image(architecture):
+    return f'inspection-navigation-builder:jazzy-{architecture}'
+
+
+def check_cache_architecture(work, architecture):
+    for filename in ('inputs.json', 'build-state.json'):
+        path = work / filename
+        if path.exists() and json.loads(path.read_text()).get('architecture') != architecture:
+            raise ValueError(f'{filename}: cache architecture differs from {architecture}; '
+                             'use a separate --work-dir for each architecture')
 
 
 def write(path, text):
@@ -269,6 +292,7 @@ def environment():
 
 def build_native(work, jobs):
     inputs = json.loads((work / 'inputs.json').read_text())
+    flags = CPU_FLAGS[inputs['architecture']]
     state = work / 'build-state.json'
     previous = json.loads(state.read_text()) if state.exists() else {}
     for name in NATIVE:
@@ -286,8 +310,8 @@ def build_native(work, jobs):
                 continue
         stamp.unlink(missing_ok=True)
         args = ['-DCMAKE_BUILD_TYPE=Release', f'-DCMAKE_INSTALL_PREFIX={PREFIX}/vendor',
-                '-DCMAKE_INSTALL_LIBDIR=lib', '-DCMAKE_C_FLAGS=-march=x86-64 -mtune=generic',
-                '-DCMAKE_CXX_FLAGS=-march=x86-64 -mtune=generic',
+                '-DCMAKE_INSTALL_LIBDIR=lib', f'-DCMAKE_C_FLAGS={flags}',
+                f'-DCMAKE_CXX_FLAGS={flags}',
                 '-DCMAKE_INSTALL_RPATH=$ORIGIN']
         if name == 'gtsam':
             args += ['-DGTSAM_USE_SYSTEM_EIGEN=ON', '-DGTSAM_BUILD_TESTS=OFF',
@@ -325,6 +349,7 @@ def prune_obsolete(previous, current):
 
 
 def assemble(work, version, manifest):
+    architecture = manifest['architecture']
     manifest = dict(manifest, version=version, install_prefix=str(PREFIX),
                     packaging_recipe_sha256=digest(Path(__file__)))
     stage = work / 'stage'
@@ -385,7 +410,7 @@ def assemble(work, version, manifest):
     debian = work / 'dependency-scan/debian'
     write(debian / 'control', 'Source: navigation\nSection: misc\nPriority: optional\n'
           'Maintainer: Navigation maintainers <robot@example.com>\n\n'
-          'Package: navigation\nArchitecture: amd64\nDescription: Navigation runtime\n')
+          f'Package: navigation\nArchitecture: {architecture}\nDescription: Navigation runtime\n')
     args = ['dpkg-shlibdeps', '-O', '--ignore-missing-info',
             f'-l{dest}/lib', f'-l{dest}/vendor/lib', '-l/opt/ros/jazzy/lib']
     result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent)
@@ -394,7 +419,7 @@ def assemble(work, version, manifest):
     control = stage / 'DEBIAN'
     control.mkdir()
     installed_kib = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file()) // 1024
-    write(control / 'control', f'Package: navigation\nVersion: {version}\nArchitecture: amd64\n'
+    write(control / 'control', f'Package: navigation\nVersion: {version}\nArchitecture: {architecture}\n'
           'Maintainer: Navigation maintainers <robot@example.com>\nSection: misc\nPriority: optional\n'
           f'Installed-Size: {installed_kib}\nDepends: {depends}\nRecommends: ros-jazzy-rviz2\n'
           'Description: Model-independent ROS 2 Jazzy navigation runtime\n'
@@ -402,7 +427,7 @@ def assemble(work, version, manifest):
           ' Excludes nav_bridge, inspection_bringup, maps and system services.\n')
     dist = work / 'dist'
     dist.mkdir(exist_ok=True)
-    deb = dist / f'navigation_{version}_amd64.deb'
+    deb = dist / f'navigation_{version}_{architecture}.deb'
     run(['dpkg-deb', '--root-owner-group', '-Zxz', '-z3', '--build', stage, deb])
     write(dist / (deb.name + '.sha256'), digest(deb) + '  ' + deb.name + '\n')
     write(dist / (deb.name + '.manifest.json'), json.dumps(manifest, indent=2) + '\n')
@@ -411,7 +436,9 @@ def assemble(work, version, manifest):
 
 def inside(args):
     work = Path('/release')
+    check_cache_architecture(work, host_architecture())
     manifest = json.loads((work / 'inputs.json').read_text())
+    flags = CPU_FLAGS[manifest['architecture']]
     complete = work / 'build-state.json'
     if args.package_only:
         if (work / 'build-in-progress').exists() or not complete.exists():
@@ -450,8 +477,8 @@ def inside(args):
          '--build-base', work / 'build', '--install-base', PREFIX,
          '--executor', 'sequential', '--event-handlers', 'console_cohesion+',
          '--cmake-args', '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=OFF',
-         '-DBUILD_WITH_MARCH_NATIVE=OFF', '-DCMAKE_C_FLAGS=-march=x86-64 -mtune=generic',
-         '-DCMAKE_CXX_FLAGS=-march=x86-64 -mtune=generic',
+         '-DBUILD_WITH_MARCH_NATIVE=OFF', f'-DCMAKE_C_FLAGS={flags}',
+         f'-DCMAKE_CXX_FLAGS={flags}',
          '-DPython3_EXECUTABLE=/usr/bin/python3', '-DPYTHON_EXECUTABLE=/usr/bin/python3',
          f'-DGTSAM_DIR={PREFIX}/vendor/lib/cmake/GTSAM',
          f'-DLIVOX_LIDAR_SDK_LIBRARY={PREFIX}/vendor/lib/liblivox_lidar_sdk_shared.so',
@@ -470,7 +497,7 @@ def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--version', required=True, help='Debian version, e.g. 0.1.0 or 0.1.1')
     p.add_argument('--tag', help='requested ggbond-control release tag, e.g. v0.3.5')
-    p.add_argument('--work-dir', type=Path, default=Path.home() / '.cache/inspection-navigation-deb/amd64')
+    p.add_argument('--work-dir', type=Path, help='persistent cache; defaults to ~/.cache/inspection-navigation-deb/<host architecture>')
     p.add_argument('-j', '--jobs', type=int, default=1)
     mode = p.add_mutually_exclusive_group()
     mode.add_argument('--select', nargs='+', choices=list(SOURCES), help='rebuild selected packages and their consumers')
@@ -496,20 +523,25 @@ def main():
     if args.inside:
         inside(args)
         return
-    if output(['dpkg', '--print-architecture']) != 'amd64':
-        raise ValueError('this experimental release builder requires an amd64 host')
-    work = args.work_dir.expanduser().resolve()
+    architecture = host_architecture()
+    image_name = builder_image(architecture)
+    platform = f'linux/{architecture}'
+    work = (args.work_dir or Path.home() / '.cache/inspection-navigation-deb' / architecture).expanduser().resolve()
     work.mkdir(parents=True, exist_ok=True)
     with (work / '.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        image = subprocess.run(['docker', 'image', 'inspect', IMAGE], stdout=subprocess.DEVNULL,
+        check_cache_architecture(work, architecture)
+        image = subprocess.run(['docker', 'image', 'inspect', image_name], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode == 0
         if args.rebuild_image or not image:
-            run(['docker', 'build', '-t', IMAGE, '-f', ROOT / 'packaging/navigation/Dockerfile',
+            run(['docker', 'build', '--platform', platform, '-t', image_name, '-f', ROOT / 'packaging/navigation/Dockerfile',
                  ROOT / 'packaging/navigation'])
+        image_architecture = output(['docker', 'image', 'inspect', '--format', '{{.Architecture}}', image_name])
+        if image_architecture != architecture:
+            raise ValueError(f'{image_name} contains {image_architecture}, expected {architecture}; rebuild the image')
         if not args.package_only:
-            manifest = {'builder_image': output(['docker', 'image', 'inspect', '--format', '{{.Id}}', IMAGE]),
-                        'packages': {}, 'native': {}, 'architecture': 'amd64', 'ros': 'jazzy',
+            manifest = {'builder_image': output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image_name]),
+                        'packages': {}, 'native': {}, 'architecture': architecture, 'ros': 'jazzy',
                         'release_recipe_sha256': digest(Path(__file__))}
             manifest['requested_tag'] = args.tag
             with github_access() as git_env:
@@ -539,17 +571,17 @@ def main():
             write(work / 'inputs.json', json.dumps(manifest, indent=2))
         (work / 'install').mkdir(exist_ok=True)
         (work / 'home').mkdir(exist_ok=True)
-        command = ['docker', 'run', '--rm', '--user', f'{os.getuid()}:{os.getgid()}',
+        command = ['docker', 'run', '--rm', '--platform', platform, '--user', f'{os.getuid()}:{os.getgid()}',
                    '-e', 'HOME=/release/home', '-v', f'{work}:/release',
                    '-v', f'{work}/install:{PREFIX}', '-v', f'{ROOT}/scripts:/tools:ro',
-                   IMAGE, 'python3', '/tools/package_navigation.py', '--inside',
+                   image_name, 'python3', '/tools/package_navigation.py', '--inside',
                    '--version', args.version, '-j', args.jobs]
         if args.package_only:
             command += ['--package-only']
         elif args.select:
             command += ['--select', *args.select]
         run(command)
-        print(f'[artifact] {work}/dist/navigation_{args.version}_amd64.deb', flush=True)
+        print(f'[artifact] {work}/dist/navigation_{args.version}_{architecture}.deb', flush=True)
 
 
 if __name__ == '__main__':

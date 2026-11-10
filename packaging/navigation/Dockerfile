@@ -1,4 +1,4 @@
-FROM osrf/ros:jazzy-desktop-full
+FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     opencl-headers ocl-icd-opencl-dev \
     ros-jazzy-navigation2 ros-jazzy-grid-map ros-jazzy-pcl-ros \
     ros-jazzy-tf-transformations ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-example-interfaces ros-jazzy-ament-cmake-auto \
+    ros-jazzy-rosidl-default-generators \
     && rm -rf /var/lib/apt/lists/*
 
 ENV ROS_DISTRO=jazzy
