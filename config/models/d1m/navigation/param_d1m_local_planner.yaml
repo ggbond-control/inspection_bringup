@@ -1,6 +1,15 @@
-# D1M motion models and differences from the X30 default.
+# D1M / D1_MAX motion models and differences from the X30 default.
 /**:
   ros__parameters:
+    # Both localPlanner and pathFollower read this one shared capability profile.
+    tracking_mode: "turn_feasible"
+    turn_forward_speed_samples: [0.0]
+    turn_lateral_speed_samples: [0.5]
+    turn_lateral_zero_above_speed: 1.0
+    # High-gear yaw envelope (m/s -> rad/s); conservative in lower gears.
+    # At each boundary the next, more restrictive band takes effect.
+    turn_yaw_forward_speed_samples: [0.0, 1.0, 2.0]
+    turn_yaw_rate_samples: [1.5, 1.0, 0.5]
     odomTimestampCheckEn: false  # 关闭时间戳年龄检查，保留接收超时和乱序检查
     initialModel: "offroad"  # 启动时使用的运动模型名称
     flat:
@@ -39,7 +48,6 @@ localPlanner:
 
 pathFollower:
   ros__parameters:
-    tracking_mode: "turn_preferred"  # 普通纠偏优先使用航向
     turn_lateral_weight: 0.5  # 普通路径纠偏的横向权重；侧向绕障和终点自动恢复 omni
     turn_tangent_angle_limit_deg: 60.0  # 路径切线相对车头超过此角度时保留完整横移
     turn_correction_angle_limit_deg: 30.0  # 普通纠偏角过大时恢复 omni，保留避障横移

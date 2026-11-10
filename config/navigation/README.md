@@ -45,7 +45,28 @@ local_planner 使用 `param_default_local_planner.yaml` 和各型号的
 `param_<model>_local_planner.yaml`。公共参数以 X30 部署值为基准，
 odomTimestampCheckEn 默认 true，D1M 型号层设为 false；
 initialModel、flat、offroad 仅在型号文件中维护。
-默认跟随模式为 omni，turn_preferred 和全部 turn_* 参数只放在 D1M 型号文件中。
+X30/Cyvet 默认跟随模式为 omni。D1M / D1_MAX 型号层默认 turn_feasible，
+tracking_mode 和底盘能力表只维护在型号文件的 `/**.ros__parameters` 一处，
+localPlanner 与 pathFollower 各自读取同一份参数：
+
+```yaml
+tracking_mode: turn_feasible
+turn_forward_speed_samples: [0.0]
+turn_lateral_speed_samples: [0.5]
+turn_lateral_zero_above_speed: 1.0
+turn_yaw_forward_speed_samples: [0.0, 1.0, 2.0]
+turn_yaw_rate_samples: [1.5, 1.0, 0.5]
+```
+
+角速度表按前速绝对值分档，1/2m/s 分界点属于下一档，不插值；仍受模型 maxYawRate 限制。
+这是高速档能力包络，在低/中速档偏保守；offroad.maxSpeed 保持2.2m/s，适用于高速巡航档，
+中速档控制上限应不超过2m/s。加减速度不变。使用前需配套支持该能力表的 local_planner
+以及修复了 SDK 速度换算的 nav_bridge。
+
+local_planner 的参数合并保持“公共默认 → 型号 → 单机”的层级优先顺序：
+高层公共块会移除低层两个控制节点下的同名覆盖项；同一层显式节点参数仍优先。
+因此单机可以在 `navigation.local_planner.parameters./**.ros__parameters` 只修改一次能力表或模式，
+无需复制到两个节点下。节点专用参数和其他模块的 ROS 参数合并规则保持原样。
 Cyvet 的传感器偏移、运动模型、车体尺寸、路径对应文件及跟随参数按提供的实机配置维护。
 原始完整参数移至 test/fixtures/local_planner 用于回归比对。
 

@@ -250,11 +250,31 @@ X30/Cyvet 继承 true。`motionBlockNoPathTimeout` 默认 3.0 秒，D1M 覆盖�
 | 型号 | 型号文件 | 跟随模式 | lookAheadDis | motionBlockNoPathTimeout |
 | --- | --- | --- | --- | --- |
 | X30 | param_x30_local_planner.yaml | omni | 0.5 | 3.0 |
-| D1M | param_d1m_local_planner.yaml | turn_preferred | 1.5 | 8.0 |
+| D1M | param_d1m_local_planner.yaml | turn_feasible | 1.5 | 8.0 |
 | Cyvet | param_cyvet_local_planner.yaml | omni | 0.5 | 3.0 |
 
 D1M/Cyvet 型号文件覆盖与 default 不同的规划/跟随参数；X30 直接继承公共值。
-D1M 在型号文件中选择 turn_preferred，全部 turn_* 参数仅在 D1M 文件中定义。
+D1M / D1_MAX 型号层默认 `turn_feasible`，模式和横移/转向能力表在
+`models/d1m/navigation/param_d1m_local_planner.yaml` 的 `/**.ros__parameters` 中只维护一份。
+转向能力按前速起点 `[0.0, 1.0, 2.0]` 对应角速度 `[1.5, 1.0, 0.5]`（m/s、rad/s），
+前速超过1m/s时横移为0；转向分界点进入下一档。采用高速档能力包络，较低档位偏保守。
+机器人使用中速档时，运动模型前速上限应不超过2m/s；当前高速巡航上限为2.2m/s。
+
+对于 local_planner，高层公共参数会覆盖低层两个控制节点下的同名参数，
+同一层的节点专用参数仍然优先。单机只需在公共块覆盖一次，例如：
+
+```yaml
+navigation:
+  local_planner:
+    parameters:
+      "/**":
+        ros__parameters:
+          turn_yaw_rate_samples: [1.2, 0.8, 0.4]
+```
+
+这会同时调整 localPlanner、pathFollower 的能力表；没有单机差异时，robot.yaml 无需再写能力参数。
+原先在节点下重复填写的同名项应删除，否则同一层的节点项仍会优先。
+全部 turn_* 参数仅在 D1M 型号文件中定义。
 X30/Cyvet 使用 omni，合并结果不包含 turn_* 参数。
 Cyvet 按提供的实机配置维护：sensorOffsetX 为 0.35，车体长宽为 0.7/0.4，
 使用 correspondences_cyvet.txt 并关闭 gaitSwitchEn；offroad 速度/加减速及

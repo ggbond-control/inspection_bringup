@@ -19,6 +19,13 @@ GUARD_DEFAULTS = {
     'frequency': 50.0, 'health_timeout': 0.2, 'data_timeout': 0.3,
     'command_timeout': 0.2, 'rtk_max_speed': 0.4, 'rtk_max_yaw_rate': 0.4,
 }
+D1M_TRACKING_SHARED = {
+    'tracking_mode': 'turn_feasible',
+    'turn_forward_speed_samples': [0.0], 'turn_lateral_speed_samples': [0.5],
+    'turn_lateral_zero_above_speed': 1.0,
+    'turn_yaw_forward_speed_samples': [0.0, 1.0, 2.0],
+    'turn_yaw_rate_samples': [1.5, 1.0, 0.5],
+}
 PLANNER_SAFETY_DEFAULTS = {'terrainTimeout': 0.3, 'localizationHealthTimeout': 0.2}
 HEALTH_DEFAULTS = {
     'data_timeout': 0.3, 'rtk_max_age': 0.3,
@@ -190,6 +197,8 @@ class Configuration(unittest.TestCase):
             expected = cfg.read_yaml(ROOT / 'test/fixtures/local_planner' / planner)
             if model == 'd1m':
                 expected['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'] = 8.0
+                expected['/**']['ros__parameters'].update(D1M_TRACKING_SHARED)
+                expected['pathFollower']['ros__parameters'].pop('tracking_mode')
             else:
                 expected['pathFollower']['ros__parameters']['tracking_mode'] = 'omni'
             self.assertEqual(cfg.read_yaml(value['local_planner']['config']), with_planner_safety(expected))
@@ -239,8 +248,9 @@ class Configuration(unittest.TestCase):
                             'turn_lateral_override_timeout'):
                     self.assertEqual(key in actual['pathFollower']['ros__parameters'], model == 'd1m')
                     self.assertEqual(key in raw.get('pathFollower', {}).get('ros__parameters', {}), model == 'd1m')
-                self.assertEqual(actual['pathFollower']['ros__parameters']['tracking_mode'],
-                                 'turn_preferred' if model == 'd1m' else 'omni')
+                self.assertEqual(cfg.merge(actual['/**']['ros__parameters'],
+                    actual['pathFollower']['ros__parameters'])['tracking_mode'],
+                    'turn_feasible' if model == 'd1m' else 'omni')
                 self.assertEqual(actual['pathFollower']['ros__parameters']['lookAheadDis'],
                                  1.5 if model == 'd1m' else 0.5)
 
@@ -482,14 +492,14 @@ class Configuration(unittest.TestCase):
         self.assertEqual(public['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'], 3.0)
         inline = {'localPlanner': {'ros__parameters': {'motionBlockNoPathTimeout': 9.0}}}
         model = cfg.read_yaml(self.root / 'models/d1m/navigation/param_d1m_local_planner.yaml')
-        self.assertEqual(data, cfg.merge(cfg.merge(public, model), inline))
+        self.assertEqual(data, cfg.merge_local_planner_parameters(cfg.merge_local_planner_parameters(public, model), inline))
         self.assertNotIn('parameters', value['local_planner'])
         # Editing an inherited field must appear without refreshing model/robot files.
         public['pathFollower']['ros__parameters']['yawRateGain'] = 0.42
         self.write('navigation/param_default_local_planner.yaml', public)
         again = cfg.load_config('navigation')
         self.assertEqual(cfg.read_yaml(again['local_planner']['config']),
-                         cfg.merge(cfg.merge(public, model), inline))
+                         cfg.merge_local_planner_parameters(cfg.merge_local_planner_parameters(public, model), inline))
 
     def test_submodule_lists_false_zero_empty_and_null_are_preserved(self):
         self.write('navigation/param_default_gridmapper_local.yaml',
