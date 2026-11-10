@@ -8,7 +8,7 @@ nav_bridge_node:
     reconnect_interval_ms: 2000   # 链路失效后的重开间隔
 
     # 下位机需要持续速度帧；每拍只发最新指令，无积压、无补发。
-    cmd_vel_rate_hz: 10.0         # 允许 3..100 Hz
+    cmd_vel_rate_hz: 50.0         # 允许 3..100 Hz
     cmd_vel_timeout_ms: 500       # 上层速度有效时间，超时后改发零速度
     max_linear_speed: 0.7         # m/s，发送前限幅
     max_angular_speed: 3.5        # rad/s，发送前限幅
