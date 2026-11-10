@@ -214,7 +214,7 @@ class LaunchConfiguration(unittest.TestCase):
 
     def test_tank_geometry_and_differential_profile_layers(self):
         profiles = {}
-        for model in ('cyvet', 'tank'):
+        for model in ('cyvet', 'tank', 'r750'):
             self.robot = {'model': model, 'robot_id': model.upper() + '-A'}
             self.write_robot()
             config = cfg.load_config('navigation')
@@ -245,33 +245,49 @@ class LaunchConfiguration(unittest.TestCase):
                                    local['vehicleLength'])
             self.assertAlmostEqual(max(p[1] for p in footprint) - min(p[1] for p in footprint),
                                    local['vehicleWidth'])
+        r750_local = profiles['r750']['local_planner']['localPlanner']['ros__parameters']
+        self.assertEqual(r750_local['correspondencesFile'], 'correspondences_r750.txt')
+        for section in ('slam', 'terrain', 'local_planner', 'global_planner'):
+            r750_section = profiles['r750'][section]
+            tank_section = profiles['tank'][section]
+            if section == 'local_planner':
+                r750_section['localPlanner']['ros__parameters']['correspondencesFile'] = 'correspondences_tank.txt'
+            self.assertEqual(r750_section, tank_section)
 
     def test_tank_bridge_parameters_and_service_snapshot(self):
-        self.robot = {'model': 'tank', 'robot_id': 'TANK-A', 'navigation': {
-            'nav_bridge': {'parameters': {'nav_bridge_node': {'ros__parameters': {
-                'host_ip': '192.168.1.20', 'host_port': 10051,
-                'enable_motion_output': False}}}}}}
-        self.write_robot()
-        config = cfg.load_config('navigation')
-        self.assertEqual(config['nav_bridge']['robot_type'], 'tank')
-        self.assertFalse(config['nav_bridge']['readiness']['charge_precheck'])
-        parameters = cfg.read_yaml(config['nav_bridge']['config'])['nav_bridge_node']['ros__parameters']
-        self.assertEqual(parameters['host_ip'], '192.168.1.20')
-        self.assertEqual(parameters['host_port'], 10051)
-        self.assertFalse(parameters['enable_motion_output'])
-        self.assertEqual(parameters['max_linear_speed'], 1.2)
-        node = object.__new__(supervisor.NavigationSupervisor)
-        snapshot = node.layer_config(config, ('nav_bridge', 'acquire_control'))
-        self.assertEqual(cfg.resolve_files(snapshot, 'navigation', 'test')['nav_bridge'], config['nav_bridge'])
-        captured = {}
-        def include(package, filename, enabled, launch_arguments=None):
-            captured[package] = launch_arguments or {}
-            return DeclareLaunchArgument('mock_' + package, default_value='')
-        config['bringup']['sequence'] = ['nav_bridge', 'acquire_control']
-        with patch.object(navigation, 'include_package_launch', side_effect=include):
-            navigation.build_navigation_actions(context_for(navigation), config, use_launch_overrides=False)
-        self.assertEqual(captured['nav_bridge']['robot_type'], 'tank')
-        self.assertEqual(captured['nav_bridge']['params_file'], config['nav_bridge']['config'])
+        for model in ('tank', 'r750'):
+            with self.subTest(model=model):
+                overrides = {'host_ip': '192.168.1.20', 'host_port': 10051} if model == 'tank' \
+                    else {'serial_port': '/dev/ttyACM1'}
+                self.robot = {'model': model, 'robot_id': model.upper() + '-A', 'navigation': {
+                    'nav_bridge': {'parameters': {'nav_bridge_node': {'ros__parameters': {
+                        **overrides, 'enable_motion_output': False}}}}}}
+                self.write_robot()
+                config = cfg.load_config('navigation')
+                self.assertEqual(config['nav_bridge']['robot_type'], model)
+                self.assertFalse(config['nav_bridge']['readiness']['charge_precheck'])
+                parameters = cfg.read_yaml(config['nav_bridge']['config'])['nav_bridge_node']['ros__parameters']
+                for key, value in overrides.items():
+                    self.assertEqual(parameters[key], value)
+                self.assertFalse(parameters['enable_motion_output'])
+                if model == 'tank':
+                    self.assertEqual(parameters['max_linear_speed'], 1.2)
+                else:
+                    self.assertEqual(parameters['serial_baud'], 230400)
+                    self.assertEqual(parameters['max_linear_speed'], 0.7)
+                    self.assertEqual(parameters['telemetry_timeout_ms'], 1000)
+                node = object.__new__(supervisor.NavigationSupervisor)
+                snapshot = node.layer_config(config, ('nav_bridge', 'acquire_control'))
+                self.assertEqual(cfg.resolve_files(snapshot, 'navigation', 'test')['nav_bridge'], config['nav_bridge'])
+                captured = {}
+                def include(package, filename, enabled, launch_arguments=None):
+                    captured[package] = launch_arguments or {}
+                    return DeclareLaunchArgument('mock_' + package, default_value='')
+                config['bringup']['sequence'] = ['nav_bridge', 'acquire_control']
+                with patch.object(navigation, 'include_package_launch', side_effect=include):
+                    navigation.build_navigation_actions(context_for(navigation), config, use_launch_overrides=False)
+                self.assertEqual(captured['nav_bridge']['robot_type'], model)
+                self.assertEqual(captured['nav_bridge']['params_file'], config['nav_bridge']['config'])
 
     def test_cli_global_config_replaces_managed_path(self):
         context = context_for(navigation, global_config='straight_local.yaml')
@@ -502,6 +518,19 @@ class LaunchConfiguration(unittest.TestCase):
                         if call.kwargs.get('name') == 'platform_mqtt_bridge_node')
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
             self.assertEqual(params[0]['sn'], 'D1M-TEST')
+
+    def test_both_platform_launches_forward_single_point_journal_directory(self):
+        self.robot['system'].setdefault('mqtt', {})['navigation_to_pose_directory'] = '/tmp/point-journal'
+        self.write_robot()
+        for module in (system, platform):
+            context = context_for(module)
+            with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                    patch.object(module, 'Node', wraps=module.Node) as factory:
+                module.launch_setup(context)
+            node = next(call.kwargs for call in factory.call_args_list
+                        if call.kwargs.get('name') == 'platform_mqtt_bridge_node')
+            params = evaluate_parameters(context, normalize_parameters(node['parameters']))
+            self.assertEqual(params[0]['navigation_to_pose_directory'], '/tmp/point-journal')
 
     def test_only_d1m_extends_charge_command_timeout(self):
         for model, expected in [('x30', {}), ('d1m', {'charge_command_timeout_sec': '180.0'})]:

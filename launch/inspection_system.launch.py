@@ -903,6 +903,8 @@ def launch_setup(context):
     )
 
     platform_params = {
+        "navigation_to_pose_directory": str(config_value(
+            config, "mqtt", "navigation_to_pose_directory", "")),
         "sn": override_or_config(context, "sn", config, "mqtt", "sn", "x30"),
         "mqtt_host": override_or_config(
             context, "mqtt_host", config, "mqtt", "host", "127.0.0.1"
