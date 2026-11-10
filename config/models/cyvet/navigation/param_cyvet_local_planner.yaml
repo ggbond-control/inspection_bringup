@@ -1,7 +1,7 @@
 # Cyvet deployed motion models, geometry and tracking overrides.
 /**:
   ros__parameters:
-    sensorOffsetX: 0.35  # 传感器相对车体 X 方向偏移（m）
+    sensorOffsetX: 0.0  # 传感器相对车体 X 方向偏移（m）
     initialModel: "offroad"  # 启动时使用的运动模型名称
     flat:
       maxSpeed: 2.0  # 模型允许的最大前向速度（m/s）
