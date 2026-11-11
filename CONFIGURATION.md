@@ -423,6 +423,19 @@ nav_bridge_config 是 launch 文件覆盖参数，运行时服务字段为 nav_b
 并保留 d1_max 旧别名；可执行程序名仍为 d1_max_nav_bridge_node。
 cyclonedds_config 是独立 XML 路径，不参与 YAML 合并。
 
+D1 Max 可在本机的 `robot.yaml` 设定 `/stand` 和 `/ready` 使用的初始步态：
+
+```yaml
+navigation:
+  nav_bridge:
+    parameters:
+      nav_bridge_node:
+        ros__parameters:
+          stand_target_gait: 3  # 0=WALK，3=RUN，默认 33=MOUNTAIN
+```
+
+修改后重启 navigation。该参数选择机器狗的步态，局部规划器的速度和加速度限制仍由其运动模型配置。
+
 默认已集中管理 nav_bridge、faster_lio、gridmapper、local_planner 和
 multi_map_nav 的 YAML。Livox 不设公共 default JSON，也不再使用 livox.model。
 livox.config 直接选择型号目录下的完整 JSON，单机 navigation.livox.parameters
