@@ -42,7 +42,7 @@ docker run --rm --platform "linux/${DEB_ARCH}" \
       "
       echo "PASS: package upgrade"
     fi
-    apt-get remove -y navigation
+    apt-get remove -y fhzn-navigation
     test ! -f /opt/inspection/navigation/lib/local_planner/pathFollower
     echo "PASS: apt install, unprivileged runtime checks and removal"
   '

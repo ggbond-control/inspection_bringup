@@ -91,9 +91,19 @@ class Packaging(unittest.TestCase):
                 with patch.object(release, 'PREFIX', prefix), \
                         patch.object(release, 'output', return_value='shlibs:Depends=libc6'):
                     release.assemble(root, '0.3.5', {'architecture': architecture})
-                deb = root / 'dist' / f'navigation_0.3.5_{architecture}.deb'
+                deb = root / 'dist' / f'fhzn-navigation_0.3.5_{architecture}.deb'
                 actual = subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Architecture'], text=True).strip()
                 self.assertEqual(actual, architecture)
+                def field(name):
+                    return subprocess.check_output(['dpkg-deb', '-f', str(deb), name], text=True).strip()
+                self.assertEqual(field('Package'), 'fhzn-navigation')
+                self.assertEqual(field('Conflicts'), 'navigation')
+                self.assertEqual(field('Replaces'), 'navigation')
+                dependencies = field('Depends').split(', ')
+                for dependency in ('opencl-headers', 'ocl-icd-opencl-dev', 'mesa-opencl-icd', 'clinfo'):
+                    self.assertEqual(dependency in dependencies, architecture == 'arm64')
+                contents = subprocess.check_output(['dpkg-deb', '-c', str(deb)], text=True)
+                self.assertIn('./usr/share/doc/fhzn-navigation/README', contents)
                 recorded = json.loads(Path(str(deb) + '.manifest.json').read_text())
                 self.assertEqual(recorded['architecture'], architecture)
 

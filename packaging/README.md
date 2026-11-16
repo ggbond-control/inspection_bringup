@@ -1,4 +1,4 @@
-# Navigation Debian Release
+# fhzn-navigation Debian Release
 
 Run the commands below from the inspection_bringup repository root. Packaging
 documentation is maintained here; `NAV_README.md` covers the navigation workflows.
@@ -54,7 +54,7 @@ sandbox backend are required.
 The default result is:
 
 ```text
-~/.cache/inspection-navigation-deb/arm64/dist/navigation_0.3.5_arm64.deb
+~/.cache/inspection-navigation-deb/arm64/dist/fhzn-navigation_0.3.5_arm64.deb
 ```
 
 Incremental updates work the same way on both architectures:
@@ -64,7 +64,7 @@ bash scripts/package_navigation.sh --version 0.3.5-1 --tag v0.3.5 \
   --select local_planner -j1
 bash scripts/package_navigation.sh --version 0.3.5-2 --package-only
 bash scripts/test_navigation_deb.sh \
-  ~/.cache/inspection-navigation-deb/arm64/dist/navigation_0.3.5_arm64.deb
+  ~/.cache/inspection-navigation-deb/arm64/dist/fhzn-navigation_0.3.5_arm64.deb
 ```
 
 The verification script must run on a host matching the deb architecture. It
@@ -94,12 +94,12 @@ bash scripts/package_navigation.sh --version 0.3.5 --tag v0.3.5 \
 
 # Install in an isolated container, check ROS resources and remove it again.
 bash scripts/test_navigation_deb.sh \
-  ~/.cache/inspection-navigation-deb/amd64/dist/navigation_0.1.0_amd64.deb
+  ~/.cache/inspection-navigation-deb/amd64/dist/fhzn-navigation_0.1.0_amd64.deb
 
 # Optionally verify an upgrade in the same disposable container.
 bash scripts/test_navigation_deb.sh \
-  ~/.cache/inspection-navigation-deb/amd64/dist/navigation_0.1.0_amd64.deb \
-  ~/.cache/inspection-navigation-deb/amd64/dist/navigation_0.1.2_amd64.deb
+  ~/.cache/inspection-navigation-deb/amd64/dist/fhzn-navigation_0.1.0_amd64.deb \
+  ~/.cache/inspection-navigation-deb/amd64/dist/fhzn-navigation_0.1.2_amd64.deb
 ```
 
 Artifacts are in `WORK_DIR/dist`: the deb, SHA-256 checksum and source manifest.
@@ -159,12 +159,27 @@ automatically stop or start navigation.
 ## Installation
 
 ```bash
-sudo apt install ./navigation_0.1.0_amd64.deb
+sudo apt install ./fhzn-navigation_0.1.0_amd64.deb
 source /opt/ros/jazzy/setup.bash
 source /opt/inspection/navigation/local_setup.bash
 ros2 pkg executables local_planner
 ros2 launch faster_lio slam.launch.py --show-args
 ```
+
+The Debian package name is `fhzn-navigation`; artifacts use
+`fhzn-navigation_<version>_<architecture>.deb`. Installation replaces the former
+`navigation` package through `Conflicts` and `Replaces` metadata. The runtime
+prefix `/opt/inspection/navigation`, script names and build cache paths stay the
+same, so existing launch setup and incremental builds continue to work.
+
+On arm64, apt also installs these required dependencies automatically:
+
+```bash
+sudo apt install opencl-headers ocl-icd-opencl-dev mesa-opencl-icd clinfo
+```
+
+These four explicit dependencies are arm64-only. GPU permissions and environment
+settings such as `RUSTICL_ENABLE` remain deployment configuration.
 
 System ROS, Nav2, PCL, OpenCV and other public libraries are apt dependencies.
 Private GTSAM and Livox runtime libraries are installed under the private prefix.

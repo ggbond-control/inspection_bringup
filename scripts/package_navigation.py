@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = Path('/opt/inspection/navigation')
+PACKAGE_NAME = 'fhzn-navigation'
 CPU_FLAGS = {
     'amd64': '-march=x86-64 -mtune=generic',
     'arm64': '-march=armv8-a -mtune=generic',
@@ -45,6 +46,9 @@ RUNTIME_DEPENDS = [
     'ros-jazzy-example-interfaces',
     'ros-jazzy-rmw-fastrtps-cpp', 'ros-jazzy-rmw-cyclonedds-cpp',
     'python3-yaml', 'python3-numpy', 'python3-scipy', 'python3-serial',
+]
+ARM64_RUNTIME_DEPENDS = [
+    'opencl-headers', 'ocl-icd-opencl-dev', 'mesa-opencl-icd', 'clinfo',
 ]
 
 
@@ -391,7 +395,7 @@ def assemble(work, version, manifest):
     actual = {p.name for p in indexes.iterdir()}
     if actual != set(SOURCES):
         raise ValueError(f'unexpected packaged ROS package list: {sorted(actual)}')
-    docs = stage / 'usr/share/doc/navigation'
+    docs = stage / 'usr/share/doc' / PACKAGE_NAME
     docs.mkdir(parents=True)
     licenses = docs / 'licenses'
     for name, directory in [(n, work / 'sources' / n) for n in SOURCES] + [
@@ -408,26 +412,28 @@ def assemble(work, version, manifest):
           'Runtime defaults are package resources; supply actual device settings externally.\n'
           'Data defaults: ${ROS_HOME:-$HOME/.ros}/navigation/<package>.\n')
     debian = work / 'dependency-scan/debian'
-    write(debian / 'control', 'Source: navigation\nSection: misc\nPriority: optional\n'
+    write(debian / 'control', f'Source: {PACKAGE_NAME}\nSection: misc\nPriority: optional\n'
           'Maintainer: Navigation maintainers <robot@example.com>\n\n'
-          f'Package: navigation\nArchitecture: {architecture}\nDescription: Navigation runtime\n')
+          f'Package: {PACKAGE_NAME}\nArchitecture: {architecture}\nDescription: Navigation runtime\n')
     args = ['dpkg-shlibdeps', '-O', '--ignore-missing-info',
             f'-l{dest}/lib', f'-l{dest}/vendor/lib', '-l/opt/ros/jazzy/lib']
     result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent)
     depends = next(line.split('=', 1)[1] for line in result.splitlines() if line.startswith('shlibs:Depends='))
-    depends = ', '.join([depends, *RUNTIME_DEPENDS])
+    depends = ', '.join([depends, *RUNTIME_DEPENDS,
+                         *(ARM64_RUNTIME_DEPENDS if architecture == 'arm64' else [])])
     control = stage / 'DEBIAN'
     control.mkdir()
     installed_kib = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file()) // 1024
-    write(control / 'control', f'Package: navigation\nVersion: {version}\nArchitecture: {architecture}\n'
+    write(control / 'control', f'Package: {PACKAGE_NAME}\nVersion: {version}\nArchitecture: {architecture}\n'
           'Maintainer: Navigation maintainers <robot@example.com>\nSection: misc\nPriority: optional\n'
           f'Installed-Size: {installed_kib}\nDepends: {depends}\nRecommends: ros-jazzy-rviz2\n'
+          'Conflicts: navigation\nReplaces: navigation\n'
           'Description: Model-independent ROS 2 Jazzy navigation runtime\n'
           ' Localization, mapping, planning, sensor drivers and custom interfaces.\n'
           ' Excludes nav_bridge, inspection_bringup, maps and system services.\n')
     dist = work / 'dist'
     dist.mkdir(exist_ok=True)
-    deb = dist / f'navigation_{version}_{architecture}.deb'
+    deb = dist / f'{PACKAGE_NAME}_{version}_{architecture}.deb'
     run(['dpkg-deb', '--root-owner-group', '-Zxz', '-z3', '--build', stage, deb])
     write(dist / (deb.name + '.sha256'), digest(deb) + '  ' + deb.name + '\n')
     write(dist / (deb.name + '.manifest.json'), json.dumps(manifest, indent=2) + '\n')
@@ -581,7 +587,7 @@ def main():
         elif args.select:
             command += ['--select', *args.select]
         run(command)
-        print(f'[artifact] {work}/dist/navigation_{args.version}_{architecture}.deb', flush=True)
+        print(f'[artifact] {work}/dist/{PACKAGE_NAME}_{args.version}_{architecture}.deb', flush=True)
 
 
 if __name__ == '__main__':
