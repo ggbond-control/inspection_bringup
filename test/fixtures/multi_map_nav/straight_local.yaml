@@ -118,10 +118,12 @@ bt_navigator:
 
 multi_map_nav_node:
   ros__parameters:
-    default_align_final_yaw: true
+    default_arrival_mode: precise
+    coarse_xy_tolerance: 0.5
+    coarse_yaw_tolerance: 0.35
+    position_only_xy_tolerance: 0.5
     default_obstacle_policy: "avoid"
     manual_switch_odometry_timeout_sec: 1.0
     normal_xy_tolerance: 0.1
     normal_yaw_tolerance: 0.1
     transition_xy_tolerance: 0.5
-    transition_yaw_tolerance: 6.283185307179586

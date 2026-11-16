@@ -216,6 +216,10 @@ task_hub:
   navigation_heartbeat_topic: "/inspection_task_hub/heartbeat/navigation"
   gimbal_heartbeat_topic: "/inspection_task_hub/heartbeat/gimbal"
   odometry_topic: "/odometry_multi_maps"
+  gimbal_odometry_topic: "/odometry_horizon"
+  gimbal_odometry_timeout_seconds: 1.0
+  # Point to the same map_relations.csv as navigation when targets use submap coordinates.
+  gimbal_map_relations_file: ""
   robot_basic_state_topic: "/robot_basic_state"
   charge_manager_state_topic: "/charge_manager_state"
   charge_exit_executor_service_name: "/inspection_charge_executor/undock"

@@ -15,6 +15,33 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import bringup_config as cfg
 
+GUARD_DEFAULTS = {
+    'frequency': 50.0, 'health_timeout': 0.2, 'data_timeout': 0.3,
+    'command_timeout': 0.2, 'rtk_max_speed': 0.4, 'rtk_max_yaw_rate': 0.4,
+}
+D1M_TRACKING_SHARED = {
+    'tracking_mode': 'turn_feasible',
+    'turn_forward_speed_samples': [0.0], 'turn_lateral_speed_samples': [0.5],
+    'turn_lateral_zero_above_speed': 1.0,
+    'turn_yaw_forward_speed_samples': [0.0, 1.0, 2.0],
+    'turn_yaw_rate_samples': [1.5, 1.0, 0.5],
+}
+PLANNER_SAFETY_DEFAULTS = {'terrainTimeout': 0.3, 'localizationHealthTimeout': 0.2}
+HEALTH_DEFAULTS = {
+    'data_timeout': 0.3, 'rtk_max_age': 0.3,
+    'max_position_sigma': 1.0, 'max_attitude_sigma_deg': 10.0,
+}
+
+
+def with_planner_safety(value):
+    return cfg.merge(value, {'localPlanner': {'ros__parameters': PLANNER_SAFETY_DEFAULTS},
+                             'cmd_vel_guard': {'ros__parameters': GUARD_DEFAULTS}})
+
+
+def with_navigation_health(value):
+    return cfg.merge(value, {'laser_mapping': {'ros__parameters': {
+        'navigation_health': HEALTH_DEFAULTS}}})
+
 
 class Configuration(unittest.TestCase):
     def setUp(self):
@@ -64,6 +91,18 @@ class Configuration(unittest.TestCase):
                     self.assertEqual(resolved['livox']['config'], '')
                 self.assertEqual(resolved, raw)
 
+    def test_arrival_profiles_are_explicit_and_relaxed_for_every_model(self):
+        for model in ('x30', 'd1m', 'cyvet', 'tank'):
+            with self.subTest(model=model):
+                self.robot(model=model)
+                config = cfg.load_config('navigation')
+                params = cfg.read_yaml(config['global_planner']['config'])['multi_map_nav_node']['ros__parameters']
+                self.assertEqual(params['default_arrival_mode'], 'precise')
+                self.assertNotIn('default_align_final_yaw', params)
+                self.assertGreaterEqual(params['coarse_xy_tolerance'], params['normal_xy_tolerance'])
+                self.assertGreaterEqual(params['coarse_yaw_tolerance'], params['normal_yaw_tolerance'])
+                self.assertGreaterEqual(params['position_only_xy_tolerance'], params['normal_xy_tolerance'])
+
     def test_multi_map_nav_profiles_preserve_all_original_parameters(self):
         for model, profile in [('x30', 'new_local'), ('cyvet', 'new_local'), ('d1m', 'straight_local')]:
             with self.subTest(model=model):
@@ -73,6 +112,11 @@ class Configuration(unittest.TestCase):
                 expected = cfg.read_yaml(ROOT / 'test/fixtures/multi_map_nav' / f'{profile}.yaml')
                 expected['multi_map_nav_node']['ros__parameters']['normal_xy_tolerance'] = 0.25
                 expected['multi_map_nav_node']['ros__parameters']['normal_yaw_tolerance'] = 0.25
+                event_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
+                    'multi_map_nav_node']['ros__parameters']
+                expected['multi_map_nav_node']['ros__parameters'].update({
+                    key: value for key, value in event_defaults.items()
+                    if key == 'global_replanning_mode' or key.startswith('event_replan_')})
                 self.assertEqual(actual, expected)
                 model_data = cfg.read_yaml(self.root / 'models' / model / 'navigation' /
                                            f'param_{model}_multi_map_nav.yaml')
@@ -94,6 +138,25 @@ class Configuration(unittest.TestCase):
         self.assertEqual(planner['cost_travel_multiplier'], 4.0)
         self.assertEqual(planner['tolerance'], 0.1)
         self.assertIn('straightening', planner)
+
+    def test_event_replanning_is_opt_in_and_uses_one_global_mode_field(self):
+        for model in ('x30', 'd1m', 'cyvet', 'tank'):
+            self.robot(model=model)
+            config = cfg.load_config('navigation')
+            params = cfg.read_yaml(config['global_planner']['config'])
+            self.assertEqual(params['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'periodic')
+            self.assertEqual(params['multi_map_nav_node']['ros__parameters']['event_replan_server_timeout_ms'], 1000)
+            self.robot(model=model, navigation={'global_planner': {'parameters': {
+                'multi_map_nav_node': {'ros__parameters': {'global_replanning_mode': 'event_driven',
+                                                         'event_replan_max_replans': 1,
+                                                         'event_replan_server_timeout_ms': 1500}}}}})
+            event = cfg.read_yaml(cfg.load_config('navigation')['global_planner']['config'])
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'event_driven')
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['event_replan_max_replans'], 1)
+            self.assertEqual(event['multi_map_nav_node']['ros__parameters']['event_replan_server_timeout_ms'], 1500)
+            self.assertEqual(event['bt_navigator'], params['bt_navigator'])
+            self.assertEqual(event['planner_server'], params['planner_server'])
+            self.assertEqual(event['global_costmap'], params['global_costmap'])
 
     def test_defaults_model_robot_merge_and_identity(self):
         self.write('models/d1m/system.yaml', {'mqtt': {'port': 2345}, 'modules': {'gas': False}})
@@ -134,9 +197,11 @@ class Configuration(unittest.TestCase):
             expected = cfg.read_yaml(ROOT / 'test/fixtures/local_planner' / planner)
             if model == 'd1m':
                 expected['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'] = 8.0
+                expected['/**']['ros__parameters'].update(D1M_TRACKING_SHARED)
+                expected['pathFollower']['ros__parameters'].pop('tracking_mode')
             else:
                 expected['pathFollower']['ros__parameters']['tracking_mode'] = 'omni'
-            self.assertEqual(cfg.read_yaml(value['local_planner']['config']), expected)
+            self.assertEqual(cfg.read_yaml(value['local_planner']['config']), with_planner_safety(expected))
 
     def test_nav_bridge_uses_complete_model_file_and_robot_overrides(self):
         for model in ('x30', 'd1m', 'cyvet'):
@@ -162,7 +227,7 @@ class Configuration(unittest.TestCase):
         for key in ('initialModel', 'flat', 'offroad'):
             baseline['/**']['ros__parameters'].pop(key)
         baseline['pathFollower']['ros__parameters']['tracking_mode'] = 'omni'
-        self.assertEqual(public, baseline)
+        self.assertEqual(public, with_planner_safety(baseline))
         self.assertEqual(public['pathFollower']['ros__parameters']['tracking_mode'], 'omni')
         self.assertFalse(any(key.startswith('turn_') for key in public['pathFollower']['ros__parameters']))
         for key in ('initialModel', 'flat', 'offroad'):
@@ -183,8 +248,9 @@ class Configuration(unittest.TestCase):
                             'turn_lateral_override_timeout'):
                     self.assertEqual(key in actual['pathFollower']['ros__parameters'], model == 'd1m')
                     self.assertEqual(key in raw.get('pathFollower', {}).get('ros__parameters', {}), model == 'd1m')
-                self.assertEqual(actual['pathFollower']['ros__parameters']['tracking_mode'],
-                                 'turn_preferred' if model == 'd1m' else 'omni')
+                self.assertEqual(cfg.merge(actual['/**']['ros__parameters'],
+                    actual['pathFollower']['ros__parameters'])['tracking_mode'],
+                    'turn_feasible' if model == 'd1m' else 'omni')
                 self.assertEqual(actual['pathFollower']['ros__parameters']['lookAheadDis'],
                                  1.5 if model == 'd1m' else 0.5)
 
@@ -195,7 +261,7 @@ class Configuration(unittest.TestCase):
         expected['laser_mapping']['ros__parameters']['rtk']['enable'] = False
         expected['laser_mapping']['ros__parameters']['initial_alignment']['score_threshold'] = 0.5
         actual = cfg.read_yaml(cfg.load_config('navigation')['slam']['config'])
-        self.assertEqual(actual, expected)
+        self.assertEqual(actual, with_navigation_health(expected))
 
     def test_faster_lio_model_profiles_preserve_sensor_and_algorithm_parameters(self):
         for model in ('d1m', 'x30', 'cyvet'):
@@ -212,7 +278,44 @@ class Configuration(unittest.TestCase):
                 expected['laser_mapping']['ros__parameters']['initial_alignment']['score_threshold'] = 0.5
                 expected['laser_mapping']['ros__parameters']['initial_alignment']['position'] = [0., 0., 0.]
                 actual = cfg.read_yaml(cfg.load_config('navigation')['slam']['config'])
-                self.assertEqual(actual, expected)
+                self.assertEqual(actual, with_navigation_health(expected))
+
+    def test_safety_defaults_for_all_models(self):
+        for model in ('d1m', 'x30', 'cyvet'):
+            with self.subTest(model=model):
+                self.robot(model=model)
+                value = cfg.load_config('navigation')
+                planner = cfg.read_yaml(value['local_planner']['config'])
+                self.assertEqual(planner['cmd_vel_guard']['ros__parameters'], GUARD_DEFAULTS)
+                for key, expected in PLANNER_SAFETY_DEFAULTS.items():
+                    self.assertEqual(planner['localPlanner']['ros__parameters'][key], expected)
+                health = cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']['navigation_health']
+                self.assertEqual(health, HEALTH_DEFAULTS)
+
+    def test_safety_parameters_layer_model_robot_and_snapshot(self):
+        model_file = 'models/d1m/navigation/param_d1m_local_planner.yaml'
+        model = cfg.read_yaml(self.root / model_file)
+        model['cmd_vel_guard'] = {'ros__parameters': {'data_timeout': 0.45}}
+        model['localPlanner']['ros__parameters']['terrainTimeout'] = 0.45
+        self.write(model_file, model)
+        self.robot(navigation={
+            'local_planner': {'parameters': {
+                'cmd_vel_guard': {'ros__parameters': {'command_timeout': 0.35}},
+                'localPlanner': {'ros__parameters': {'terrainTimeout': 0.5}}}},
+            'slam': {'parameters': {'laser_mapping': {'ros__parameters': {
+                'navigation_health': {'data_timeout': 0.6}}}}}})
+        value = cfg.load_config('navigation')
+        planner = cfg.read_yaml(value['local_planner']['config'])
+        self.assertEqual(planner['cmd_vel_guard']['ros__parameters'],
+                         dict(GUARD_DEFAULTS, data_timeout=0.45, command_timeout=0.35))
+        self.assertEqual(planner['localPlanner']['ros__parameters']['terrainTimeout'], 0.5)
+        self.assertEqual(planner['localPlanner']['ros__parameters']['localizationHealthTimeout'], 0.2)
+        health = cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']['navigation_health']
+        self.assertEqual(health, dict(HEALTH_DEFAULTS, data_timeout=0.6))
+        snapshot = cfg.write_snapshot(value, self.temp.name)
+        restored = cfg.load_config('navigation', snapshot)
+        for module in ('local_planner', 'slam'):
+            self.assertEqual(cfg.read_yaml(restored[module]['config']), cfg.read_yaml(value[module]['config']))
 
     def test_faster_lio_inline_overrides_model_without_losing_rtk_fields(self):
         self.robot(navigation={'slam': {'parameters': {'laser_mapping': {'ros__parameters': {
@@ -389,14 +492,14 @@ class Configuration(unittest.TestCase):
         self.assertEqual(public['localPlanner']['ros__parameters']['motionBlockNoPathTimeout'], 3.0)
         inline = {'localPlanner': {'ros__parameters': {'motionBlockNoPathTimeout': 9.0}}}
         model = cfg.read_yaml(self.root / 'models/d1m/navigation/param_d1m_local_planner.yaml')
-        self.assertEqual(data, cfg.merge(cfg.merge(public, model), inline))
+        self.assertEqual(data, cfg.merge_local_planner_parameters(cfg.merge_local_planner_parameters(public, model), inline))
         self.assertNotIn('parameters', value['local_planner'])
         # Editing an inherited field must appear without refreshing model/robot files.
         public['pathFollower']['ros__parameters']['yawRateGain'] = 0.42
         self.write('navigation/param_default_local_planner.yaml', public)
         again = cfg.load_config('navigation')
         self.assertEqual(cfg.read_yaml(again['local_planner']['config']),
-                         cfg.merge(cfg.merge(public, model), inline))
+                         cfg.merge_local_planner_parameters(cfg.merge_local_planner_parameters(public, model), inline))
 
     def test_submodule_lists_false_zero_empty_and_null_are_preserved(self):
         self.write('navigation/param_default_gridmapper_local.yaml',

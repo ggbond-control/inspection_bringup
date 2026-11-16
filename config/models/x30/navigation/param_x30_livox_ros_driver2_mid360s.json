@@ -1,0 +1,77 @@
+{
+  "lidar_summary_info" : {
+    "lidar_type": 8
+  },
+  "Mid360s": {
+    "lidar_net_info" : {
+      "cmd_data_port": 56100,
+      "push_msg_port": 56200,
+      "point_data_port": 56300,
+      "imu_data_port": 56400,
+      "log_data_port": 56500
+    },
+    "host_net_info" : {
+      "host_ip"        : "192.168.2.99",
+      "multicast_ip"   : "224.1.1.5",
+      "cmd_data_port"  : 56101,
+      "push_msg_port"  : 56201,
+      "point_data_port": 56301,
+      "imu_data_port"  : 56401,
+      "log_data_port"  : 56501
+    }
+  },
+  "lidar_configs": [
+    {
+      "ip": "192.168.2.202",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 94.872632,
+        "pitch": -0.789129,
+        "yaw": -89.176760,
+        "x": -454.136789,
+        "y": -6.099747,
+        "z": 44.423327
+      }
+    },
+    {
+      "ip": "192.168.2.203",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 146.452056,
+        "pitch": -0.797121,
+        "yaw": -90.812290,
+        "x": -427.792102,
+        "y": -25.833925,
+        "z": -34.778036
+      }
+    },
+    {
+      "ip": "192.168.2.204",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 136.940157,
+        "pitch": -0.247772,
+        "yaw": 89.889244,
+        "x": 428.208798,
+        "y": 24.359522,
+        "z": -43.616779
+      }
+    },
+    {
+      "ip": "192.168.2.205",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 65.818858,
+        "pitch": -0.672126,
+        "yaw": 90.842315,
+        "x": 448.139846,
+        "y": 11.575427,
+        "z": 55.562302
+      }
+    }
+  ]
+}

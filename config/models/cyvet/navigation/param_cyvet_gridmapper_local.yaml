@@ -3,5 +3,5 @@ gridmapper_node:
   ros__parameters:
     min_point_height: -0.7      # Points below this z are ignored (meters)
     enable_x_passthrough: true # Enable X-axis passthrough filter
-    x_passthrough_min: 0.5     # Minimum X value to keep (meters)
-    sensor_height_origin: 0.4  # Original sensor height (meters)
+    x_passthrough_min: 0.88     # Minimum X value to keep (meters)
+    sensor_height_origin: 0.48  # Original sensor height (meters)

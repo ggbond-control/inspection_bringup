@@ -2,8 +2,9 @@
 # robot.yaml is ignored by Git. Uncomment only the overrides you need.
 # Restart the affected bringup service after editing; active snapshots do not reload.
 # Supported models: x30 / d1m / cyvet. Use unique IDs matching your fleet list.
-# tank / TANK-A: nav_bridge configuration and build only; full navigation is pending.
-# Robot IDs use uppercase model names: X30-A / D1M-A / CYVET-A.
+# tank / TANK-A and r750 / R750-A (TARKBOT four-wheel differential): nav_bridge
+# configuration and build only; r750 reuses TANK geometry pending on-hardware tuning.
+# Robot IDs use uppercase model names: X30-A / D1M-A / CYVET-A / TANK-A / R750-A.
 model: d1m
 robot_id: D1M-A
 
@@ -48,6 +49,8 @@ robot_id: D1M-A
 #             # Initial localization guess, not the LiDAR mounting extrinsics.
 #             position: [1.0, 2.0, 0.0]  # [x, y, z], meters; replace with actual values
 #             yaw: 90.0                 # Heading in DEGREES, not radians
+#           navigation_health:
+#             data_timeout: 0.3  # 雷达数据/处理结果超时（s）；独立于地形超时
 #   # Cyvet only (set model: cyvet above). D1M does not start a Livox driver.
 #   # Cyvet inherits MID360s by default. Select this complete file for MID360:
 #   livox:
@@ -80,15 +83,35 @@ robot_id: D1M-A
 #       nav_bridge_node:
 #         ros__parameters:
 #           device_id: "YOUR-CYVET-DEVICE-ID"  # Cyvet only; independent of robot_id
-#           # TANK only (set model: tank and robot_id: TANK-A):
-#           # host_ip: "192.168.1.20"
+#           # TANK only (set model: tank):
+#           # host_ip: "49.235.44.225"  # Placeholder carried from TANK; replace per deployment.
 #           # host_port: 10050
+#           # R750 only (set model: r750, serial X-Protocol chassis):
+#           # serial_port: "/dev/ttyACM0"  # 独占使用，勿与 tarkbot_robot 同时运行。
+#           # serial_baud: 230400
 #           # enable_motion_output: false  # Query-only; stand/release return failure.
+#   global_planner:
+#     parameters:
+#       multi_map_nav_node:
+#         ros__parameters:
+#           global_replanning_mode: event_driven  # 默认 periodic；重启导航后生效
+#           event_replan_max_replans: 2
+#           event_replan_server_timeout_ms: 1000  # 请求应答超时，毫秒；仅事件模式
 #   local_planner:
 #     parameters:
 #       localPlanner:
 #         ros__parameters:
 #           motionBlockNoPathTimeout: 8.0
+#           terrainTimeout: 0.3  # 规划器地形超时（s），超时发布空路径
+#           localizationHealthTimeout: 0.2
+#       cmd_vel_guard:
+#         ros__parameters:
+#           frequency: 50.0
+#           health_timeout: 0.2
+#           data_timeout: 0.3  # 同时约束里程计、地形及路径接收，不只是地形
+#           command_timeout: 0.2
+#           rtk_max_speed: 0.4
+#           rtk_max_yaw_rate: 0.4
 
 # Map path and initial map can be supplied through /navigation_bringup/start.
 # initial_alignment overrides above only set the localization pose guess.

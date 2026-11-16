@@ -139,4 +139,6 @@ global_planner:
   readiness:
     type: health
     topic: /multi_map_nav/health
-    timeout_seconds: 10.0
+    # Includes Nav2 discovery, lifecycle transitions and initial map synchronization.
+    # Must leave room for multi_map_nav's default 30 s Nav2 readiness wait.
+    timeout_seconds: 60.0

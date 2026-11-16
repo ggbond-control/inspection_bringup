@@ -700,7 +700,7 @@ nav_bridge:
     charge_exit_timeout_seconds: 300.0
 
 livox:
-  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2.json"
+  config: "${INSPECTION_CONFIG_DIR}/models/x30/navigation/param_x30_livox_ros_driver2_mid360.json"
   readiness:
     type: topics
     topics:

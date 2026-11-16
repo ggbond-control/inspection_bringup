@@ -82,8 +82,36 @@ def merge(base, override):
     return result
 
 
+def merge_local_planner_parameters(base, override):
+    """Higher-layer shared values replace inherited node-specific values.
+
+    Keep one public copy under /**; ROS applies it to both controller nodes.
+    Explicit node values in the same layer still take precedence.
+    """
+    result = copy.deepcopy(base)
+    shared = override.get('/**', {}).get('ros__parameters', {})
+
+    def remove_shadowed(inherited, common):
+        for key, value in common.items():
+            if isinstance(value, dict) and isinstance(inherited.get(key), dict):
+                remove_shadowed(inherited[key], value)
+                if not inherited[key]:
+                    inherited.pop(key)
+            else:
+                inherited.pop(key, None)
+
+    for node in ('localPlanner', 'pathFollower'):
+        remove_shadowed(result.get(node, {}).get('ros__parameters', {}), shared)
+    return merge(result, override)
+
+
 def merge_module_config(base, override, module):
     result = merge(base, override)
+    if module == 'navigation':
+        planner = override.get('local_planner', {})
+        if isinstance(planner, dict) and isinstance(planner.get('parameters'), dict):
+            result['local_planner']['parameters'] = merge_local_planner_parameters(
+                base.get('local_planner', {}).get('parameters', {}), planner['parameters'])
     bridge = override.get('nav_bridge', {}) if module == 'navigation' else {}
     if (isinstance(bridge, dict) and 'robot_type' in bridge and 'config' not in bridge
             and bridge['robot_type'] != base.get('nav_bridge', {}).get('robot_type', 'x30')):
@@ -158,7 +186,7 @@ def parameter_snapshot(value, suffix):
     return str(path)
 
 
-def layered_parameter_file(value, root, model, overrides, origin):
+def layered_parameter_file(value, root, model, overrides, origin, merge_parameters=merge):
     """Only an explicit root reference opts into managed parameter layers."""
     for prefix in ('${INSPECTION_CONFIG_DIR}/models/', '$INSPECTION_CONFIG_DIR/models/'):
         if value.startswith(prefix):
@@ -166,7 +194,7 @@ def layered_parameter_file(value, root, model, overrides, origin):
             if relative.is_absolute() or '..' in relative.parts or relative.suffix not in ('.yaml', '.yml', '.json'):
                 raise ValueError(f'{origin}: invalid model parameter path: {value}')
             result = read_parameter_file(root / 'models' / relative)
-            return parameter_snapshot(merge(result, overrides), relative.suffix)
+            return parameter_snapshot(merge_parameters(result, overrides), relative.suffix)
     prefix = next((p for p in ('${INSPECTION_CONFIG_DIR}/navigation/',
                               '$INSPECTION_CONFIG_DIR/navigation/')
                    if value.startswith(p)), None)
@@ -191,8 +219,8 @@ def layered_parameter_file(value, root, model, overrides, origin):
                 relative.name.replace('param_default_', f'param_{model}_', 1))
         model_path = root / 'models' / model / 'navigation' / model_relative
         if model_path.exists():
-            result = merge(result, read_parameter_file(model_path))
-    return parameter_snapshot(merge(result, overrides), relative.suffix)
+            result = merge_parameters(result, read_parameter_file(model_path))
+    return parameter_snapshot(merge_parameters(result, overrides), relative.suffix)
 
 
 def resolve_files(config, module, origin, config_dir=None, model=None):
@@ -214,7 +242,8 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                 overrides = cursor.get(override_key, {})
                 if not isinstance(overrides, dict):
                     raise ValueError(f'{origin}: {parts[0]}.{override_key} must be a mapping')
-                managed = layered_parameter_file(value, root, model, overrides, origin)
+                parameter_merge = merge_local_planner_parameters if parts[0] == 'local_planner' else merge
+                managed = layered_parameter_file(value, root, model, overrides, origin, parameter_merge)
                 if managed is not None:
                     cursor[parts[-1]] = managed
                     consumed.add((parts[0], override_key))

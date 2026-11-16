@@ -1,0 +1,9 @@
+# TARKBOT R750 nav_bridge and MID360 configuration; planner profiles use R750 overlays.
+# Module config paths inherit shared defaults and automatically load R750 overlays.
+nav_bridge:
+  robot_type: r750
+  config: "${INSPECTION_CONFIG_DIR}/models/r750/navigation/param_r750_nav_bridge.yaml"
+  readiness:
+    charge_precheck: false
+livox:
+  config: "${INSPECTION_CONFIG_DIR}/models/r750/navigation/param_r750_livox_ros_driver2_mid360.json"

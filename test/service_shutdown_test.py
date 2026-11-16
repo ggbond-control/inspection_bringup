@@ -231,6 +231,76 @@ while True:time.sleep(.1)
 
 
 class NodeReadiness(unittest.TestCase):
+    def health_wait(self, status_level, ready_delay=0.0, timeout=None):
+        """Exercise the actual health waiter over ROS, without robot processes."""
+        import yaml
+        from diagnostic_msgs.msg import DiagnosticStatus
+        from rclpy.qos import DurabilityPolicy, QoSProfile
+        config = yaml.safe_load((ROOT / 'config/navigate.yaml').read_text())
+        readiness = config['global_planner']['readiness']
+        budget = readiness['timeout_seconds'] if timeout is None else timeout
+        rclpy.init()
+        node = rclpy.create_node('global_startup_health_test')
+        publisher = node.create_publisher(DiagnosticStatus, '/startup_test/global_health',
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        initial = DiagnosticStatus(level=DiagnosticStatus.WARN, name='multi_map_nav',
+                                   message='waiting for nav2 action server')
+        publisher.publish(initial)
+        with tempfile.TemporaryDirectory(prefix='global-startup-') as directory:
+            detail = Path(directory) / 'failure.yaml'
+            process = subprocess.Popen([sys.executable, str(ROOT / 'scripts/wait_for_ready.py'),
+                'health', '--topic', '/startup_test/global_health', '--name', 'global_planner',
+                '--timeout', str(budget), '--failure-detail', str(detail)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                discovery_deadline = time.monotonic() + 5
+                while publisher.get_subscription_count() == 0:
+                    self.assertIsNone(process.poll())
+                    self.assertLess(time.monotonic(), discovery_deadline)
+                    rclpy.spin_once(node, timeout_sec=.02)
+                start = time.monotonic()
+                while time.monotonic() - start < ready_delay:
+                    self.assertIsNone(process.poll(), 'Startup was aborted while still initializing')
+                    publisher.publish(initial)
+                    rclpy.spin_once(node, timeout_sec=.05)
+                if status_level is not None:
+                    level = {0: DiagnosticStatus.OK, 2: DiagnosticStatus.ERROR,
+                             3: DiagnosticStatus.STALE}[status_level]
+                    publisher.publish(DiagnosticStatus(level=level, name='multi_map_nav',
+                        message='initial map context synchronized' if status_level == 0 else
+                                'Nav2 configuration failed'))
+                output, _ = process.communicate(timeout=5)
+                failure = yaml.safe_load(detail.read_text()) if detail.exists() else None
+                return process.returncode, output, failure, time.monotonic() - start
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
+                node.destroy_node()
+                rclpy.try_shutdown()
+
+    def test_global_health_can_become_ready_after_original_ten_second_deadline(self):
+        code, output, failure, elapsed = self.health_wait(0, ready_delay=12.0)
+        self.assertEqual(code, 0, output)
+        self.assertIsNone(failure)
+        self.assertGreaterEqual(elapsed, 12.0)
+        self.assertIn('health ready:', output)
+
+    def test_global_health_error_still_fails_without_waiting_for_budget(self):
+        for level, name in ((2, 'ERROR'), (3, 'STALE')):
+            with self.subTest(level=name):
+                code, output, failure, elapsed = self.health_wait(level)
+                self.assertNotEqual(code, 0, output)
+                self.assertEqual(failure['level_name'], name)
+                self.assertIn('Nav2 configuration failed', failure['reason'])
+                self.assertLess(elapsed, 5.0)
+
+    def test_global_health_initializing_still_times_out(self):
+        code, output, failure, _ = self.health_wait(None, timeout=1.0)
+        self.assertNotEqual(code, 0, output)
+        self.assertEqual(failure['category'], 'TIMEOUT_NOT_READY')
+        self.assertEqual(failure['message'], 'waiting for nav2 action server')
+
     def test_cancelled_readiness_stays_unsuccessful_without_traceback(self):
         rclpy.init()
         observer = rclpy.create_node('cancel_readiness_observer')

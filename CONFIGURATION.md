@@ -250,17 +250,99 @@ X30/Cyvet 继承 true。`motionBlockNoPathTimeout` 默认 3.0 秒，D1M 覆盖�
 | 型号 | 型号文件 | 跟随模式 | lookAheadDis | motionBlockNoPathTimeout |
 | --- | --- | --- | --- | --- |
 | X30 | param_x30_local_planner.yaml | omni | 0.5 | 3.0 |
-| D1M | param_d1m_local_planner.yaml | turn_preferred | 1.5 | 8.0 |
+| D1M | param_d1m_local_planner.yaml | turn_feasible | 1.5 | 8.0 |
 | Cyvet | param_cyvet_local_planner.yaml | omni | 0.5 | 3.0 |
 
 D1M/Cyvet 型号文件覆盖与 default 不同的规划/跟随参数；X30 直接继承公共值。
-D1M 在型号文件中选择 turn_preferred，全部 turn_* 参数仅在 D1M 文件中定义。
+D1M / D1_MAX 型号层默认 `turn_feasible`，模式和横移/转向能力表在
+`models/d1m/navigation/param_d1m_local_planner.yaml` 的 `/**.ros__parameters` 中只维护一份。
+转向能力按前速起点 `[0.0, 1.0, 2.0]` 对应角速度 `[1.5, 1.0, 0.5]`（m/s、rad/s），
+前速超过1m/s时横移为0；转向分界点进入下一档。采用高速档能力包络，较低档位偏保守。
+机器人使用中速档时，运动模型前速上限应不超过2m/s；当前高速巡航上限为2.2m/s。
+
+对于 local_planner，高层公共参数会覆盖低层两个控制节点下的同名参数，
+同一层的节点专用参数仍然优先。单机只需在公共块覆盖一次，例如：
+
+```yaml
+navigation:
+  local_planner:
+    parameters:
+      "/**":
+        ros__parameters:
+          turn_yaw_rate_samples: [1.2, 0.8, 0.4]
+```
+
+这会同时调整 localPlanner、pathFollower 的能力表；没有单机差异时，robot.yaml 无需再写能力参数。
+原先在节点下重复填写的同名项应删除，否则同一层的节点项仍会优先。
+全部 turn_* 参数仅在 D1M 型号文件中定义。
 X30/Cyvet 使用 omni，合并结果不包含 turn_* 参数。
 Cyvet 按提供的实机配置维护：sensorOffsetX 为 0.35，车体长宽为 0.7/0.4，
 使用 correspondences_cyvet.txt 并关闭 gaitSwitchEn；offroad 速度/加减速及
 slowdownDisThre=1.0、curvatureDecelGain=1.25 均按实机值配置。
 
 原配置移至 `test/fixtures/local_planner/`，仅用于回归比对，不参与启动。
+
+### 安全停车参数
+
+安全停车沿用上述三层合并机制，不新增模块别名或配置映射。
+`param_default_local_planner.yaml` 包含 `localPlanner` 的 `terrainTimeout`、
+`localizationHealthTimeout`，以及原名节点 `cmd_vel_guard` 的全部六项参数：
+`frequency`、`health_timeout`、`data_timeout`、`command_timeout`、
+`rtk_max_speed`、`rtk_max_yaw_rate`。原有里程计检查参数仍在 `/**` 段维护。
+`param_default_faster_lio.yaml` 包含 `laser_mapping.ros__parameters.navigation_health`
+下的 `data_timeout`、`rtk_max_age`、`max_position_sigma`、`max_attitude_sigma_deg`。
+默认值与接入前节点实际采用的默认值一致，不调整停车、恢复或定位算法。
+
+local_planner 子 launch 的 `config` 同时传给规划器、跟随器和门控。
+门控先读取包内 `navigation_safety.yaml`，再读取 `config`，后者覆盖前者；
+旧机型文件没有 `cmd_vel_guard` 段时仍使用包内默认值。
+使用 bringup 部署时在这里维护参数，无需同步修改导航包内默认文件。
+
+单机覆盖示例（数值仅示范配置位置，不是调参建议）：
+
+```yaml
+navigation:
+  local_planner:
+    parameters:
+      localPlanner:
+        ros__parameters:
+          terrainTimeout: 0.4
+      cmd_vel_guard:
+        ros__parameters:
+          data_timeout: 0.4
+  slam:
+    parameters:
+      laser_mapping:
+        ros__parameters:
+          navigation_health:
+            data_timeout: 0.3
+```
+
+这些超时检查的对象不同，仍分别配置：规划器 `terrainTimeout` 约束地形；
+门控 `data_timeout` 同时约束里程计、地形和路径接收间隔，路径不检查时间戳年龄；
+SLAM `navigation_health.data_timeout` 约束雷达数据和处理结果更新。
+不能只改其中一项就认为其他检查也被放宽。
+修改 `robot.yaml` 后需重启相关导航进程，使 bringup 重新生成参数快照。
+运行中的节点不随文件编辑自动更新。可用 `ros2 param get /cmd_vel_guard data_timeout`、
+`ros2 param get /localPlanner terrainTimeout` 和
+`ros2 param get /laser_mapping navigation_health.data_timeout` 核对实际值。
+
+### 全局导航启动等待
+
+全局导航模块的启动健康检查默认等待 60 秒，包含 Nav2 服务发现、生命周期切换与
+初始地图同步；两种全局规划模式使用同一启动预算。只有
+`/multi_map_nav/health` 报告 `OK` 才继续，明确的 `ERROR`/`STALE` 仍立即失败，
+超过期限仍未就绪则停止启动。此字段只约束启动，不改变规划 action 的应答或计算期限。
+可在 `robot.yaml` 中按机器覆盖：
+
+```yaml
+navigation:
+  global_planner:
+    readiness:
+      timeout_seconds: 60.0
+```
+
+自定义 `navigate.yaml` 若显式保留了旧的 10 秒期限，也需要更新该字段。
 
 ### 参数合并规则与本机覆盖
 
@@ -340,6 +422,19 @@ nav_bridge_config 是 launch 文件覆盖参数，运行时服务字段为 nav_b
 内部传给 nav_bridge 子 launch 的参数仍叫 params_file。子 launch 接受 d1m，
 并保留 d1_max 旧别名；可执行程序名仍为 d1_max_nav_bridge_node。
 cyclonedds_config 是独立 XML 路径，不参与 YAML 合并。
+
+D1 Max 可在本机的 `robot.yaml` 设定 `/stand` 和 `/ready` 使用的初始步态：
+
+```yaml
+navigation:
+  nav_bridge:
+    parameters:
+      nav_bridge_node:
+        ros__parameters:
+          stand_target_gait: 3  # 0=WALK，3=RUN，默认 33=MOUNTAIN
+```
+
+修改后重启 navigation。该参数选择机器狗的步态，局部规划器的速度和加速度限制仍由其运动模型配置。
 
 默认已集中管理 nav_bridge、faster_lio、gridmapper、local_planner 和
 multi_map_nav 的 YAML。Livox 不设公共 default JSON，也不再使用 livox.model。
