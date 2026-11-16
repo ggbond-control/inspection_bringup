@@ -12,6 +12,8 @@ import tempfile
 
 import yaml
 
+from cooperation import validate as validate_cooperation
+
 
 FILENAMES = {"system": "system.yaml", "navigation": "navigate.yaml", "services": "services.yaml"}
 # Relative file paths always use the owning package's configuration directory.
@@ -226,6 +228,8 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
             cursor[parts[-1]] = file_path(
                 value, package, directory, f"{origin}: {'.'.join(parts)}",
                 check_exists=(module != "services"), config_dir=root)
+    if module == "system":
+        validate_cooperation(config)
     if module == 'navigation':
         for section, values in config.items():
             for key in ('parameters', 'ntrip_parameters'):
@@ -279,9 +283,10 @@ def load_config(module, path="", config_dir=None):
     if model_path.exists():
         config = merge_module_config(config, read_yaml(model_path), module)
     if module == "system":
-        config = merge(config, {"mqtt": {"sn": robot_id},
-                                "mission_execution_agent": {"robot_id": robot_id}})
+        config = merge(config, {"mqtt": {"sn": robot_id}})
     config = merge_module_config(config, robot.get(module, {}), module)
+    if module == "system":
+        config.setdefault("cooperation", {})["robot_id"] = robot_id
     if module == "services":
         config.setdefault("service", {}).setdefault("environment", {})["INSPECTION_CONFIG_DIR"] = str(root)
     return resolve_files(config, module, root, config_dir=root, model=model)

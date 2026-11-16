@@ -9,8 +9,14 @@ model: d1m
 robot_id: D1M-A
 
 # Dictionaries merge recursively; lists replace the ENTIRE inherited list.
-# mqtt.sn and mission_execution_agent.robot_id automatically use robot_id.
+# mqtt.sn and cooperation.robot_id automatically use robot_id.
 # system:
+#   cooperation:
+#     mode: disabled  # disabled | coordination | swarm
+#     # swarm:
+#     #   cluster_id: inspection-swarm
+#     #   platform_prefix: fh/swarm/dispatch
+#     #   mqtt_prefix: fh/swarm/v1
 #   task_hub:
 #     obstacle_snapshot_enabled: false  # 障碍事件与日志总开关，默认关闭
 #     obstacle_photo_enabled: false     # 遇障拍照，需同时开启总开关，默认关闭

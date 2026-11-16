@@ -38,8 +38,8 @@ robot_id: D1M-A
 ```
 
 第二台 D1M 只修改 `robot_id`；X30 使用 `model: x30`。`robot_id` 覆盖公共配置
-中的 `mqtt.sn` 和 `mission_execution_agent.robot_id`。有意使用不同身份时，
-可以在本机 `system` 字段中分别覆盖。
+中的 `mqtt.sn` 和 `cooperation.robot_id`。平台身份如需不同，可覆盖 `system.mqtt.sn`；
+协同身份始终取顶层 `robot_id`，不能通过内层字段覆盖。
 
 Cyvet 使用以下本机身份配置（另一台改为 CYVET-B）：
 
@@ -542,7 +542,12 @@ scripts/manage_inspection_services.sh render
 机器人模式下，service 管理脚本移除公共 services 配置中继承的两个固定 YAML
 启动路径，改为向 wrapper 写入同一个 `INSPECTION_CONFIG_DIR`。机型和本机
 `services` 仍可显式指定完整独立配置。tmux 的窗口开关和实际子进程使用相同
-的配置根目录；各窗口只启动所属模块，平台与算法传输合并在 platform 窗口。
+的配置根目录；TaskHub、云台、充电及各传感器保持原有独立窗口，平台与算法
+传输继续共用 platform 窗口。多机协同仅在 cooperation 窗口启动一次，模式仍
+只取 cooperation.mode，不新增命令行模式开关。tmux 内部使用
+inspection_modules.launch.py 启动单机模块、cooperation.launch.py 启动协同；
+原 inspection_system.launch.py 继续作为 systemd 的完整系统入口。
+协同节点构造集中在新增 scripts/cooperation.py，单机节点仍使用原有构造逻辑。
 
 单机 service 差异示例：
 

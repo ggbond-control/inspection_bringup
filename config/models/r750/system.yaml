@@ -9,8 +9,6 @@ modules:
   sensor_rs485: false
   acoustic: false
   algorithm_transport: false
-  # mission_execution_agent: true
-  # fleet_leader_election: true
 
 mqtt:
   localization_set_parameter_timeout_sec: 60.0

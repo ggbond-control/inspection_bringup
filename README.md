@@ -267,7 +267,9 @@ ros2 launch inspection_bringup platform_bridge.launch.py
 ## Debug With Tmux
 
 For field debugging, start enabled modules from the same `config/system.yaml`
-in separate tmux windows:
+in separate tmux windows. TaskHub, gimbal and charging keep their own windows;
+platform and algorithm transport share the original `platform` window. Cooperation
+runs once in a separate `cooperation` window when its configured mode is enabled:
 
 ```bash
 src/inspection_bringup/scripts/start_inspection_tmux.sh
