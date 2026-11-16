@@ -8,6 +8,7 @@
     odomMaxAge: 0.5  # 启用时间戳检查时允许的最大消息年龄（s）
     odomTimeout: 0.5  # 有效里程计最大接收间隔（s）
     odomTimestampCheckEn: true  # 是否按 header.stamp 检查里程计年龄；关闭后仍检查超时和乱序
+    tracking_mode: "omni"  # 默认使用全向跟踪，D1M 型号层单独选择 turn_preferred
 
 localPlanner:
   ros__parameters:
@@ -90,7 +91,6 @@ cmd_vel_guard:
 
 pathFollower:
   ros__parameters:
-    tracking_mode: "omni"  # 默认使用全向跟踪，D1M 型号层单独选择 turn_preferred
     pathFollowerFreq: 50.0  # 路径跟随控制循环频率（Hz）
     pubSkipNum: 0  # 控制指令发布跳帧数
     lookAheadDis: 0.5  # 固定前视距离（m）
