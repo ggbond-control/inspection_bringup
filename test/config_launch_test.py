@@ -30,6 +30,8 @@ def load(name, path):
 navigation = load('navigation_launch', 'launch/navigation.launch.py')
 sensors = load('sensors_launch', 'launch/sensors.launch.py')
 system = load('system_launch', 'launch/inspection_system.launch.py')
+modules = load('modules_launch', 'launch/inspection_modules.launch.py')
+cooperation = load('cooperation_launch', 'launch/cooperation.launch.py')
 platform = load('platform_launch', 'launch/platform_bridge.launch.py')
 supervisor = load('navigation_supervisor', 'scripts/navigation_supervisor.py')
 
@@ -55,7 +57,7 @@ class LaunchConfiguration(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         self.robot = {'model': 'd1m', 'robot_id': 'D1M-TEST',
-                      'system': {'modules': {'sensor_gimbal': False, 'mission_execution_agent': False}}}
+                      'system': {'modules': {'sensor_gimbal': False}}}
         self.write_robot()
 
     def write_robot(self):
@@ -401,6 +403,55 @@ class LaunchConfiguration(unittest.TestCase):
         self.assertIn({'gas_params_file': str(custom)}, arguments)
         self.assertIn({'params_file': str(custom)}, arguments)
 
+    def test_cooperation_modes_select_exactly_one_stack(self):
+        import json
+        from launch.actions import GroupAction
+        status = self.root / 'device_status.json'
+        status.write_text(json.dumps({'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 1.2}))
+        old = {'mission_execution_agent', 'fleet_leader_election', 'capability_mission_planner'}
+        new = {'swarm_consensus', 'swarm_execution_agent', 'swarm_mqtt_transport',
+               'swarm_mission_coordinator', 'swarm_mission_planner'}
+        for mode, expected in [('disabled', set()), ('coordination', old), ('swarm', new)]:
+            with self.subTest(mode=mode):
+                self.robot['system']['cooperation'] = {'mode': mode, 'device_status_path': str(status)}
+                self.write_robot()
+                context = context_for(system)
+                with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                        patch.object(system, 'Node', wraps=system.Node) as factory:
+                    actions = system.launch_setup(context)
+                def flatten(items):
+                    for item in items:
+                        if isinstance(item, GroupAction):
+                            yield from flatten(item.get_sub_entities())
+                        else:
+                            yield item
+                from launch_ros.actions import Node
+                nodes = [item for item in flatten(actions) if isinstance(item, Node)]
+                packages = {item.node_package for item in nodes}
+                self.assertEqual(packages & (old | new), expected)
+                bridge = next(call.kwargs for call in factory.call_args_list
+                              if call.kwargs.get('name') == 'platform_mqtt_bridge_node')
+                params = evaluate_parameters(context, normalize_parameters(bridge['parameters']))[0]
+                self.assertEqual(params['enable_mission_execution_agent'], mode == 'coordination')
+
+    def test_removed_cooperation_switches_and_unknown_modes_are_rejected(self):
+        for change in ({'modules': {'mission_execution_agent': False}},
+                       {'modules': {'fleet_leader_election': True}},
+                       {'mission_execution_agent': {}}, {'fleet_leader_election': {}},
+                       {'cooperation': {'mode': 'legacy'}},
+                       {'cooperation': {'mode': ['swarm']}},
+                       {'cooperation': {'mode': 'swarm', 'swarm': {'agent': None}}},
+                       {'cooperation': {'coordination': {'election': []}}},
+                       {'cooperation': {'mode': 'swarm', 'config_path': '/tmp/old.yaml'}},
+                       {'cooperation': {'mode': 'swarm', 'swarm': {'agent': {'allow_motion': True}}}}):
+            self.robot['system'] = change
+            self.write_robot()
+            with self.assertRaises(ValueError):
+                system.launch_setup(context_for(system))
+        names = {a.name for a in system.generate_launch_description().entities
+                 if isinstance(a, DeclareLaunchArgument)}
+        self.assertFalse(names & {'cooperation_mode', 'swarm_config_path', 'enable_mission_execution_agent'})
+
     def test_gimbal_cli_relative_path_uses_sensor_gimbal_config_directory(self):
         context = context_for(system, enable_sensor_gimbal='true', gimbal_params_file='./stub_params.yaml')
         with patch.object(system, 'get_package_share_directory',
@@ -549,7 +600,8 @@ class LaunchConfiguration(unittest.TestCase):
         output = __import__('subprocess').run(
             ['bash', str(ROOT / 'scripts/start_inspection_tmux.sh'), '--dry-run'],
             capture_output=True, text=True, check=True).stdout
-        mapping = {'inspection_system.launch.py': system, 'sensors.launch.py': sensors}
+        mapping = {'inspection_modules.launch.py': modules, 'sensors.launch.py': sensors,
+                   'cooperation.launch.py': cooperation}
         import shlex
         for line in output.splitlines():
             if 'exec ros2 launch' not in line:
@@ -560,6 +612,83 @@ class LaunchConfiguration(unittest.TestCase):
                         if isinstance(action, DeclareLaunchArgument)}
             supplied = {part.split(':=', 1)[0] for part in command[2:] if ':=' in part}
             self.assertLessEqual(supplied, declared)
+
+    def test_tmux_launch_entries_keep_modules_and_cooperation_separate(self):
+        import json
+        import shlex
+        import subprocess
+        from launch.actions import GroupAction, IncludeLaunchDescription, OpaqueFunction
+        from launch_ros.actions import Node
+
+        status = self.root / 'status.json'
+        status.write_text(json.dumps({'capabilities': ['device'], 'nominal_speed_mps': 1.0}))
+        old = {'mission_execution_agent', 'fleet_leader_election', 'capability_mission_planner'}
+        new = {'swarm_consensus', 'swarm_execution_agent', 'swarm_mqtt_transport',
+               'swarm_mission_coordinator', 'swarm_mission_planner'}
+
+        def flatten(actions):
+            for action in actions:
+                if isinstance(action, GroupAction):
+                    yield from flatten(action.get_sub_entities())
+                else:
+                    yield action
+
+        for mode, expected in [('disabled', set()), ('coordination', old), ('swarm', new)]:
+            with self.subTest(mode=mode):
+                self.robot['system'] = {'modules': {'sensors': True, 'sensor_gimbal': True},
+                                       'cooperation': {'mode': mode, 'device_status_path': str(status)}}
+                self.write_robot()
+                output = subprocess.run(
+                    ['bash', str(ROOT / 'scripts/start_inspection_tmux.sh'), '--dry-run'],
+                    capture_output=True, text=True, check=True).stdout
+                window = None
+                cooperation_packages = []
+                for line in output.splitlines():
+                    if line.startswith('[window] '):
+                        window = line.split(' ', 1)[1]
+                    if 'exec ros2 launch' not in line:
+                        continue
+                    command = shlex.split(line.split('exec ros2 launch ', 1)[1])
+                    entry = {'inspection_modules.launch.py': modules,
+                             'sensors.launch.py': sensors,
+                             'cooperation.launch.py': cooperation}[command[1]]
+                    overrides = dict(part.split(':=', 1) for part in command[2:] if ':=' in part)
+                    # Load the real wrapper and evaluate its OpaqueFunction, without executing nodes.
+                    with patch('ament_index_python.packages.get_package_share_directory',
+                               side_effect=lambda name: str(
+                                   self.prefix / 'share' / name if name == 'sensor_gimbal'
+                                   else self.root)):
+                        description = entry.generate_launch_description()
+                        context = context_for(entry, **overrides)
+                        actions = next(a for a in description.entities
+                                       if isinstance(a, OpaqueFunction)).execute(context)
+                    selected = [a for a in flatten(actions)
+                                if a.condition is None or a.condition.evaluate(context)]
+                    packages = [a.node_package for a in selected if isinstance(a, Node)]
+                    includes = [a for a in selected if isinstance(a, IncludeLaunchDescription)]
+                    if window == 'cooperation':
+                        self.assertEqual(set(packages), expected)
+                        self.assertFalse(includes)
+                        cooperation_packages.extend(packages)
+                    elif window == 'task_hub':
+                        self.assertEqual(packages, ['inspection_task_hub'])
+                        self.assertFalse(includes)
+                    elif window in ('sensor_gimbal', 'charge'):
+                        self.assertFalse(packages)
+                        self.assertEqual(len(includes), 1)
+                    elif window in ('alarm', 'light', 'gas', 'sensor_rs485', 'acoustic'):
+                        self.assertFalse(packages)
+                        self.assertEqual(len(includes), 1)
+                    elif window == 'platform':
+                        self.assertTrue(packages)
+                        self.assertEqual(set(packages), {'inspection_platform_bridge'})
+                        self.assertFalse(includes)
+                    else:
+                        self.fail(f'Unexpected tmux window: {window}')
+                    if window != 'cooperation':
+                        self.assertFalse(set(packages) & (old | new))
+                self.assertEqual(set(cooperation_packages), expected)
+                self.assertEqual(len(cooperation_packages), len(expected))
 
 
 if __name__ == '__main__':
