@@ -44,6 +44,25 @@ def with_navigation_health(value):
 
 
 class Configuration(unittest.TestCase):
+    def test_d1m_stair_capability_is_shared_and_configurable(self):
+        self.robot(model='d1m')
+        actual = cfg.read_yaml(cfg.load_config('navigation')['local_planner']['config'])
+        shared = actual['/**']['ros__parameters']
+        expected = {key: value for key, value in D1M_TRACKING_SHARED.items()
+                    if key.startswith('turn_stair_')}
+        self.assertEqual({key: shared[key] for key in expected}, expected)
+        for name in ('localPlanner', 'pathFollower'):
+            self.assertFalse(any(key.startswith('turn_stair_')
+                                 for key in actual[name]['ros__parameters']))
+        overrides = {'turn_stair_max_forward_speed': 0.6,
+                     'turn_stair_max_lateral_speed': 0.2,
+                     'turn_stair_max_yaw_rate': 0.35,
+                     'turn_stair_gaits': [42]}
+        self.robot(model='d1m', navigation={'local_planner': {'parameters': {
+            '/**': {'ros__parameters': overrides}}}})
+        actual = cfg.read_yaml(cfg.load_config('navigation')['local_planner']['config'])
+        self.assertEqual({key: actual['/**']['ros__parameters'][key] for key in overrides}, overrides)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='inspection config ')
         self.addCleanup(self.temp.cleanup)
