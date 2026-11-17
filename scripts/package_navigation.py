@@ -16,70 +16,113 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-PREFIX = Path('/opt/inspection/navigation')
-PACKAGE_NAME = 'control-navigation'
-DRIVER_PREFIX = Path('/opt/inspection/driver')
 CPU_FLAGS = {
     'amd64': '-march=x86-64 -mtune=generic',
     'arm64': '-march=armv8-a -mtune=generic',
 }
-SOURCES = {
-    'inspection_interfaces': 'inspection_interfaces',
-    'robots_dog_msgs': 'robots_dog_msgs',
-    'control_input_msgs': 'control_intput_msgs',
-    'livox_ros_driver2': 'livox_ros_driver2',
-    'gnss_driver': 'gnss_driver',
-    'nav_bridge': 'nav_bridge',
-    'ndt_omp': 'ndt_omp',
-    'faster_lio': 'faster_slam',
-    'gridmapper': 'gridmapper',
-    'local_planner': 'local_planner',
-    'multi_map_nav': 'multi_map_nav_ros2',
-    'smac_straight_planner': 'smac_straight_planner',
-}
-NATIVE = {
-    'gtsam': ('https://github.com/borglab/gtsam.git', '4.2.0'),
-    'livox_sdk2': ('https://github.com/ggbond-control/livox_sdk2.git', 'jazzy'),
-}
-ALL_SOURCES = dict(SOURCES)
-TASK_SOURCES = {name: name for name in (
-    'alarm_manager', 'light_manager', 'acoustic_monitor', 'gas_monitor', 'sensor_rs485',
-    'sensor_gimbal', 'inspection_charge_executor', 'inspection_platform_bridge', 'inspection_task_hub')}
-ALL_SOURCES.update(TASK_SOURCES)
-NAVIGATION_PACKAGES = {'faster_lio', 'gridmapper', 'local_planner', 'multi_map_nav', 'smac_straight_planner'}
+def load_package_catalog(path):
+    class UniqueLoader(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node):
+        result = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=True)
+            if key in result:
+                raise ValueError(f'packages.yaml: duplicate YAML key: {key}')
+            result[key] = loader.construct_object(value_node, deep=True)
+        return result
+
+    UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    with path.open() as stream:
+        catalog = yaml.load(stream, Loader=UniqueLoader)
+    if not isinstance(catalog, dict) or catalog.get('schema_version') != 1:
+        raise ValueError('packages.yaml: expected schema_version: 1')
+    components = catalog.get('components')
+    if not isinstance(components, dict) or set(components) != {'driver', 'navigation', 'task'}:
+        raise ValueError('packages.yaml: expected driver, navigation and task components')
+    if not isinstance(catalog.get('repository_base'), str) or not catalog['repository_base'].startswith('https://'):
+        raise ValueError('packages.yaml: repository_base must be an HTTPS URL')
+    owners, debs, prefixes = set(), set(), set()
+    for component, spec in components.items():
+        if not isinstance(spec, dict):
+            raise ValueError(f'{component}: expected a mapping')
+        for key in ('deb_name', 'prefix', 'image', 'dockerfile', 'recipe_revision'):
+            if not isinstance(spec.get(key), str) or not spec[key]:
+                raise ValueError(f'{component}: missing {key}')
+        if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]+', spec['deb_name']):
+            raise ValueError(f'{component}: invalid Debian package name')
+        prefix = Path(spec['prefix'])
+        if not prefix.is_relative_to('/opt/inspection') or '..' in prefix.parts or prefix == Path('/opt/inspection'):
+            raise ValueError(f'{component}: invalid install prefix')
+        if spec['deb_name'] in debs or any(prefix == p or prefix.is_relative_to(p) or p.is_relative_to(prefix) for p in prefixes):
+            raise ValueError(f'{component}: duplicate deb name or overlapping prefix')
+        debs.add(spec['deb_name'])
+        prefixes.add(prefix)
+        dockerfile = Path(spec['dockerfile'])
+        if dockerfile.is_absolute() or '..' in dockerfile.parts:
+            raise ValueError(f'{component}: invalid Dockerfile path')
+        spec['image'].format(architecture='amd64')
+        for key in ('packages', 'embedded_packages'):
+            entries = spec.get(key, {})
+            if not isinstance(entries, dict) or (key == 'packages' and not entries):
+                raise ValueError(f'{component}: {key} must be a mapping')
+            for name, source in entries.items():
+                if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9_]*', name):
+                    raise ValueError(f'{component}: invalid ROS package name')
+                if name in owners:
+                    raise ValueError(f'duplicate package ownership: {name}')
+                owners.add(name)
+                if not isinstance(source, str) or not source or Path(source).is_absolute() or '..' in Path(source).parts:
+                    raise ValueError(f'{name}: invalid source path')
+                if key == 'packages' and not re.fullmatch(r'[A-Za-z0-9_.-]+', source):
+                    raise ValueError(f'{name}: expected repository name, not a URL/path')
+            if key == 'embedded_packages' and entries and component != 'driver':
+                raise ValueError('embedded packages currently require the driver nav_bridge adapter')
+        for key in ('cmake_args', 'runtime_dependencies'):
+            if not isinstance(spec.get(key, []), list) or not all(isinstance(v, str) for v in spec.get(key, [])):
+                raise ValueError(f'{component}: {key} must be a string list')
+        for architecture, dependencies in spec.get('architecture_dependencies', {}).items():
+            if architecture not in CPU_FLAGS or not isinstance(dependencies, list) or not all(isinstance(v, str) for v in dependencies):
+                raise ValueError(f'{component}: invalid architecture dependencies')
+        for name, native in spec.get('native_libraries', {}).items():
+            if not isinstance(native, dict) or not isinstance(native.get('url'), str) or not native['url'].startswith('https://') or not isinstance(native.get('ref'), str):
+                raise ValueError(f'{name}: expected native library HTTPS url and ref')
+    return catalog
+
+
+CATALOG_PATH = Path(os.environ.get('INSPECTION_PACKAGING_CATALOG', ROOT / 'packaging/packages.yaml'))
+CATALOG = load_package_catalog(CATALOG_PATH)
+COMPONENT_CONFIG = CATALOG['components']
 COMPONENTS = ('driver', 'navigation', 'task')
-ALL_NATIVE = dict(NATIVE)
-DRIVER_PACKAGES = {'inspection_interfaces', 'robots_dog_msgs', 'control_input_msgs',
-                   'livox_ros_driver2', 'gnss_driver', 'ndt_omp', 'nav_bridge',
-                   'uniubi', 'uniubi_motion_client'}
-EMBEDDED_SOURCES = {'uniubi': 'uniubi_robot_msgs/ros2',
-                    'uniubi_motion_client': 'uniubi_motion_client'}
+ALL_SOURCES = {name: repo for spec in COMPONENT_CONFIG.values() for name, repo in spec['packages'].items()}
+TASK_SOURCES = dict(COMPONENT_CONFIG['task']['packages'])
+NAVIGATION_PACKAGES = set(COMPONENT_CONFIG['navigation']['packages'])
+EMBEDDED_SOURCES = dict(COMPONENT_CONFIG['driver'].get('embedded_packages', {}))
+DRIVER_PACKAGES = set(COMPONENT_CONFIG['driver']['packages']) | EMBEDDED_SOURCES.keys()
+DRIVER_PREFIX = Path(COMPONENT_CONFIG['driver']['prefix'])
+ALL_NATIVE = {name: (spec['url'], spec['ref'])
+              for name, spec in COMPONENT_CONFIG['driver'].get('native_libraries', {}).items()}
+NAV_BRIDGE_OPTIONS = COMPONENT_CONFIG['driver'].get('cmake_args', [])
+ARM64_RUNTIME_DEPENDS = COMPONENT_CONFIG['navigation'].get('architecture_dependencies', {}).get('arm64', [])
 COMPONENT = 'navigation'
-NAV_BRIDGE_OPTIONS = [f'-DNAV_BRIDGE_BUILD_{name}=ON'
-                      for name in ('X30', 'D1_MAX', 'CYVET', 'TANK', 'R750')]
-RUNTIME_DEPENDS = [
-    'ros-jazzy-ros-base', 'ros-jazzy-navigation2', 'ros-jazzy-grid-map',
-    'ros-jazzy-pcl-ros', 'ros-jazzy-tf-transformations',
-    'ros-jazzy-example-interfaces',
-    'ros-jazzy-rmw-fastrtps-cpp', 'ros-jazzy-rmw-cyclonedds-cpp',
-    'python3-yaml', 'python3-numpy', 'python3-scipy', 'python3-serial',
-]
-ARM64_RUNTIME_DEPENDS = [
-    'opencl-headers', 'ocl-icd-opencl-dev', 'mesa-opencl-icd', 'clinfo',
-]
+PREFIX = Path(COMPONENT_CONFIG[COMPONENT]['prefix'])
+PACKAGE_NAME = COMPONENT_CONFIG[COMPONENT]['deb_name']
+SOURCES = dict(COMPONENT_CONFIG[COMPONENT]['packages'])
+NATIVE = {}
 
 
 def configure_component(component):
     global COMPONENT, PREFIX, PACKAGE_NAME, SOURCES, NATIVE
     COMPONENT = component
-    PREFIX = Path('/opt/inspection') / component
-    PACKAGE_NAME = 'control-' + component
-    packages = DRIVER_PACKAGES if component == 'driver' else (
-        NAVIGATION_PACKAGES if component == 'navigation' else TASK_SOURCES.keys())
-    SOURCES = {name: repo for name, repo in ALL_SOURCES.items() if name in packages}
-    NATIVE = dict(ALL_NATIVE) if component == 'driver' else {}
+    spec = COMPONENT_CONFIG[component]
+    PREFIX = Path(spec['prefix'])
+    PACKAGE_NAME = spec['deb_name']
+    SOURCES = dict(spec['packages'])
+    NATIVE = {name: (native['url'], native['ref']) for name, native in spec.get('native_libraries', {}).items()}
 
 
 def prepare_bridge_sources(work, manifest):
@@ -126,14 +169,14 @@ def host_architecture():
 
 
 def builder_image(architecture):
-    if COMPONENT == 'task':
-        return f'inspection-task-builder:jazzy-{architecture}'
-    return f'inspection-control-builder:jazzy-{architecture}'
+    return COMPONENT_CONFIG[COMPONENT]['image'].format(architecture=architecture)
 
 
 def recipe_id():
-    # Increment only the affected component when its build/ABI rules change.
-    return {'driver': 'driver-v2', 'navigation': 'navigation-v2', 'task': 'task-v1'}[COMPONENT]
+    # Component configuration changes invalidate only that component's selection cache.
+    spec = COMPONENT_CONFIG[COMPONENT]
+    content = {'component': spec, 'repository_base': CATALOG['repository_base']}
+    return spec['recipe_revision'] + ':' + hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
 def check_cache_architecture(work, architecture):
@@ -506,7 +549,8 @@ def assemble(work, version, manifest):
     multiarch = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}[architecture]
     ros_arch_lib = f'/opt/ros/jazzy/lib/{multiarch}'
     manifest = dict(manifest, version=version, component=COMPONENT, install_prefix=str(PREFIX),
-                    packaging_recipe_sha256=recipe_id())
+                    packaging_recipe_sha256=recipe_id(),
+                    component_config=copy.deepcopy(COMPONENT_CONFIG[COMPONENT]))
     stage = work / 'stage'
     if stage.exists():
         shutil.rmtree(stage)
@@ -585,20 +629,13 @@ def assemble(work, version, manifest):
     result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent) if elfs else ''
     depends = next((line.split('=', 1)[1] for line in result.splitlines()
                     if line.startswith('shlibs:Depends=')), '')
-    runtime = list(RUNTIME_DEPENDS)
-    if COMPONENT == 'driver':
-        runtime = [v for v in runtime if v not in ('ros-jazzy-navigation2', 'ros-jazzy-grid-map')]
-        runtime += ['ros-jazzy-rviz-2d-overlay-msgs', 'ros-jazzy-cyclonedds']
-    else:
-        if COMPONENT == 'task':
-            runtime = ['ros-jazzy-ros-base', 'ros-jazzy-cv-bridge', 'ros-jazzy-control-msgs',
-                       'ros-jazzy-nav2-msgs', 'ros-jazzy-rmw-cyclonedds-cpp',
-                       'python3-yaml', 'python3-numpy', 'python3-paho-mqtt', 'python3-boto3',
-                       'python3-requests', 'python3-serial', 'ffmpeg', 'alsa-utils']
-        runtime += [f'control-driver (>= {manifest["driver_min_version"]})',
-                    f'control-driver (<< {manifest["driver_max_version"]})']
-        if COMPONENT == 'navigation' and architecture == 'arm64':
-            runtime += ARM64_RUNTIME_DEPENDS
+    spec = COMPONENT_CONFIG[COMPONENT]
+    runtime = list(spec.get('runtime_dependencies', []))
+    runtime += spec.get('architecture_dependencies', {}).get(architecture, [])
+    if COMPONENT != 'driver':
+        driver_name = COMPONENT_CONFIG['driver']['deb_name']
+        runtime += [f'{driver_name} (>= {manifest["driver_min_version"]})',
+                    f'{driver_name} (<< {manifest["driver_max_version"]})']
     depends = ', '.join(filter(None, [depends, *runtime]))
     control = stage / 'DEBIAN'
     control.mkdir()
@@ -630,7 +667,10 @@ def inside(args):
     if args.package_only:
         if (work / 'build-in-progress').exists() or not complete.exists():
             raise ValueError('no complete build snapshot; finish the build before --package-only')
-        assemble(work, args.version, json.loads(complete.read_text()))
+        cached = json.loads(complete.read_text())
+        if cached.get('component_config', COMPONENT_CONFIG[COMPONENT]) != COMPONENT_CONFIG[COMPONENT]:
+            raise ValueError('component catalog changed; rebuild before --package-only')
+        assemble(work, args.version, cached)
         return
     if args.select and not complete.exists():
         raise ValueError('first release build must be full; omit --select')
@@ -673,8 +713,7 @@ def inside(args):
          '-DBUILD_WITH_MARCH_NATIVE=OFF', f'-DCMAKE_C_FLAGS={flags}',
          f'-DCMAKE_CXX_FLAGS={flags}',
          '-DPython3_EXECUTABLE=/usr/bin/python3', '-DPYTHON_EXECUTABLE=/usr/bin/python3',
-         *(NAV_BRIDGE_OPTIONS if COMPONENT == 'driver' else []),
-         *(['-DGIMBAL_ENABLE_RKNN=AUTO', '-DGIMBAL_ENABLE_HKNETSDK=AUTO'] if COMPONENT == 'task' else []),
+         *COMPONENT_CONFIG[COMPONENT].get('cmake_args', []),
          f'-DGTSAM_DIR={DRIVER_PREFIX}/vendor/lib/cmake/GTSAM',
          f'-DLIVOX_LIDAR_SDK_LIBRARY={PREFIX}/vendor/lib/liblivox_lidar_sdk_shared.so',
          f'-DLIVOX_LIDAR_SDK_INCLUDE_DIR={PREFIX}/vendor/include',
@@ -743,7 +782,7 @@ def arguments():
 
 def driver_underlay(args, work, architecture):
     deb = args.driver_deb.expanduser().resolve()
-    if output(['dpkg-deb', '-f', deb, 'Package']) != 'control-driver':
+    if output(['dpkg-deb', '-f', deb, 'Package']) != COMPONENT_CONFIG['driver']['deb_name']:
         raise ValueError('--driver-deb must be a control-driver package')
     if output(['dpkg-deb', '-f', deb, 'Architecture']) != architecture:
         raise ValueError('driver deb architecture differs from build host')
@@ -791,9 +830,9 @@ def build_component(args):
         image = subprocess.run(['docker', 'image', 'inspect', image_name], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode == 0
         if args.rebuild_image or not image:
-            dockerfile = 'Dockerfile.task' if COMPONENT == 'task' else 'Dockerfile'
+            dockerfile = COMPONENT_CONFIG[COMPONENT]['dockerfile']
             run(['docker', 'build', '--platform', platform, '-t', image_name,
-                 '-f', ROOT / 'packaging/navigation' / dockerfile, ROOT / 'packaging/navigation'])
+                 '-f', ROOT / 'packaging' / dockerfile, (ROOT / 'packaging' / dockerfile).parent])
         image_architecture = output(['docker', 'image', 'inspect', '--format', '{{.Architecture}}', image_name])
         if image_architecture != architecture:
             raise ValueError(f'{image_name} contains {image_architecture}, expected {architecture}; rebuild the image')
@@ -803,13 +842,14 @@ def build_component(args):
                         'release_recipe_sha256': recipe_id()}
             manifest['requested_tag'] = args.tag
             manifest['component'] = COMPONENT
+            manifest['component_config'] = copy.deepcopy(COMPONENT_CONFIG[COMPONENT])
             if COMPONENT != 'driver':
                 driver, minimum, maximum = driver_underlay(args, work, architecture)
                 manifest.update(driver=driver, driver_min_version=minimum, driver_max_version=maximum)
             with github_access() as git_env:
                 for name, repository in SOURCES.items():
                     source = work / 'repositories' / name
-                    revision = fetch_source(f'https://github.com/ggbond-control/{repository}.git',
+                    revision = fetch_source(f'{CATALOG["repository_base"].rstrip("/")}/{repository}.git',
                                             args.tag, source, git_env)
                     if ET.parse(source / 'package.xml').getroot().findtext('name') != name:
                         raise ValueError(f'package name mismatch: {source}')
@@ -836,7 +876,9 @@ def build_component(args):
         (work / 'install').mkdir(exist_ok=True)
         (work / 'home').mkdir(exist_ok=True)
         command = ['docker', 'run', '--rm', '--platform', platform, '--user', f'{os.getuid()}:{os.getgid()}',
-                   '-e', 'HOME=/release/home', '-v', f'{work}:/release',
+                   '-e', 'HOME=/release/home',
+                   '-e', 'INSPECTION_PACKAGING_CATALOG=/packaging-catalog.yaml',
+                   '-v', f'{CATALOG_PATH.resolve()}:/packaging-catalog.yaml:ro', '-v', f'{work}:/release',
                    '-v', f'{work}/install:{PREFIX}', '-v', f'{ROOT}/scripts:/tools:ro',
                    *(['-v', f'{work}/driver-underlay{DRIVER_PREFIX}:{DRIVER_PREFIX}:ro']
                      if COMPONENT != 'driver' else []),

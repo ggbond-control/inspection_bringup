@@ -1,6 +1,7 @@
 """Release-cache and dependency selection tests without Docker or compilation."""
 
 import importlib.util
+import copy
 from contextlib import nullcontext
 import json
 import os
@@ -109,6 +110,49 @@ class Packaging(unittest.TestCase):
         self.assertEqual(len({v[0] for v in records.values()}), 3)
         self.assertEqual(records['driver'][1], records['navigation'][1])
         self.assertNotEqual(records['task'][1], records['driver'][1])
+
+    def test_catalog_is_the_source_for_package_mapping_and_component_metadata(self):
+        catalog = copy.deepcopy(release.CATALOG)
+        catalog['components']['task']['packages']['inspection_task_hub'] = 'task-hub-release'
+        catalog['components']['task']['deb_name'] = 'custom-task'
+        catalog['components']['task']['prefix'] = '/opt/inspection/custom-task'
+        with patch.object(release, 'COMPONENT_CONFIG', catalog['components']):
+            release.configure_component('task')
+            self.assertEqual(release.SOURCES['inspection_task_hub'], 'task-hub-release')
+            self.assertEqual(release.PACKAGE_NAME, 'custom-task')
+            self.assertEqual(release.PREFIX, Path('/opt/inspection/custom-task'))
+
+    def test_catalog_rejects_duplicate_ownership_unsafe_paths_and_missing_fields(self):
+        cases = [
+            (lambda c: c['components']['task']['packages'].update(inspection_interfaces='inspection_interfaces'), 'duplicate package'),
+            (lambda c: c['components']['driver'].update(prefix='/tmp/driver'), 'invalid install prefix'),
+            (lambda c: c['components']['task'].update(dockerfile='../Dockerfile'), 'invalid Dockerfile'),
+            (lambda c: c['components']['task'].pop('deb_name'), 'missing deb_name'),
+            (lambda c: c['components']['task']['packages'].update(example='../example'), 'invalid source'),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'packages.yaml'
+            for mutation, message in cases:
+                catalog = copy.deepcopy(release.CATALOG)
+                mutation(catalog)
+                path.write_text(release.yaml.safe_dump(catalog))
+                with self.assertRaisesRegex(ValueError, message):
+                    release.load_package_catalog(path)
+            path.write_text('schema_version: 1\nschema_version: 1\n')
+            with self.assertRaisesRegex(ValueError, 'duplicate YAML key'):
+                release.load_package_catalog(path)
+
+    def test_task_catalog_changes_do_not_invalidate_other_component_recipes(self):
+        baseline = {}
+        for component in release.COMPONENTS:
+            release.configure_component(component)
+            baseline[component] = release.recipe_id()
+        catalog = copy.deepcopy(release.COMPONENT_CONFIG)
+        catalog['task']['runtime_dependencies'].append('example-dependency')
+        with patch.object(release, 'COMPONENT_CONFIG', catalog):
+            for component in release.COMPONENTS:
+                release.configure_component(component)
+                self.assertEqual(release.recipe_id() == baseline[component], component != 'task')
 
     def test_task_requires_driver_and_rejects_foreign_package_selection(self):
         for extra, message in [([], 'requires --driver-deb'),

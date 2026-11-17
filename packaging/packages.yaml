@@ -1,0 +1,112 @@
+# Repository names are relative to repository_base. Keys are ROS package names.
+schema_version: 1
+repository_base: https://github.com/ggbond-control
+components:
+  driver:
+    deb_name: control-driver
+    prefix: /opt/inspection/driver
+    image: inspection-control-builder:jazzy-{architecture}
+    dockerfile: navigation/Dockerfile
+    recipe_revision: driver-v2
+    packages:
+      inspection_interfaces: inspection_interfaces
+      robots_dog_msgs: robots_dog_msgs
+      control_input_msgs: control_intput_msgs
+      livox_ros_driver2: livox_ros_driver2
+      gnss_driver: gnss_driver
+      nav_bridge: nav_bridge
+      ndt_omp: ndt_omp
+    # Copied from nav_bridge/third_party/uniubi; not separate Git repositories.
+    embedded_packages:
+      uniubi: uniubi_robot_msgs/ros2
+      uniubi_motion_client: uniubi_motion_client
+    native_libraries:
+      gtsam:
+        url: https://github.com/borglab/gtsam.git
+        ref: 4.2.0
+      livox_sdk2:
+        url: https://github.com/ggbond-control/livox_sdk2.git
+        ref: jazzy
+    cmake_args:
+      - -DNAV_BRIDGE_BUILD_X30=ON
+      - -DNAV_BRIDGE_BUILD_D1_MAX=ON
+      - -DNAV_BRIDGE_BUILD_CYVET=ON
+      - -DNAV_BRIDGE_BUILD_TANK=ON
+      - -DNAV_BRIDGE_BUILD_R750=ON
+    runtime_dependencies:
+      - ros-jazzy-ros-base
+      - ros-jazzy-pcl-ros
+      - ros-jazzy-tf-transformations
+      - ros-jazzy-example-interfaces
+      - ros-jazzy-rmw-fastrtps-cpp
+      - ros-jazzy-rmw-cyclonedds-cpp
+      - python3-yaml
+      - python3-numpy
+      - python3-scipy
+      - python3-serial
+      - ros-jazzy-rviz-2d-overlay-msgs
+      - ros-jazzy-cyclonedds
+  navigation:
+    deb_name: control-navigation
+    prefix: /opt/inspection/navigation
+    image: inspection-control-builder:jazzy-{architecture}
+    dockerfile: navigation/Dockerfile
+    recipe_revision: navigation-v2
+    packages:
+      faster_lio: faster_slam
+      gridmapper: gridmapper
+      local_planner: local_planner
+      multi_map_nav: multi_map_nav_ros2
+      smac_straight_planner: smac_straight_planner
+    runtime_dependencies:
+      - ros-jazzy-ros-base
+      - ros-jazzy-navigation2
+      - ros-jazzy-grid-map
+      - ros-jazzy-pcl-ros
+      - ros-jazzy-tf-transformations
+      - ros-jazzy-example-interfaces
+      - ros-jazzy-rmw-fastrtps-cpp
+      - ros-jazzy-rmw-cyclonedds-cpp
+      - python3-yaml
+      - python3-numpy
+      - python3-scipy
+      - python3-serial
+    architecture_dependencies:
+      arm64:
+        - opencl-headers
+        - ocl-icd-opencl-dev
+        - mesa-opencl-icd
+        - clinfo
+  task:
+    deb_name: control-task
+    prefix: /opt/inspection/task
+    image: inspection-task-builder:jazzy-{architecture}
+    dockerfile: navigation/Dockerfile.task
+    recipe_revision: task-v1
+    packages:
+      alarm_manager: alarm_manager
+      light_manager: light_manager
+      acoustic_monitor: acoustic_monitor
+      gas_monitor: gas_monitor
+      sensor_rs485: sensor_rs485
+      sensor_gimbal: sensor_gimbal
+      inspection_charge_executor: inspection_charge_executor
+      inspection_platform_bridge: inspection_platform_bridge
+      inspection_task_hub: inspection_task_hub
+    cmake_args:
+      - -DGIMBAL_ENABLE_RKNN=AUTO
+      - -DGIMBAL_ENABLE_HKNETSDK=AUTO
+    runtime_dependencies:
+      - ros-jazzy-ros-base
+      - ros-jazzy-cv-bridge
+      - ros-jazzy-control-msgs
+      - ros-jazzy-nav2-msgs
+      - ros-jazzy-rmw-cyclonedds-cpp
+      - python3-yaml
+      - python3-numpy
+      - python3-paho-mqtt
+      - python3-boto3
+      - python3-requests
+      - python3-serial
+      - ffmpeg
+      - alsa-utils

@@ -11,6 +11,44 @@ branches are modified.
 
 ## Package Contents
 
+The authoritative catalog is [packages.yaml](packages.yaml). Package ownership
+and repository mappings are read from this file, not duplicated in Python.
+Each `components` entry defines:
+
+| Field | Meaning |
+| --- | --- |
+| `deb_name`, `prefix` | Debian name and isolated installation prefix |
+| `packages` | ROS package name to organization Git repository name mapping |
+| `embedded_packages` | Driver's UniUbi packages inside nav_bridge's vendored source |
+| `native_libraries` | Native dependency URL and fixed ref (organization repos still follow the requested tag policy) |
+| `runtime_dependencies` | Explicit apt dependencies, added to ELF-discovered dependencies |
+| `architecture_dependencies` | Additional dependencies by architecture, such as arm64 OpenCL |
+| `cmake_args` | Component-specific build options |
+| `image`, `dockerfile` | Builder image template and Dockerfile relative to `packaging/` |
+| `recipe_revision` | Explicit build-rule revision; bump when Python adaptations change |
+
+For example, adding an ordinary task package from the organization requires an
+entry under `components.task.packages`:
+
+```yaml
+packages:
+  inspection_task_hub: inspection_task_hub
+  another_task_package: its_repository_name
+```
+
+Add required apt runtime dependencies in the same component and build dependencies
+in its Dockerfile. Rebuild that component without `--select` after changing its
+catalog; object files remain available for incremental compilation. Package names
+must match the fetched `package.xml`. Duplicate ownership, duplicate YAML keys,
+invalid source paths and overlapping install prefixes are rejected before builds.
+The same catalog is mounted read-only inside the container and the selected
+component definition is recorded in release manifests.
+
+Existing SDK relocation, backend verification and smoke checks remain explicit
+Python adapters. Changing a special SDK layout, install prefix or Debian name
+also requires reviewing those adapters and the installation check scripts.
+The table below describes the shipped catalog:
+
 | Debian package | Contents | Install prefix |
 | --- | --- | --- |
 | `control-driver` | `inspection_interfaces`, `robots_dog_msgs`, `control_input_msgs`, `gnss_driver`, `livox_ros_driver2`, `ndt_omp`, `nav_bridge`, embedded `uniubi` and `uniubi_motion_client`, GTSAM and Livox SDK | `/opt/inspection/driver` |
@@ -34,7 +72,7 @@ Keep `system.modules.mission_execution_agent: false` if those packages are absen
 
 ## Prerequisites
 
-Install Docker, Git, Python 3 and dpkg on the host. `docker version` must show
+Install Docker, Git, Python 3, `python3-yaml` and dpkg on the host. `docker version` must show
 a working server accessible without sudo. Docker supplies compiler/ROS build
 dependencies. Allow sufficient disk space and start with `-j1` on an 8 GiB board.
 
@@ -183,7 +221,10 @@ the independent `inspection-task-builder:jazzy-<architecture>` and
 adding task does not change the driver/navigation image or delete their caches.
 When introducing these revision identifiers into an older cache, omit `--select`
 once; existing build objects remain reusable. Future changes must bump only the
-affected component's `recipe_id()`. The images use the
+affected component's `recipe_revision` in `packages.yaml`. Component configuration
+is also hashed automatically; changing task configuration does not alter the
+driver/navigation configuration hashes. The first build after this catalog
+migration should omit `--select`; existing objects need not be deleted. The images use the
 official multi-architecture `ros:jazzy-ros-base`. Docker's storage is separate;
 inspect it with `docker info --format '{{.DockerRootDir}}'`.
 
