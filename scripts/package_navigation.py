@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build control-driver/control-navigation debs using persistent Docker caches."""
+"""Build control-driver/control-navigation/control-task debs using persistent Docker caches."""
 
 import argparse
 import copy
@@ -44,6 +44,12 @@ NATIVE = {
     'livox_sdk2': ('https://github.com/ggbond-control/livox_sdk2.git', 'jazzy'),
 }
 ALL_SOURCES = dict(SOURCES)
+TASK_SOURCES = {name: name for name in (
+    'alarm_manager', 'light_manager', 'acoustic_monitor', 'gas_monitor', 'sensor_rs485',
+    'sensor_gimbal', 'inspection_charge_executor', 'inspection_platform_bridge', 'inspection_task_hub')}
+ALL_SOURCES.update(TASK_SOURCES)
+NAVIGATION_PACKAGES = {'faster_lio', 'gridmapper', 'local_planner', 'multi_map_nav', 'smac_straight_planner'}
+COMPONENTS = ('driver', 'navigation', 'task')
 ALL_NATIVE = dict(NATIVE)
 DRIVER_PACKAGES = {'inspection_interfaces', 'robots_dog_msgs', 'control_input_msgs',
                    'livox_ros_driver2', 'gnss_driver', 'ndt_omp', 'nav_bridge',
@@ -68,10 +74,11 @@ ARM64_RUNTIME_DEPENDS = [
 def configure_component(component):
     global COMPONENT, PREFIX, PACKAGE_NAME, SOURCES, NATIVE
     COMPONENT = component
-    PREFIX = DRIVER_PREFIX if component == 'driver' else Path('/opt/inspection/navigation')
+    PREFIX = Path('/opt/inspection') / component
     PACKAGE_NAME = 'control-' + component
-    SOURCES = {name: repo for name, repo in ALL_SOURCES.items()
-               if (name in DRIVER_PACKAGES) == (component == 'driver')}
+    packages = DRIVER_PACKAGES if component == 'driver' else (
+        NAVIGATION_PACKAGES if component == 'navigation' else TASK_SOURCES.keys())
+    SOURCES = {name: repo for name, repo in ALL_SOURCES.items() if name in packages}
     NATIVE = dict(ALL_NATIVE) if component == 'driver' else {}
 
 
@@ -119,7 +126,14 @@ def host_architecture():
 
 
 def builder_image(architecture):
+    if COMPONENT == 'task':
+        return f'inspection-task-builder:jazzy-{architecture}'
     return f'inspection-control-builder:jazzy-{architecture}'
+
+
+def recipe_id():
+    # Increment only the affected component when its build/ABI rules change.
+    return {'driver': 'driver-v2', 'navigation': 'navigation-v2', 'task': 'task-v1'}[COMPONENT]
 
 
 def check_cache_architecture(work, architecture):
@@ -265,6 +279,13 @@ def snapshot(source, destination):
 def release_adjustments(sources):
     # Restrict changes to release copies. Runtime data belongs to the invoking user,
     # never the read-only installed prefix or the original developer's workspace.
+    if COMPONENT == 'task':
+        cmake = sources / 'sensor_gimbal/CMakeLists.txt'
+        text = cmake.read_text()
+        text = text.replace('HIK_SDK_LIB_DIR="${HKNETSDK_LIB_DIR}"',
+                            'HIK_SDK_LIB_DIR="/opt/inspection/task/vendor/lib"')
+        write(cmake, text)
+        return
     for package in ('faster_lio', 'gridmapper'):
         directory = sources / package
         if package not in SOURCES:
@@ -337,13 +358,13 @@ def selected_packages(requested, sources):
 def environment():
     # This process runs inside the builder, with no developer workspace mounted.
     code = 'source /opt/ros/jazzy/setup.bash; '
-    if COMPONENT == 'navigation':
+    if COMPONENT != 'driver':
         code += f'source {DRIVER_PREFIX}/local_setup.bash; '
     if (PREFIX / 'local_setup.bash').is_file():
         code += f'source {PREFIX}/local_setup.bash; '
     code += 'exec /usr/bin/python3 -c "import os,json; print(json.dumps(dict(os.environ)))"'
     env = json.loads(output(['bash', '-ec', code]).splitlines()[-1])
-    vendor = (DRIVER_PREFIX if COMPONENT == 'navigation' else PREFIX) / 'vendor'
+    vendor = (DRIVER_PREFIX if COMPONENT != 'driver' else PREFIX) / 'vendor'
     for key, value in [('CMAKE_PREFIX_PATH', str(vendor)),
                        ('LD_LIBRARY_PATH', f'{vendor}/lib:{PREFIX}/lib')]:
         env[key] = value + ':' + env.get(key, '')
@@ -430,12 +451,62 @@ def relocate_gtsam_exports(dest):
             write(path, text[:match.start()] + installed + text[match.end():])
 
 
+def task_runtime_libraries(work, dest, architecture):
+    vendor = dest / 'vendor/lib'
+    cache = work / 'build/sensor_gimbal/CMakeCache.txt'
+    features = {}
+    if not cache.is_file():
+        raise ValueError('sensor_gimbal CMake cache missing; complete the task build first')
+    values = dict(re.findall(r'^([^#/:\n][^:\n]*):[^=\n]+=(.*)$', cache.read_text(), re.MULTILINE))
+    # Match the AUTO detection in sensor_gimbal CMake, including host ELF type.
+    sdk = work / 'sources/sensor_gimbal/third_party'
+    groups = {
+        'rknn': (sdk / 'rknn/lib', 'librknnrt.so'),
+        'hknetsdk': (sdk / 'HCNetSDKV6.1.11.5_build20251204_ArmLinux64_ZH/MakeAll', 'libhcnetsdk.so'),
+    }
+    machine = {'amd64': 62, 'arm64': 183}[architecture]
+    for name, (directory, library) in groups.items():
+        path = directory / library
+        enabled = False
+        if path.is_file():
+            header = path.read_bytes()[:20]
+            enabled = (header[:4] == b'\x7fELF' and
+                       int.from_bytes(header[18:20], 'little' if header[5] == 1 else 'big') == machine)
+        mode = values.get('GIMBAL_ENABLE_' + name.upper(), 'AUTO')
+        enabled = enabled and mode != 'OFF'
+        if name == 'rknn':
+            enabled = enabled and (sdk / 'rknn/include/rknn_api.h').is_file()
+        else:
+            enabled = enabled and (directory.parent / 'incCn/HCNetSDK.h').is_file() and (directory / 'libhpr.so').is_file()
+        features[name] = enabled
+        if enabled:
+            for source in directory.rglob('*'):
+                if source.is_file() and '.so' in source.name:
+                    target = vendor / source.relative_to(directory)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source.resolve(), target)
+    acoustic = work / 'sources/acoustic_monitor/third_party/micarr_sdk'
+    selected = 'x64' if architecture == 'amd64' else 'arm64'
+    libraries = list((acoustic / selected / 'lib').glob('*.so*'))
+    if not libraries:
+        raise ValueError('acoustic_monitor SDK runtime libraries missing for ' + architecture)
+    for source in libraries:
+        vendor.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source.resolve(), vendor / source.name)
+    # The source package installs both SDK architectures; keep only this one.
+    installed = dest / 'share/acoustic_monitor/third_party/micarr_sdk'
+    other = installed / ('arm64' if selected == 'x64' else 'x64')
+    if other.exists():
+        shutil.rmtree(other)
+    return features
+
+
 def assemble(work, version, manifest):
     architecture = manifest['architecture']
     multiarch = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}[architecture]
     ros_arch_lib = f'/opt/ros/jazzy/lib/{multiarch}'
     manifest = dict(manifest, version=version, component=COMPONENT, install_prefix=str(PREFIX),
-                    packaging_recipe_sha256=digest(Path(__file__)))
+                    packaging_recipe_sha256=recipe_id())
     stage = work / 'stage'
     if stage.exists():
         shutil.rmtree(stage)
@@ -443,6 +514,8 @@ def assemble(work, version, manifest):
     shutil.copytree(PREFIX, dest, symlinks=True)
     if COMPONENT == 'driver':
         relocate_gtsam_exports(dest)
+    if COMPONENT == 'task':
+        manifest['features'] = task_runtime_libraries(work, dest, architecture)
     # Driver exports form the navigation build underlay; navigation is runtime-only.
     for p in sorted(dest.rglob('*'), reverse=True):
         if p.is_file() and ((p.suffix == '.a' and COMPONENT != 'driver') or
@@ -469,7 +542,7 @@ def assemble(work, version, manifest):
             if magic == b'\x7fELF':
                 run(['strip', '--strip-unneeded', p], stdout=subprocess.DEVNULL)
                 run(['patchelf', '--set-rpath',
-                     f'{PREFIX}/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:'
+                     f'$ORIGIN:{PREFIX}/lib:{PREFIX}/vendor/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:'
                      f'/opt/ros/jazzy/lib:{ros_arch_lib}', p],
                     stdout=subprocess.DEVNULL)
                 elfs.append(p)
@@ -498,8 +571,8 @@ def assemble(work, version, manifest):
     write(docs / 'manifest.json', json.dumps(manifest, indent=2) + '\n')
     write(dest / 'share/control_release/manifest.json', json.dumps(manifest, indent=2) + '\n')
     write(docs / 'README', 'Source /opt/ros/jazzy/setup.bash, then '
-          f'{DRIVER_PREFIX}/local_setup.bash, then /opt/inspection/navigation/local_setup.bash '
-          'when navigation is installed. No services are installed or started.\n'
+          f'{DRIVER_PREFIX}/local_setup.bash, then the installed navigation/task '
+          'local_setup.bash files. No services are installed or started.\n'
           'Runtime defaults are package resources; supply actual device settings externally.\n'
           'Data defaults: ${ROS_HOME:-$HOME/.ros}/navigation/<package>.\n')
     debian = work / 'dependency-scan/debian'
@@ -517,9 +590,14 @@ def assemble(work, version, manifest):
         runtime = [v for v in runtime if v not in ('ros-jazzy-navigation2', 'ros-jazzy-grid-map')]
         runtime += ['ros-jazzy-rviz-2d-overlay-msgs', 'ros-jazzy-cyclonedds']
     else:
+        if COMPONENT == 'task':
+            runtime = ['ros-jazzy-ros-base', 'ros-jazzy-cv-bridge', 'ros-jazzy-control-msgs',
+                       'ros-jazzy-nav2-msgs', 'ros-jazzy-rmw-cyclonedds-cpp',
+                       'python3-yaml', 'python3-numpy', 'python3-paho-mqtt', 'python3-boto3',
+                       'python3-requests', 'python3-serial', 'ffmpeg', 'alsa-utils']
         runtime += [f'control-driver (>= {manifest["driver_min_version"]})',
                     f'control-driver (<< {manifest["driver_max_version"]})']
-        if architecture == 'arm64':
+        if COMPONENT == 'navigation' and architecture == 'arm64':
             runtime += ARM64_RUNTIME_DEPENDS
     depends = ', '.join(filter(None, [depends, *runtime]))
     control = stage / 'DEBIAN'
@@ -529,8 +607,8 @@ def assemble(work, version, manifest):
           'Maintainer: Navigation maintainers <robot@example.com>\nSection: misc\nPriority: optional\n'
           f'Installed-Size: {installed_kib}\nDepends: {depends}\nRecommends: ros-jazzy-rviz2\n'
           'Conflicts: navigation, fhzn-navigation\nReplaces: navigation, fhzn-navigation\n'
-          'Description: Model-independent ROS 2 Jazzy navigation runtime\n'
-          ' Localization, mapping, planning, sensor drivers and custom interfaces.\n'
+          f'Description: Model-independent ROS 2 Jazzy {COMPONENT} runtime\n'
+          ' Robot control, navigation or inspection task components.\n'
           ' Excludes inspection_bringup, maps and system services.\n')
     dist = work / 'dist'
     dist.mkdir(exist_ok=True)
@@ -561,9 +639,9 @@ def inside(args):
         raise ValueError('builder image changed; use a new --work-dir for an ABI-clean build')
     if args.select and previous.get('release_recipe_sha256') != manifest['release_recipe_sha256']:
         raise ValueError('release recipe changed; run without --select to apply it to all packages')
-    if COMPONENT == 'navigation' and previous and driver_build_id(previous) != driver_build_id(manifest):
+    if COMPONENT != 'driver' and previous and driver_build_id(previous) != driver_build_id(manifest):
         if args.select:
-            raise ValueError('driver underlay changed; run without --select to rebuild navigation consumers')
+            raise ValueError('driver underlay changed; run without --select to rebuild component consumers')
         if (work / 'build').exists():
             shutil.rmtree(work / 'build')
     if args.select and any(previous.get('native', {}).get(n, {}).get('commit') !=
@@ -596,6 +674,7 @@ def inside(args):
          f'-DCMAKE_CXX_FLAGS={flags}',
          '-DPython3_EXECUTABLE=/usr/bin/python3', '-DPYTHON_EXECUTABLE=/usr/bin/python3',
          *(NAV_BRIDGE_OPTIONS if COMPONENT == 'driver' else []),
+         *(['-DGIMBAL_ENABLE_RKNN=AUTO', '-DGIMBAL_ENABLE_HKNETSDK=AUTO'] if COMPONENT == 'task' else []),
          f'-DGTSAM_DIR={DRIVER_PREFIX}/vendor/lib/cmake/GTSAM',
          f'-DLIVOX_LIDAR_SDK_LIBRARY={PREFIX}/vendor/lib/liblivox_lidar_sdk_shared.so',
          f'-DLIVOX_LIDAR_SDK_INCLUDE_DIR={PREFIX}/vendor/include',
@@ -611,13 +690,13 @@ def inside(args):
 
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--component', choices=('driver', 'navigation', 'all'), default='all')
+    p.add_argument('--component', choices=(*COMPONENTS, 'all'), default='all')
     p.add_argument('--version', help='default Debian version for selected components')
     p.add_argument('--tag', help='requested ggbond-control release tag, e.g. v0.3.5')
-    for component in ('driver', 'navigation'):
+    for component in COMPONENTS:
         p.add_argument(f'--{component}-version', help='component version; overrides --version')
         p.add_argument(f'--{component}-tag', help='component source tag; overrides --tag')
-    p.add_argument('--driver-deb', type=Path, help='driver build underlay for navigation-only builds')
+    p.add_argument('--driver-deb', type=Path, help='driver build underlay for navigation-only or task-only builds')
     p.add_argument('--driver-min-version', help='inclusive driver dependency lower bound; defaults to build driver version')
     p.add_argument('--driver-max-version', help='exclusive driver dependency upper bound; defaults to next major (next minor for 0.x)')
     p.add_argument('--work-dir', type=Path, help='persistent cache; defaults to ~/.cache/inspection-navigation-deb/<host architecture>')
@@ -632,7 +711,7 @@ def arguments():
         p.error('--jobs must be positive')
     if args.inside and args.component == 'all':
         p.error('--inside requires a single component')
-    components = ('driver', 'navigation') if args.component == 'all' else (args.component,)
+    components = COMPONENTS if args.component == 'all' else (args.component,)
     for component in components:
         version = getattr(args, component + '_version') or args.version
         if not version or not re.fullmatch(r'[0-9][A-Za-z0-9.+~:-]*', version):
@@ -640,19 +719,20 @@ def arguments():
         tag = getattr(args, component + '_tag') or args.tag
         if not args.inside and not args.package_only and not tag:
             p.error('--tag is required unless using --package-only (or use component-specific tags)')
-    for tag in (args.tag, args.driver_tag, args.navigation_tag):
+    for tag in (args.tag, args.driver_tag, args.navigation_tag, args.task_tag):
         if tag and version_tuple(tag) is None:
             p.error('--tag must be a stable version such as v0.3.5 (or 0.3.5)')
-    if args.package_only and any((args.tag, args.driver_tag, args.navigation_tag)):
+    if args.package_only and any((args.tag, args.driver_tag, args.navigation_tag, args.task_tag)):
         p.error('--package-only uses the previous source snapshot; omit --tag')
     if args.package_only and (args.driver_min_version or args.driver_max_version):
         p.error('--package-only preserves cached driver compatibility bounds')
-    if args.driver_deb and (args.component != 'navigation' or args.package_only):
-        p.error('--driver-deb is only for navigation source builds')
-    if args.component == 'navigation' and not args.package_only and not args.inside and not args.driver_deb:
-        p.error('--component navigation requires --driver-deb')
+    if args.driver_deb and (args.component not in ('navigation', 'task') or args.package_only):
+        p.error('--driver-deb is only for navigation or task source builds')
+    if args.component in ('navigation', 'task') and not args.package_only and not args.inside and not args.driver_deb:
+        p.error(f'--component {args.component} requires --driver-deb')
     if args.select and args.component != 'all':
-        allowed = DRIVER_PACKAGES if args.component == 'driver' else set(ALL_SOURCES) - DRIVER_PACKAGES
+        allowed = DRIVER_PACKAGES if args.component == 'driver' else (
+            NAVIGATION_PACKAGES if args.component == 'navigation' else TASK_SOURCES.keys())
         if set(args.select) - allowed:
             p.error('--select contains packages outside the selected component')
     for version in (args.driver_min_version, args.driver_max_version):
@@ -711,18 +791,19 @@ def build_component(args):
         image = subprocess.run(['docker', 'image', 'inspect', image_name], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode == 0
         if args.rebuild_image or not image:
-            run(['docker', 'build', '--platform', platform, '-t', image_name, '-f', ROOT / 'packaging/navigation/Dockerfile',
-                 ROOT / 'packaging/navigation'])
+            dockerfile = 'Dockerfile.task' if COMPONENT == 'task' else 'Dockerfile'
+            run(['docker', 'build', '--platform', platform, '-t', image_name,
+                 '-f', ROOT / 'packaging/navigation' / dockerfile, ROOT / 'packaging/navigation'])
         image_architecture = output(['docker', 'image', 'inspect', '--format', '{{.Architecture}}', image_name])
         if image_architecture != architecture:
             raise ValueError(f'{image_name} contains {image_architecture}, expected {architecture}; rebuild the image')
         if not args.package_only:
             manifest = {'builder_image': output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image_name]),
                         'packages': {}, 'native': {}, 'architecture': architecture, 'ros': 'jazzy',
-                        'release_recipe_sha256': digest(Path(__file__))}
+                        'release_recipe_sha256': recipe_id()}
             manifest['requested_tag'] = args.tag
             manifest['component'] = COMPONENT
-            if COMPONENT == 'navigation':
+            if COMPONENT != 'driver':
                 driver, minimum, maximum = driver_underlay(args, work, architecture)
                 manifest.update(driver=driver, driver_min_version=minimum, driver_max_version=maximum)
             with github_access() as git_env:
@@ -758,7 +839,7 @@ def build_component(args):
                    '-e', 'HOME=/release/home', '-v', f'{work}:/release',
                    '-v', f'{work}/install:{PREFIX}', '-v', f'{ROOT}/scripts:/tools:ro',
                    *(['-v', f'{work}/driver-underlay{DRIVER_PREFIX}:{DRIVER_PREFIX}:ro']
-                     if COMPONENT == 'navigation' else []),
+                     if COMPONENT != 'driver' else []),
                    image_name, 'python3', '/tools/package_navigation.py', '--inside', '--component', COMPONENT,
                    '--version', args.version, '-j', args.jobs]
         if args.package_only:
@@ -776,7 +857,7 @@ def main():
         configure_component(args.component)
         inside(args)
         return
-    components = ('driver', 'navigation') if args.component == 'all' else (args.component,)
+    components = COMPONENTS if args.component == 'all' else (args.component,)
     driver_deb = args.driver_deb
     for component in components:
         configure_component(component)
@@ -788,8 +869,8 @@ def main():
         if args.select:
             current.select = [n for n in args.select if n in SOURCES or
                               (component == 'driver' and n in EMBEDDED_SOURCES)]
-            if component == 'navigation' and set(args.select) & DRIVER_PACKAGES:
-                current.select = None  # Rebuild all navigation consumers of changed driver inputs.
+            if component != 'driver' and set(args.select) & DRIVER_PACKAGES:
+                current.select = None  # Rebuild every consumer of changed driver inputs.
             elif not current.select:
                 current.package_only = True
         artifact = build_component(current)

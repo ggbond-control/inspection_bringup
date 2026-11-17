@@ -15,6 +15,7 @@ branches are modified.
 | --- | --- | --- |
 | `control-driver` | `inspection_interfaces`, `robots_dog_msgs`, `control_input_msgs`, `gnss_driver`, `livox_ros_driver2`, `ndt_omp`, `nav_bridge`, embedded `uniubi` and `uniubi_motion_client`, GTSAM and Livox SDK | `/opt/inspection/driver` |
 | `control-navigation` | `faster_lio`, `gridmapper`, `local_planner`, `multi_map_nav`, `smac_straight_planner` | `/opt/inspection/navigation` |
+| `control-task` | `alarm_manager`, `light_manager`, `acoustic_monitor`, `gas_monitor`, `sensor_rs485`, `sensor_gimbal`, `inspection_charge_executor`, `inspection_platform_bridge`, `inspection_task_hub` | `/opt/inspection/task` |
 
 Driver explicitly enables X30, D1 Max, Cyvet, TANK and R750 bridge executables
 on both architectures. An unavailable SDK/backend stops the build instead of
@@ -26,7 +27,10 @@ packaging does not read `robot.yaml`.
 are excluded. Generic launch/config resources and ROS package indexes remain
 available. Driver headers, static libraries and CMake exports are retained so
 navigation can compile against the exact distributed driver deb. The two
-prefixes have no shared file ownership.
+prefixes have no shared file ownership. Task reuses the driver's interfaces;
+`inspection_interfaces` and other driver packages are not duplicated. The
+optional `mission_execution_agent` and `capability_mission_planner` are excluded.
+Keep `system.modules.mission_execution_agent: false` if those packages are absent.
 
 ## Prerequisites
 
@@ -42,8 +46,8 @@ contacts source repositories.
 
 ## Commands
 
-Build both components in order (`--component all` is the default). The generated
-driver deb automatically becomes navigation's build underlay:
+Build all three components in driver, navigation, task order (`--component all`
+is the default). The generated driver deb becomes both consumers' build underlay:
 
 ```bash
 bash scripts/package.sh --version 0.3.5 --tag v0.3.5 -j1
@@ -66,13 +70,26 @@ bash scripts/package.sh --component navigation \
   --driver-min-version 0.3.5 --driver-max-version 0.4.0 -j2
 ```
 
-Give the two components independent versions and source tags:
+Give the three components independent versions and source tags:
 
 ```bash
 bash scripts/package.sh --component all \
   --driver-version 0.3.5 --driver-tag v0.3.5 \
-  --navigation-version 0.4.2 --navigation-tag v0.4.2 -j1
+  --navigation-version 0.4.2 --navigation-tag v0.4.2 \
+  --task-version 0.2.0 --task-tag v0.2.0 -j1
 ```
+
+Build task independently, without fetching or compiling driver/navigation:
+
+```bash
+bash scripts/package.sh --component task --version 0.3.11 --tag v0.3.11 \
+  --driver-deb ~/.cache/inspection-navigation-deb/amd64/driver/dist/control-driver_0.3.11_amd64.deb \
+  --driver-min-version 0.3.11 --driver-max-version 0.4.0 -j2
+```
+
+For later task-only updates, add `--select inspection_task_hub` (or another task
+package). Use `--component task --version 0.3.11-1 --package-only` to repackage a
+successful task cache without source access or compilation.
 
 After an initial complete component build, rebuild selected ROS packages and
 their consumers within that component:
@@ -97,12 +114,13 @@ bash scripts/package.sh --component navigation \
 
 | Option | Meaning |
 | --- | --- |
-| `--component driver\|navigation\|all` | Components to build/package; default `all` |
+| `--component driver\|navigation\|task\|all` | Components to build/package; default `all` |
 | `--version` | Default Debian version for requested components |
 | `--tag` | Default organization source tag, e.g. `v0.3.5` |
 | `--driver-version`, `--navigation-version` | Override the corresponding Debian version |
 | `--driver-tag`, `--navigation-tag` | Override the corresponding source tag |
-| `--driver-deb` | Required for navigation-only source builds; must match host architecture |
+| `--task-version`, `--task-tag` | Task Debian version and source tag overrides |
+| `--driver-deb` | Required for navigation-only/task-only source builds; must match host architecture |
 | `--driver-min-version` | Inclusive lower bound; default build driver version |
 | `--driver-max-version` | Exclusive upper bound; default next major, or next minor for `0.x` |
 | `--work-dir` | Cache root; component subdirectories are appended automatically |
@@ -113,9 +131,9 @@ bash scripts/package.sh --component navigation \
 
 `--select` checks all source repositories within the chosen component. Changes
 outside its consumer closure are rejected. In `all` mode a selection confined to
-navigation repackages the cached driver; selecting driver packages also rebuilds
-all navigation consumers. To avoid publishing a driver release at all, use
-`--component navigation` and `--driver-deb`.
+one consumer repackages the other cached components; selecting driver packages
+also rebuilds all navigation/task consumers. To avoid publishing unrelated
+components, select `--component navigation` or `--component task` with `--driver-deb`.
 
 ## Versions and Dependencies
 
@@ -147,6 +165,7 @@ Default layout (replace `amd64` with `arm64` on the board):
 ~/.cache/inspection-navigation-deb/amd64/
   driver/dist/control-driver_<version>_amd64.deb
   navigation/dist/control-navigation_<version>_amd64.deb
+  task/dist/control-task_<version>_amd64.deb
 ```
 
 Each component retains `repositories/`, adjusted `sources/`, `build/`, `install/`
@@ -158,7 +177,13 @@ New component caches do not reuse the old monolithic build directories.
 Subsequent builds reuse unchanged objects and native-library commits. Failures
 block `--package-only` until compilation succeeds. Stale files recorded by install
 manifests are removed. Use a new cache when changing the builder image/toolchain.
-The image is `inspection-control-builder:jazzy-<architecture>` and uses the
+Driver/navigation use `inspection-control-builder:jazzy-<architecture>`; task uses
+the independent `inspection-task-builder:jazzy-<architecture>` and
+`navigation/Dockerfile.task`. Component rule revisions are recorded separately;
+adding task does not change the driver/navigation image or delete their caches.
+When introducing these revision identifiers into an older cache, omit `--select`
+once; existing build objects remain reusable. Future changes must bump only the
+affected component's `recipe_id()`. The images use the
 official multi-architecture `ros:jazzy-ros-base`. Docker's storage is separate;
 inspect it with `docker info --format '{{.DockerRootDir}}'`.
 
@@ -188,11 +213,12 @@ sudo apt install ./control-driver_0.3.5_amd64.deb ./control-navigation_0.4.2_amd
 source /opt/ros/jazzy/setup.bash
 source /opt/inspection/driver/local_setup.bash
 source /opt/inspection/navigation/local_setup.bash
+source /opt/inspection/task/local_setup.bash  # If control-task is installed
 ros2 pkg executables nav_bridge
 ros2 pkg executables local_planner
 ```
 
-Both debs replace/conflict with the former `navigation` and `fhzn-navigation`
+The component debs replace/conflict with the former `navigation` and `fhzn-navigation`
 monolithic packages. Supply both new debs in one apt command when migrating.
 Configure bringup separately to source driver then navigation instead of developer
 overlays. No services are installed, started or restarted automatically.
@@ -201,13 +227,37 @@ On arm64, `control-navigation` also depends on `opencl-headers`,
 `ocl-icd-opencl-dev`, `mesa-opencl-icd` and `clinfo`; apt installs them automatically.
 GPU group permissions and `RUSTICL_ENABLE` remain deployment configuration.
 
+Task depends on a compatible driver range, not on control-navigation. It uses
+system ROS messages for navigation/charging actions; navigation can be provided
+separately. Task adds Python MQTT/HTTP/S3 libraries, ffmpeg, ALSA utilities and
+ROS control/camera messages. RKNN and HCNetSDK follow `build_inspection.sh`'s
+`AUTO` behavior: enable only when compatible SDK files exist in the selected
+sensor_gimbal source. Enabled features are recorded in the artifact manifest.
+Matching SDK runtime libraries are bundled; the acoustic SDK is also bundled for
+the target architecture. User/device configuration and service activation remain
+external. Packaged systemd templates are resources, not enabled system services.
+The task image includes `nlohmann-json3-dev` for `find_package(nlohmann_json)`.
+This is a header-only build dependency, so the runtime deb does not require its
+development package. After updating the Dockerfile, use `--rebuild-image` to
+install new build dependencies; an existing cached image is not rebuilt automatically.
+Choose compatible task and driver source releases. For example, task_hub code
+that accesses `SetGPSGoal.skip_yaw_alignment` cannot compile against a driver
+interface that has replaced that field with `arrival_mode`. Dependency bounds
+do not translate protocols; such mismatches stop the build and must be resolved
+by selecting compatible releases or updating the business package separately.
+
 Run isolated installation/runtime/removal checks on a matching-architecture host:
 
 ```bash
 bash scripts/test_navigation_deb.sh DRIVER_DEB
 bash scripts/test_navigation_deb.sh DRIVER_DEB NAVIGATION_DEB
 bash scripts/test_navigation_deb.sh DRIVER_DEB NAVIGATION_DEB NEWER_NAVIGATION_DEB
+bash scripts/test_navigation_deb.sh DRIVER_DEB TASK_DEB
+bash scripts/test_navigation_deb.sh DRIVER_DEB NAVIGATION_DEB TASK_DEB
 ```
+
+Arguments after DRIVER_DEB are installed and checked sequentially, allowing
+component upgrades to be checked without replacing the other components.
 
 Checks cover ROS interfaces, all bridge executable files, ELF architecture and
 dynamic dependencies. Pair checks also cover navigation plugins/resources and

@@ -75,16 +75,90 @@ class Packaging(unittest.TestCase):
 
     def test_default_all_dispatches_independent_versions_and_passes_driver_artifact(self):
         argv = ['pack', '--driver-version', '0.3.5', '--navigation-version', '0.4.2',
-                '--driver-tag', 'v0.3.5', '--navigation-tag', 'v0.4.2']
+                '--driver-tag', 'v0.3.5', '--navigation-tag', 'v0.4.2',
+                '--task-version', '0.2.0', '--task-tag', 'v0.2.0']
         calls = []
         def build(args):
             calls.append(copy_args := dict(vars(args)))
             return Path('/tmp/control-' + copy_args['component'] + '.deb')
         with patch.object(release.sys, 'argv', argv), patch.object(release, 'build_component', side_effect=build):
             release.main()
-        self.assertEqual([v['component'] for v in calls], ['driver', 'navigation'])
-        self.assertEqual([v['version'] for v in calls], ['0.3.5', '0.4.2'])
+        self.assertEqual([v['component'] for v in calls], ['driver', 'navigation', 'task'])
+        self.assertEqual([v['version'] for v in calls], ['0.3.5', '0.4.2', '0.2.0'])
         self.assertEqual(calls[1]['driver_deb'], Path('/tmp/control-driver.deb'))
+        self.assertEqual(calls[2]['driver_deb'], Path('/tmp/control-driver.deb'))
+
+    def test_task_dispatch_is_isolated_and_uses_driver_only(self):
+        argv = ['pack', '--component', 'task', '--version', '0.3.11', '--tag', 'v0.3.11',
+                '--driver-deb', '/tmp/driver.deb']
+        with patch.object(release.sys, 'argv', argv), patch.object(release, 'build_component') as build:
+            release.main()
+        build.assert_called_once()
+        self.assertEqual(release.PREFIX, Path('/opt/inspection/task'))
+        self.assertEqual(set(release.SOURCES), set(release.TASK_SOURCES))
+        self.assertFalse(release.NATIVE)
+        self.assertEqual(release.builder_image('arm64'), 'inspection-task-builder:jazzy-arm64')
+        self.assertNotIn('inspection_interfaces', release.SOURCES)
+        self.assertNotIn('inspection_bringup', release.SOURCES)
+
+    def test_component_recipe_and_image_isolation(self):
+        records = {}
+        for component in release.COMPONENTS:
+            release.configure_component(component)
+            records[component] = (release.recipe_id(), release.builder_image('amd64'))
+        self.assertEqual(len({v[0] for v in records.values()}), 3)
+        self.assertEqual(records['driver'][1], records['navigation'][1])
+        self.assertNotEqual(records['task'][1], records['driver'][1])
+
+    def test_task_requires_driver_and_rejects_foreign_package_selection(self):
+        for extra, message in [([], 'requires --driver-deb'),
+                               (['--driver-deb', '/tmp/d.deb', '--select', 'local_planner'], 'outside')]:
+            result = subprocess.run(['/usr/bin/python3', release.__file__, '--component', 'task',
+                                     '--version', '0.3.11', '--tag', 'v0.3.11', *extra],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(message, result.stderr)
+
+    def test_task_payload_and_architecture_filtered_sdk_libraries(self):
+        for arch, selected, machine in [('amd64', 'x64', 62), ('arm64', 'arm64', 183)]:
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as temp:
+                release.configure_component('task')
+                root = Path(temp)
+                prefix = root / 'install'
+                for name in release.SOURCES:
+                    release.write(prefix / 'share/ament_index/resource_index/packages' / name, '')
+                    (root / 'sources' / name).mkdir(parents=True)
+                release.write(root / 'build/sensor_gimbal/CMakeCache.txt',
+                              'GIMBAL_ENABLE_RKNN:STRING=AUTO\nGIMBAL_ENABLE_HKNETSDK:STRING=AUTO\n')
+                sdk = root / 'sources/sensor_gimbal/third_party/rknn/lib/librknnrt.so'
+                sdk.parent.mkdir(parents=True)
+                sdk.write_bytes(b'\x7fELF' + b'\x00\x01' + bytes(12) + machine.to_bytes(2, 'little'))
+                release.write(root / 'sources/sensor_gimbal/third_party/rknn/include/rknn_api.h', '// sdk')
+                release.write(root / f'sources/acoustic_monitor/third_party/micarr_sdk/{selected}/lib/libmicArrSDK.so', 'sdk')
+                for other in ('x64', 'arm64'):
+                    release.write(prefix / f'share/acoustic_monitor/third_party/micarr_sdk/{other}/lib/libmicArrSDK.so', 'sdk')
+                with patch.object(release, 'PREFIX', prefix), patch.object(release, 'run', wraps=release.run) as run, \
+                        patch.object(release, 'output', return_value='shlibs:Depends=libc6'):
+                    # Fixture ELF has only a header, so intercept ELF manipulation.
+                    def execute(args, **kwargs):
+                        if args[0] in ('strip', 'patchelf'):
+                            return None
+                        return release.subprocess.run([str(v) for v in args], check=True, **kwargs)
+                    run.side_effect = execute
+                    release.assemble(root, '0.3.11', dict(architecture=arch,
+                                     driver_min_version='0.3.5', driver_max_version='0.4.0'))
+                deb = root / 'dist' / f'control-task_0.3.11_{arch}.deb'
+                deps = subprocess.check_output(['dpkg-deb', '-f', deb, 'Depends'], text=True)
+                self.assertIn('control-driver (>= 0.3.5)', deps)
+                self.assertNotIn('control-navigation', deps)
+                self.assertNotIn('mesa-opencl-icd', deps)
+                self.assertIn('python3-paho-mqtt', deps)
+                manifest = json.loads(Path(str(deb) + '.manifest.json').read_text())
+                self.assertTrue(manifest['features']['rknn'])
+                self.assertFalse(manifest['features']['hknetsdk'])
+                contents = subprocess.check_output(['dpkg-deb', '-c', deb], text=True)
+                self.assertIn('/vendor/lib/libmicArrSDK.so', contents)
+                self.assertNotIn(f'micarr_sdk/{"arm64" if selected == "x64" else "x64"}/', contents)
 
     def test_navigation_only_does_not_dispatch_driver_build(self):
         argv = ['pack', '--component', 'navigation', '--version', '0.4.2', '--tag', 'v0.4.2',

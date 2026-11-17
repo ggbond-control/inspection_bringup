@@ -19,8 +19,12 @@ def main():
     prefix = Path('/opt/inspection/navigation')
     driver = Path('/opt/inspection/driver')
     manifests = [json.loads((driver / 'share/control_release/manifest.json').read_text())]
-    if (prefix / 'share/control_release/manifest.json').exists():
-        manifests.append(json.loads((prefix / 'share/control_release/manifest.json').read_text()))
+    for component in ('navigation', 'task'):
+        path = Path('/opt/inspection') / component / 'share/control_release/manifest.json'
+        if path.exists():
+            manifests.append(json.loads(path.read_text()))
+    has_navigation = any(v['component'] == 'navigation' for v in manifests)
+    has_task = any(v['component'] == 'task' for v in manifests)
     for item in manifests:
         component_prefix = Path(item['install_prefix'])
         for name in item['packages']:
@@ -34,7 +38,7 @@ def main():
         assert os.access(driver / f'lib/nav_bridge/{model}_nav_bridge_node', os.X_OK), model
     for module in ['inspection_interfaces.msg', 'inspection_interfaces.srv', 'inspection_interfaces.action',
                    'robots_dog_msgs.msg', 'control_input_msgs.msg', 'livox_ros_driver2.msg',
-                   'uniubi.msg'] + (['faster_lio.msg', 'gridmapper.srv'] if len(manifests) == 2 else []):
+                   'uniubi.msg'] + (['faster_lio.msg', 'gridmapper.srv'] if has_navigation else []):
         imported = importlib.import_module(module)
         for name in dir(imported):
             cls = getattr(imported, name)
@@ -61,8 +65,15 @@ def main():
         assert result.returncode == 0 and 'not found' not in result.stdout, (p, result.stdout, result.stderr)
         count += 1
     subprocess.run(['ros2', 'launch', 'gnss_driver', 'driver.launch.py', '--show-args'], check=True)
-    if len(manifests) == 1:
-        print(f'PASS: driver packages, five bridge executables, interfaces and {count} ELF files')
+    if has_task:
+        importlib.import_module('inspection_platform_bridge.platform_mqtt_bridge_node')
+        task = Path('/opt/inspection/task')
+        for package, executable in [('alarm_manager', 'alarm_aggregator_node'),
+                                    ('sensor_gimbal', 'sensor_gimbal_node'),
+                                    ('inspection_task_hub', 'task_hub_node')]:
+            assert os.access(task / 'lib' / package / executable, os.X_OK), executable
+    if not has_navigation:
+        print(f'PASS: {len(manifests)} components, bridge executables, interfaces and {count} ELF files')
         return
     for name in ['libdummy_controller_plugin.so', 'libsmac_straight_planner.so']:
         ctypes.CDLL(str(prefix / 'lib' / name))
