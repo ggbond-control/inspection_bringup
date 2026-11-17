@@ -264,6 +264,15 @@ Start only the platform bridge:
 ros2 launch inspection_bringup platform_bridge.launch.py
 ```
 
+## Cooperation Mode
+
+Choose `system.cooperation.mode: disabled | coordination | swarm` in `config/robot.yaml`.
+Swarm reuses the existing MQTT connection, device identity, capabilities and speed;
+routine deployment needs no `cooperation.swarm` settings or extra permission flag.
+The fixed platform prefix is `fh/swarm/dispatch`, heartbeat topic is
+`fh/swarm/device/<robot_id>/heartbeat`, and peer prefix is
+`fh/swarm/peer/inspection-swarm`.
+
 ## Debug With Tmux
 
 For field debugging, start enabled modules from the same `config/system.yaml`

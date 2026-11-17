@@ -219,6 +219,32 @@ class Configuration(unittest.TestCase):
             with self.assertRaises(ValueError):
                 swarm_configuration(config, status)
 
+    def test_swarm_mode_alone_uses_stable_topics_and_existing_tls_configuration(self):
+        import json
+        from cooperation import swarm_configuration
+        status = self.root / 'status.json'
+        status.write_text(json.dumps({'capabilities': ['device']}))
+        self.robot(system={'mqtt': {'host': 'remote-broker.invalid'},
+                           'cooperation': {'mode': 'swarm'}})
+        config = cfg.load_config('system')
+        self.assertNotIn('swarm', config['cooperation'])
+        projected = swarm_configuration(config, status)
+        self.assertEqual(projected['cluster_id'], 'inspection-swarm')
+        self.assertEqual(projected['transport']['mqtt_prefix'], 'fh/swarm/peer')
+        self.assertEqual(projected['transport']['platform_prefix'], 'fh/swarm/dispatch')
+        self.assertNotIn('allow_insecure_remote', projected['transport'])
+        self.assertFalse(projected['transport']['mqtt_tls'])
+        config['mqtt'].update(tls=True, ca='/test/ca.pem')
+        tls = swarm_configuration(config, status)['transport']
+        self.assertTrue(tls['mqtt_tls'])
+        self.assertEqual(tls['mqtt_ca'], '/test/ca.pem')
+        config['cooperation']['swarm'] = {'cluster_id': 'isolated-test',
+            'mqtt_prefix': 'test/swarm/peer', 'platform_prefix': 'test/swarm/dispatch'}
+        isolated = swarm_configuration(config, status)
+        self.assertEqual(isolated['cluster_id'], 'isolated-test')
+        self.assertEqual(isolated['transport']['mqtt_prefix'], 'test/swarm/peer')
+        self.assertEqual(isolated['transport']['platform_prefix'], 'test/swarm/dispatch')
+
     def test_lists_replace_instead_of_append(self):
         self.robot(navigation={'bringup': {'modes': {'nav': {'sequence': ['nav_bridge']}}}})
         self.assertEqual(cfg.load_config('navigation')['bringup']['modes']['nav']['sequence'], ['nav_bridge'])

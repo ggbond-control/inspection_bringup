@@ -38,6 +38,11 @@ def validate(config):
 
 def swarm_configuration(config, device_status_path):
     """Project merged Bringup settings into node parameters, without a second YAML."""
+    # Optional dependency: single-device and coordination modes do not import swarm.
+    from swarm_protocol.topics import (
+        DEFAULT_CLUSTER_ID, DEFAULT_PEER_PREFIX, DEFAULT_PLATFORM_PREFIX,
+    )
+
     validate(config)
     settings = config['cooperation']
     swarm = settings.get('swarm', {})
@@ -55,7 +60,7 @@ def swarm_configuration(config, device_status_path):
         raise ValueError('device_status nominal_speed_mps must be positive and finite')
     result = {
         'robot_id': robot,
-        'cluster_id': swarm.get('cluster_id', 'inspection-swarm'),
+        'cluster_id': swarm.get('cluster_id', DEFAULT_CLUSTER_ID),
         'data_root': swarm.get('data_root', '~/.ros/swarm'),
         'transport': {
             'mqtt_host': mqtt.get('host', '127.0.0.1'),
@@ -64,9 +69,8 @@ def swarm_configuration(config, device_status_path):
             'mqtt_password': mqtt.get('password', ''),
             'mqtt_tls': mqtt.get('tls', False),
             'mqtt_ca': mqtt.get('ca', ''),
-            'allow_insecure_remote': mqtt.get('allow_insecure_remote', False),
-            'mqtt_prefix': swarm.get('mqtt_prefix', 'fh/swarm/v1'),
-            'platform_prefix': swarm.get('platform_prefix', 'fh/swarm/dispatch'),
+            'mqtt_prefix': swarm.get('mqtt_prefix', DEFAULT_PEER_PREFIX),
+            'platform_prefix': swarm.get('platform_prefix', DEFAULT_PLATFORM_PREFIX),
         },
         'agent': {
             **swarm.get('agent', {}),

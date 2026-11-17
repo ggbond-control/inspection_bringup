@@ -48,8 +48,8 @@ model: cyvet
 robot_id: CYVET-A
 ```
 
-`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块，开启任务执行和集群选主，
-集群列表包含 X30-A、X30-B、CYVET-A、CYVET-B。任务中枢的充电退出地址保留
+`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块；协同模式由
+`system.cooperation.mode` 统一选择，设备不维护其他设备名单。任务中枢的充电退出地址保留
 部署值 `/inspection_charge_executor/exit_charge`，但 charge 模块关闭，不会由本启动
 提供该服务；Cyvet 导航也关闭充电预检查。没有外部实现时，不应执行充电任务。
 `auto_execute: true` 继承公共值，表示自动执行任务。
@@ -59,6 +59,24 @@ robot_id: CYVET-A
 不要在型号层重新填写固定 navigate_config_path/system_config_path，否则会绕过型号加载。
 Cyvet 定位调用超时按部署值设为 60 秒；若初始化超过该时间，调用方可能先超时，
 导航启动不会因此自动取消。
+
+### 协同模式
+
+在同一个 `robot.yaml` 中按需增加：
+
+```yaml
+system:
+  cooperation:
+    mode: swarm  # disabled | coordination | swarm
+```
+
+`disabled` 关闭协同节点及协同心跳，`coordination` 启用半分布式协同，`swarm` 启用全分布式协同；
+单机任务中枢和其他模块继续使用原配置。修改后重启 system 服务。
+
+全分布式复用已有 `mqtt` 认证和 TLS 配置，不需要 `allow_insecure_remote`。
+日常无需填写 `cooperation.swarm`：集群固定为 `inspection-swarm`，设备内部前缀固定为
+`fh/swarm/peer`，平台前缀固定为 `fh/swarm/dispatch`，不含日期或版本号，不复用 fleet 主题。
+`cooperation.swarm` 仅用于可选高级覆盖。
 
 需要单机差异时，直接写在同一个文件中：
 
