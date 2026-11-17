@@ -413,8 +413,27 @@ def driver_build_id(manifest):
     return driver.get('build_id', driver.get('sha256'))
 
 
+def relocate_gtsam_exports(dest):
+    for package in ('GTSAM', 'GTSAM_UNSTABLE'):
+        path = dest / f'vendor/lib/cmake/{package}/{package}Config.cmake'
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        pattern = (re.escape('if(EXISTS "${OUR_CMAKE_DIR}/CMakeCache.txt")') +
+                   r'\n.*?\nelse\(\)\n(.*?)\nendif\(\)')
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            installed = match.group(1)
+            expected = f'set({package}_INCLUDE_DIR "${{OUR_CMAKE_DIR}}/../../../include"'
+            if expected not in installed or '/release/' in installed:
+                raise ValueError(f'{package}: installed include layout changed; review release adaptation')
+            write(path, text[:match.start()] + installed + text[match.end():])
+
+
 def assemble(work, version, manifest):
     architecture = manifest['architecture']
+    multiarch = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}[architecture]
+    ros_arch_lib = f'/opt/ros/jazzy/lib/{multiarch}'
     manifest = dict(manifest, version=version, component=COMPONENT, install_prefix=str(PREFIX),
                     packaging_recipe_sha256=digest(Path(__file__)))
     stage = work / 'stage'
@@ -422,6 +441,8 @@ def assemble(work, version, manifest):
         shutil.rmtree(stage)
     dest = stage / PREFIX.relative_to('/')
     shutil.copytree(PREFIX, dest, symlinks=True)
+    if COMPONENT == 'driver':
+        relocate_gtsam_exports(dest)
     # Driver exports form the navigation build underlay; navigation is runtime-only.
     for p in sorted(dest.rglob('*'), reverse=True):
         if p.is_file() and ((p.suffix == '.a' and COMPONENT != 'driver') or
@@ -448,7 +469,8 @@ def assemble(work, version, manifest):
             if magic == b'\x7fELF':
                 run(['strip', '--strip-unneeded', p], stdout=subprocess.DEVNULL)
                 run(['patchelf', '--set-rpath',
-                     f'{PREFIX}/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:/opt/ros/jazzy/lib', p],
+                     f'{PREFIX}/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:'
+                     f'/opt/ros/jazzy/lib:{ros_arch_lib}', p],
                     stdout=subprocess.DEVNULL)
                 elfs.append(p)
             elif p.suffix in ('.sh', '.bash', '.zsh', '.ps1', '.dsv', '.py', '.cmake', '.pc'):
@@ -486,7 +508,7 @@ def assemble(work, version, manifest):
           f'Package: {PACKAGE_NAME}\nArchitecture: {architecture}\nDescription: Navigation runtime\n')
     args = ['dpkg-shlibdeps', '-O', '--ignore-missing-info',
             f'-l{dest}/lib', f'-l{dest}/vendor/lib', f'-l{DRIVER_PREFIX}/lib',
-            f'-l{DRIVER_PREFIX}/vendor/lib', '-l/opt/ros/jazzy/lib']
+            f'-l{DRIVER_PREFIX}/vendor/lib', '-l/opt/ros/jazzy/lib', f'-l{ros_arch_lib}']
     result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent) if elfs else ''
     depends = next((line.split('=', 1)[1] for line in result.splitlines()
                     if line.startswith('shlibs:Depends=')), '')

@@ -195,6 +195,29 @@ class Packaging(unittest.TestCase):
             release.driver_build_id({'driver': {'version': '0.3.5', 'sha256': 'archive-a', 'build_id': 'same'}}),
             release.driver_build_id({'driver': {'version': '0.3.5-1', 'sha256': 'archive-b', 'build_id': 'same'}}))
 
+    def test_gtsam_exports_keep_installed_paths_without_build_tree_references(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for package in ('GTSAM', 'GTSAM_UNSTABLE'):
+                path = root / f'vendor/lib/cmake/{package}/{package}Config.cmake'
+                release.write(path, '# Compute paths\n'
+                    'get_filename_component(OUR_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)\n'
+                    'if(EXISTS "${OUR_CMAKE_DIR}/CMakeCache.txt")\n'
+                    '  # In build tree\n'
+                    f'  set({package}_INCLUDE_DIR /release/native-src/gtsam CACHE PATH "include")\n'
+                    'else()\n  # Find installed library\n'
+                    f'  set({package}_INCLUDE_DIR "${{OUR_CMAKE_DIR}}/../../../include" CACHE PATH "include")\n'
+                    'endif()\ninclude(${OUR_CMAKE_DIR}/exports.cmake)\n')
+            release.relocate_gtsam_exports(root)
+            for package in ('GTSAM', 'GTSAM_UNSTABLE'):
+                path = root / f'vendor/lib/cmake/{package}/{package}Config.cmake'
+                text = path.read_text()
+                self.assertNotIn('/release/', text)
+                self.assertNotIn('CMakeCache.txt', text)
+                self.assertIn('${OUR_CMAKE_DIR}/../../../include', text)
+                self.assertIn('include(${OUR_CMAKE_DIR}/exports.cmake)', text)
+            release.relocate_gtsam_exports(root)
+
     def test_arm64_host_uses_arm_container_and_rejects_amd64_cache(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
