@@ -17,28 +17,31 @@ SCRIPTS = ('build_inspection.sh', 'build_navigation.sh')
 
 
 class TankBuildProfile(unittest.TestCase):
-    def test_chassis_profiles_leave_other_models_at_cmake_defaults(self):
+    def test_chassis_profiles_select_explicit_backends(self):
         spec = importlib.util.spec_from_file_location('navigation_build', BRINGUP_DIR / 'scripts/navigation_build.py')
         import sys
         with patch.object(sys, 'path', [str(BRINGUP_DIR / 'scripts'), *sys.path]):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         all_backends = ('X30', 'D1_MAX', 'CYVET', 'TANK', 'R750')
-        chassis = {'tank': 'TANK', 'r750': 'R750'}
-        cases = (('tank', True), ('r750', True), ('d1m', False), ('x30', False), ('cyvet', False))
+        chassis = {'tank': 'TANK', 'r750': 'R750', 'cyvet': 'CYVET'}
+        cases = (('tank', True), ('r750', True), ('d1m', False), ('x30', False), ('cyvet', True))
         for model, enabled in cases:
             with self.subTest(model=model), patch.object(sys, 'argv', ['build_navigation.sh', '--model', model, '--plan']), \
                     patch.dict(os.environ, {'INSPECTION_CONFIG_DIR': str(BRINGUP_DIR / 'config')}):
                 build = module.Build(module.arguments())
                 options = build.config['package_cmake_args'].get('nav_bridge', [])
-                if model in ('x30', 'cyvet'):
+                if model == 'x30':
                     self.assertEqual(options, [])
                 else:
                     self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if model == 'tank' else 'OFF'), options)
                 if enabled:
                     for backend in all_backends:
-                        if backend != 'TANK' and backend != chassis[model]:
-                            self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=OFF', options)
+                        self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=' +
+                                      ('ON' if backend == chassis[model] else 'OFF'), options)
+                if model == 'cyvet':
+                    self.assertEqual(build.rmw, 'rmw_cyclonedds_cpp')
+                    self.assertEqual(build.config['package_dependencies']['nav_bridge'], ['uniubi', 'uniubi_motion_client'])
                 self.assertEqual(build.repo_path('driver_ws/src/nav_bridge'), build.workspaces['driver_ws'] / 'src/nav_bridge')
 
 
@@ -115,6 +118,7 @@ with open(os.environ['BUILD_TEST_LOG'], 'a') as stream:
         'parallel': os.environ.get('CMAKE_BUILD_PARALLEL_LEVEL'),
         'rmw': os.environ.get('RMW_IMPLEMENTATION'),
         'ament': os.environ.get('AMENT_PREFIX_PATH', ''),
+        'meta': json.loads(Path(sys.argv[sys.argv.index('--metas') + 1]).read_text()) if '--metas' in sys.argv else None,
     }) + '\\n')
 if name == 'colcon' and 'list' in sys.argv:
     import xml.etree.ElementTree as ET
@@ -272,6 +276,48 @@ elif name == 'ros2':
         install = self.root / 'driver_ws/install'
         install.mkdir(parents=True, exist_ok=True)
         (install / 'local_setup.bash').write_text('export AMENT_PREFIX_PATH=/selected-driver\n')
+
+    def test_cyvet_discovers_hidden_dependencies_and_passes_build_order_metadata(self):
+        # The nav_bridge repository is a ROS package itself; ordinary recursion
+        # cannot discover the vendor packages beneath its COLCON_IGNORE.
+        manifest = self.bringup / 'config/navigation_deps.repos'
+        value = json.loads(manifest.read_text())
+        value['repositories']['driver_ws/src/nav_bridge'] = {'type': 'git', 'url': 'unused'}
+        manifest.write_text(json.dumps(value))
+        bridge = self.root / 'driver_ws/src/nav_bridge'
+        bridge.mkdir(parents=True)
+        (bridge / 'package.xml').write_text('<package><name>nav_bridge</name></package>')
+        vendor = bridge / 'third_party/uniubi'
+        vendor.mkdir(parents=True)
+        (vendor / 'COLCON_IGNORE').touch()
+        for relative, name in [('uniubi_robot_msgs/ros2', 'uniubi'),
+                               ('uniubi_motion_client', 'uniubi_motion_client')]:
+            package = vendor / relative
+            package.mkdir(parents=True)
+            (package / 'package.xml').write_text(f'<package><name>{name}</name></package>')
+        shutil.copy(BRINGUP_DIR / 'config/build/cyvet.yaml', self.bringup / 'config/build/cyvet.yaml')
+        # This small fixture intentionally contains no other production packages.
+        config = self.root / 'test-build.yaml'
+        config.write_text(json.dumps({'required_packages': {'driver_ws': ['nav_bridge', 'uniubi', 'uniubi_motion_client']}}))
+        for selected in ([], ['--select', 'uniubi', 'uniubi_motion_client', 'nav_bridge']):
+            with self.subTest(selected=selected):
+                result, commands = self.run_build('build_navigation.sh',
+                    ['--model', 'cyvet', '--config', str(config), *selected])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                driver, = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']
+                           and 'nav_bridge' in c['args']]
+                for name in ('uniubi', 'uniubi_motion_client'):
+                    self.assertIn(name, driver['args'])
+                self.assertEqual(driver['meta']['names']['nav_bridge']['dependencies'],
+                                 ['uniubi', 'uniubi_motion_client'])
+                self.assertIn('-DNAV_BRIDGE_BUILD_CYVET=ON', driver['meta']['names']['nav_bridge']['cmake-args'])
+                self.assertEqual(driver['rmw'], 'rmw_cyclonedds_cpp')
+                self.assertTrue((vendor / 'COLCON_IGNORE').exists())
+        shutil.rmtree(vendor / 'uniubi_motion_client')
+        result, commands = self.run_build('build_navigation.sh', ['--model', 'cyvet', '--select', 'nav_bridge'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('additional source not found', result.stderr)
+        self.assertFalse(any(c['name'] == 'colcon' and 'build' in c['args'] for c in commands))
 
     def test_navigation_select_builds_only_requested_package_and_reuses_driver_overlay(self):
         self.selected_underlay()

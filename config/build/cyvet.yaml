@@ -1,0 +1,18 @@
+# Explicitly discover vendored packages beneath COLCON_IGNORE. Keep that marker
+# intact so other chassis builds do not acquire Cyvet-only dependencies.
+rmw_implementation: rmw_cyclonedds_cpp
+additional_source_paths:
+  driver_ws:
+    - driver_ws/src/nav_bridge/third_party/uniubi/uniubi_robot_msgs/ros2
+    - driver_ws/src/nav_bridge/third_party/uniubi/uniubi_motion_client
+required_packages:
+  driver_ws: [nav_bridge, uniubi, uniubi_motion_client, livox_ros_driver2, ndt_omp, control_input_msgs, robots_dog_msgs, gnss_driver]
+package_dependencies:
+  nav_bridge: [uniubi, uniubi_motion_client]
+package_cmake_args:
+  nav_bridge:
+    - -DNAV_BRIDGE_BUILD_CYVET=ON
+    - -DNAV_BRIDGE_BUILD_X30=OFF
+    - -DNAV_BRIDGE_BUILD_D1_MAX=OFF
+    - -DNAV_BRIDGE_BUILD_TANK=OFF
+    - -DNAV_BRIDGE_BUILD_R750=OFF

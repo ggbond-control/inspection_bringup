@@ -154,7 +154,7 @@ class Build:
             if key in self.config and (not isinstance(self.config[key], list) or
                                        any(not isinstance(v, str) for v in self.config[key])):
                 raise ValueError(f'{key}: expected a list of strings')
-        for key in ('required_packages', 'package_cmake_args'):
+        for key in ('required_packages', 'package_cmake_args', 'additional_source_paths', 'package_dependencies'):
             value = self.config.get(key, {})
             if not isinstance(value, dict) or any(
                     not isinstance(v, list) or any(not isinstance(item, str) for item in v)
@@ -197,6 +197,18 @@ class Build:
         if Path(relative).is_absolute() or '..' in parts or len(parts) < 2:
             raise ValueError(f'invalid managed repository path: {relative}')
         return self.workspaces.get(parts[0], self.root / parts[0]).joinpath(*parts[1:])
+
+    def source_paths(self, workspace):
+        sources = [self.repo_path(p) for p in self.repositories
+                   if p.startswith(workspace + '/src/')]
+        for relative in self.config.get('additional_source_paths', {}).get(workspace, []):
+            if not relative.startswith(workspace + '/src/'):
+                raise ValueError(f'{workspace}: additional source must be inside its src directory: {relative}')
+            source = self.repo_path(relative)
+            if not source.is_dir():
+                raise ValueError(f'additional source not found: {source}')
+            sources.append(source)
+        return list(dict.fromkeys(sources))
 
     def branches(self):
         for relative, spec in self.repositories.items():
@@ -265,8 +277,7 @@ class Build:
         self.base_env = self.environment(self.underlays)
         available = {}
         for workspace in ('task_ws', 'driver_ws', 'algor_ws'):
-            repos = [self.repo_path(p) for p in self.repositories
-                     if p.startswith(workspace + '/src/') and self.repo_path(p).is_dir()]
+            repos = [p for p in self.source_paths(workspace) if p.is_dir()]
             if not repos:
                 continue
             with tempfile.TemporaryDirectory(prefix='navigation-discovery-') as logs:
@@ -371,7 +382,7 @@ class Build:
         return json.loads(result.splitlines()[-1])
 
     def discover(self, workspace):
-        repos = [self.repo_path(p) for p in self.repositories if p.startswith(workspace + '/src/')]
+        repos = self.source_paths(workspace)
         if not repos:
             raise ValueError(f'no managed repositories for {workspace}')
         missing = [str(p) for p in repos if not p.is_dir()]
@@ -534,9 +545,13 @@ class Build:
         output.mkdir(parents=True, exist_ok=True)
         # Package-specific switches do not leak into unrelated CMake projects.
         with tempfile.NamedTemporaryFile(mode='w', suffix='.meta') as meta:
-            json.dump({'names': {name: {'cmake-args': values}
-                                 for name, values in self.config.get('package_cmake_args', {}).items()
-                                 if name in packages}}, meta)
+            names = {name: {'cmake-args': values}
+                     for name, values in self.config.get('package_cmake_args', {}).items()
+                     if name in packages}
+            for name, dependencies in self.config.get('package_dependencies', {}).items():
+                if name in packages:
+                    names.setdefault(name, {})['dependencies'] = dependencies
+            json.dump({'names': names}, meta)
             meta.flush()
             command = ['colcon', '--log-base', output / 'log', 'build',
                        '--base-paths', *sources, '--packages-select', *packages,
