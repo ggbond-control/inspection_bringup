@@ -17,16 +17,24 @@ from ament_index_python.packages import get_package_prefix, get_package_share_di
 
 def main():
     prefix = Path('/opt/inspection/navigation')
-    manifest = json.loads((prefix / 'share/navigation_release/manifest.json').read_text())
+    driver = Path('/opt/inspection/driver')
+    manifests = [json.loads((driver / 'share/control_release/manifest.json').read_text())]
+    if (prefix / 'share/control_release/manifest.json').exists():
+        manifests.append(json.loads((prefix / 'share/control_release/manifest.json').read_text()))
+    for item in manifests:
+        component_prefix = Path(item['install_prefix'])
+        for name in item['packages']:
+            assert Path(get_package_prefix(name)) == component_prefix, name
+            subprocess.run(['ros2', 'pkg', 'executables', name], check=True)
+        assert not (component_prefix / 'share/ament_index/resource_index/packages/inspection_bringup').exists()
+        assert subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip() == item['architecture']
+    manifest = manifests[-1]
     assert subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip() == manifest['architecture']
-    for name in manifest['packages']:
-        assert Path(get_package_prefix(name)) == prefix, name
-        subprocess.run(['ros2', 'pkg', 'executables', name], check=True)
-    assert not (prefix / 'share/ament_index/resource_index/packages/nav_bridge').exists()
-    assert not (prefix / 'share/ament_index/resource_index/packages/inspection_bringup').exists()
+    for model in ('x30', 'd1_max', 'cyvet', 'tank', 'r750'):
+        assert os.access(driver / f'lib/nav_bridge/{model}_nav_bridge_node', os.X_OK), model
     for module in ['inspection_interfaces.msg', 'inspection_interfaces.srv', 'inspection_interfaces.action',
                    'robots_dog_msgs.msg', 'control_input_msgs.msg', 'livox_ros_driver2.msg',
-                   'faster_lio.msg', 'gridmapper.srv']:
+                   'uniubi.msg'] + (['faster_lio.msg', 'gridmapper.srv'] if len(manifests) == 2 else []):
         imported = importlib.import_module(module)
         for name in dir(imported):
             cls = getattr(imported, name)
@@ -40,7 +48,7 @@ def main():
     assert calibration.is_relative_to(Path(os.environ['HOME']) / '.ros/navigation/gnss_driver')
     calibration.write_text('writable runtime directory\n')
     count = 0
-    for p in prefix.rglob('*'):
+    for p in [p for item in manifests for p in Path(item['install_prefix']).rglob('*')]:
         if not p.is_file() or p.is_symlink():
             continue
         with p.open('rb') as stream:
@@ -52,6 +60,10 @@ def main():
         result = subprocess.run(['ldd', str(p)], capture_output=True, text=True)
         assert result.returncode == 0 and 'not found' not in result.stdout, (p, result.stdout, result.stderr)
         count += 1
+    subprocess.run(['ros2', 'launch', 'gnss_driver', 'driver.launch.py', '--show-args'], check=True)
+    if len(manifests) == 1:
+        print(f'PASS: driver packages, five bridge executables, interfaces and {count} ELF files')
+        return
     for name in ['libdummy_controller_plugin.so', 'libsmac_straight_planner.so']:
         ctypes.CDLL(str(prefix / 'lib' / name))
     assert (Path(get_package_share_directory('gridmapper')) / 'kernels/terrain_analysis.cl').is_file()
@@ -60,7 +72,6 @@ def main():
                  'correspondences_x30.txt', 'correspondences_cyvet.txt', 'correspondences_d1m.txt'):
         assert (paths / name).is_file(), name
     subprocess.run(['ros2', 'launch', 'faster_lio', 'slam.launch.py', '--show-args'], check=True)
-    subprocess.run(['ros2', 'launch', 'gnss_driver', 'driver.launch.py', '--show-args'], check=True)
     # No sensors, chassis or live ROS domain: exercise startup and orderly shutdown only.
     env = dict(os.environ, ROS_DOMAIN_ID='217', ROS_AUTOMATIC_DISCOVERY_RANGE='LOCALHOST')
     with open('/tmp/navigation-follower-smoke.log', 'w+') as log:

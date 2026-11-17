@@ -6,10 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-yaml python3-numpy python3-serial python3-requests python3-scipy \
     libgoogle-glog-dev libgflags-dev libyaml-cpp-dev libeigen3-dev libpcl-dev \
     libopencv-dev libtbb-dev libgeographiclib-dev libzstd-dev libapr1-dev \
+    libcurl4-openssl-dev libjsoncpp-dev cyclonedds-dev cyclonedds-tools \
     opencl-headers ocl-icd-opencl-dev \
     ros-jazzy-navigation2 ros-jazzy-grid-map ros-jazzy-pcl-ros \
     ros-jazzy-tf-transformations ros-jazzy-rmw-cyclonedds-cpp \
-    ros-jazzy-example-interfaces ros-jazzy-ament-cmake-auto \
+    ros-jazzy-example-interfaces ros-jazzy-ament-cmake-auto ros-jazzy-rviz-2d-overlay-msgs \
     ros-jazzy-rosidl-default-generators \
     && rm -rf /var/lib/apt/lists/*
 

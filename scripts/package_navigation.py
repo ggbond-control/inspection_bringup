@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Build a model-independent navigation deb using a persistent Docker build cache."""
+"""Build control-driver/control-navigation debs using persistent Docker caches."""
 
 import argparse
+import copy
 import base64
 from contextlib import contextmanager
 import fcntl
@@ -18,7 +19,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = Path('/opt/inspection/navigation')
-PACKAGE_NAME = 'fhzn-navigation'
+PACKAGE_NAME = 'control-navigation'
+DRIVER_PREFIX = Path('/opt/inspection/driver')
 CPU_FLAGS = {
     'amd64': '-march=x86-64 -mtune=generic',
     'arm64': '-march=armv8-a -mtune=generic',
@@ -29,6 +31,7 @@ SOURCES = {
     'control_input_msgs': 'control_intput_msgs',
     'livox_ros_driver2': 'livox_ros_driver2',
     'gnss_driver': 'gnss_driver',
+    'nav_bridge': 'nav_bridge',
     'ndt_omp': 'ndt_omp',
     'faster_lio': 'faster_slam',
     'gridmapper': 'gridmapper',
@@ -40,6 +43,16 @@ NATIVE = {
     'gtsam': ('https://github.com/borglab/gtsam.git', '4.2.0'),
     'livox_sdk2': ('https://github.com/ggbond-control/livox_sdk2.git', 'jazzy'),
 }
+ALL_SOURCES = dict(SOURCES)
+ALL_NATIVE = dict(NATIVE)
+DRIVER_PACKAGES = {'inspection_interfaces', 'robots_dog_msgs', 'control_input_msgs',
+                   'livox_ros_driver2', 'gnss_driver', 'ndt_omp', 'nav_bridge',
+                   'uniubi', 'uniubi_motion_client'}
+EMBEDDED_SOURCES = {'uniubi': 'uniubi_robot_msgs/ros2',
+                    'uniubi_motion_client': 'uniubi_motion_client'}
+COMPONENT = 'navigation'
+NAV_BRIDGE_OPTIONS = [f'-DNAV_BRIDGE_BUILD_{name}=ON'
+                      for name in ('X30', 'D1_MAX', 'CYVET', 'TANK', 'R750')]
 RUNTIME_DEPENDS = [
     'ros-jazzy-ros-base', 'ros-jazzy-navigation2', 'ros-jazzy-grid-map',
     'ros-jazzy-pcl-ros', 'ros-jazzy-tf-transformations',
@@ -50,6 +63,43 @@ RUNTIME_DEPENDS = [
 ARM64_RUNTIME_DEPENDS = [
     'opencl-headers', 'ocl-icd-opencl-dev', 'mesa-opencl-icd', 'clinfo',
 ]
+
+
+def configure_component(component):
+    global COMPONENT, PREFIX, PACKAGE_NAME, SOURCES, NATIVE
+    COMPONENT = component
+    PREFIX = DRIVER_PREFIX if component == 'driver' else Path('/opt/inspection/navigation')
+    PACKAGE_NAME = 'control-' + component
+    SOURCES = {name: repo for name, repo in ALL_SOURCES.items()
+               if (name in DRIVER_PACKAGES) == (component == 'driver')}
+    NATIVE = dict(ALL_NATIVE) if component == 'driver' else {}
+
+
+def prepare_bridge_sources(work, manifest):
+    root = work / 'sources/nav_bridge/third_party/uniubi'
+    for name, relative in EMBEDDED_SOURCES.items():
+        target = work / 'sources' / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(root / relative, target, dirs_exist_ok=True)
+        SOURCES[name] = None
+        hashes = [(str(p.relative_to(root / relative)), digest(p))
+                  for p in sorted((root / relative).rglob('*')) if p.is_file()]
+        if name == 'uniubi':
+            hashes += [(str(p.relative_to(root)), digest(p))
+                       for p in sorted((root / 'uniubi_robot_msgs/idl').rglob('*')) if p.is_file()]
+        manifest['packages'][name] = dict(manifest['packages']['nav_bridge'], embedded_path=relative,
+            sha256=hashlib.sha256(json.dumps(hashes).encode()).hexdigest())
+    if (work / 'sources/idl').exists():
+        shutil.rmtree(work / 'sources/idl')
+    shutil.copytree(root / 'uniubi_robot_msgs/idl', work / 'sources/idl')
+    # nav_bridge's optional Cyvet dependencies are not declared in its manifest.
+    path = work / 'sources/nav_bridge/package.xml'
+    tree = ET.parse(path)
+    for name in EMBEDDED_SOURCES:
+        if not any(v.text == name for v in tree.getroot() if 'depend' in v.tag):
+            ET.SubElement(tree.getroot(), 'depend').text = name
+    write(path, ET.tostring(tree.getroot(), encoding='unicode'))
 
 
 def run(args, **kwargs):
@@ -69,7 +119,7 @@ def host_architecture():
 
 
 def builder_image(architecture):
-    return f'inspection-navigation-builder:jazzy-{architecture}'
+    return f'inspection-control-builder:jazzy-{architecture}'
 
 
 def check_cache_architecture(work, architecture):
@@ -217,6 +267,8 @@ def release_adjustments(sources):
     # never the read-only installed prefix or the original developer's workspace.
     for package in ('faster_lio', 'gridmapper'):
         directory = sources / package
+        if package not in SOURCES:
+            continue
         cmake = directory / 'CMakeLists.txt'
         text = cmake.read_text()
         definition = 'add_definitions(-DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")'
@@ -252,6 +304,8 @@ inline const std::string &runtime_root() {
 }
 #define ROOT_DIR navigation_release::runtime_root().c_str()
 '''.replace('PACKAGE', package))
+    if 'ndt_omp' not in SOURCES:
+        return
     ndt = sources / 'ndt_omp/CMakeLists.txt'
     write(ndt, ndt.read_text().replace('-msse -msse2 -msse3 -msse4 -msse4.1 -msse4.2',
                                      '-march=x86-64 -mtune=generic'))
@@ -283,11 +337,13 @@ def selected_packages(requested, sources):
 def environment():
     # This process runs inside the builder, with no developer workspace mounted.
     code = 'source /opt/ros/jazzy/setup.bash; '
+    if COMPONENT == 'navigation':
+        code += f'source {DRIVER_PREFIX}/local_setup.bash; '
     if (PREFIX / 'local_setup.bash').is_file():
         code += f'source {PREFIX}/local_setup.bash; '
     code += 'exec /usr/bin/python3 -c "import os,json; print(json.dumps(dict(os.environ)))"'
     env = json.loads(output(['bash', '-ec', code]).splitlines()[-1])
-    vendor = PREFIX / 'vendor'
+    vendor = (DRIVER_PREFIX if COMPONENT == 'navigation' else PREFIX) / 'vendor'
     for key, value in [('CMAKE_PREFIX_PATH', str(vendor)),
                        ('LD_LIBRARY_PATH', f'{vendor}/lib:{PREFIX}/lib')]:
         env[key] = value + ':' + env.get(key, '')
@@ -352,24 +408,31 @@ def prune_obsolete(previous, current):
             path.unlink()
 
 
+def driver_build_id(manifest):
+    driver = manifest.get('driver', {})
+    return driver.get('build_id', driver.get('sha256'))
+
+
 def assemble(work, version, manifest):
     architecture = manifest['architecture']
-    manifest = dict(manifest, version=version, install_prefix=str(PREFIX),
+    manifest = dict(manifest, version=version, component=COMPONENT, install_prefix=str(PREFIX),
                     packaging_recipe_sha256=digest(Path(__file__)))
     stage = work / 'stage'
     if stage.exists():
         shutil.rmtree(stage)
     dest = stage / PREFIX.relative_to('/')
     shutil.copytree(PREFIX, dest, symlinks=True)
-    # Keep this runtime-only bundle independent of source/build exports.
+    # Driver exports form the navigation build underlay; navigation is runtime-only.
     for p in sorted(dest.rglob('*'), reverse=True):
-        if p.is_file() and (p.suffix in ('.a', '.pyc') or p.name == 'COLCON_IGNORE'):
+        if p.is_file() and ((p.suffix == '.a' and COMPONENT != 'driver') or
+                            p.suffix == '.pyc' or p.name == 'COLCON_IGNORE'):
             p.unlink()
-        elif p.is_dir() and (p.name in ('include', '__pycache__') or
-                             (p.name == 'cmake' and p.parent.parent == dest / 'share')):
+        elif p.is_dir() and (p.name == '__pycache__' or (COMPONENT != 'driver' and
+                            (p.name == 'include' or
+                             (p.name == 'cmake' and p.parent.parent == dest / 'share')))):
             shutil.rmtree(p)
-    for p in [dest / 'vendor/share', dest / 'vendor/lib/cmake', dest / 'vendor/lib/pkgconfig',
-              dest / 'share/multi_map_nav/maps']:
+    for p in ([] if COMPONENT == 'driver' else [dest / 'vendor/share', dest / 'vendor/lib/cmake',
+              dest / 'vendor/lib/pkgconfig', dest / 'share/multi_map_nav/maps']):
         if p.exists():
             shutil.rmtree(p)
     elfs = []
@@ -384,7 +447,8 @@ def assemble(work, version, manifest):
                 magic = stream.read(4)
             if magic == b'\x7fELF':
                 run(['strip', '--strip-unneeded', p], stdout=subprocess.DEVNULL)
-                run(['patchelf', '--set-rpath', f'{PREFIX}/lib:{PREFIX}/vendor/lib:/opt/ros/jazzy/lib', p],
+                run(['patchelf', '--set-rpath',
+                     f'{PREFIX}/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:/opt/ros/jazzy/lib', p],
                     stdout=subprocess.DEVNULL)
                 elfs.append(p)
             elif p.suffix in ('.sh', '.bash', '.zsh', '.ps1', '.dsv', '.py', '.cmake', '.pc'):
@@ -395,6 +459,10 @@ def assemble(work, version, manifest):
     actual = {p.name for p in indexes.iterdir()}
     if actual != set(SOURCES):
         raise ValueError(f'unexpected packaged ROS package list: {sorted(actual)}')
+    if COMPONENT == 'driver':
+        for model in ('x30', 'd1_max', 'cyvet', 'tank', 'r750'):
+            if not (dest / f'lib/nav_bridge/{model}_nav_bridge_node').is_file():
+                raise ValueError(f'missing nav_bridge backend: {model}')
     docs = stage / 'usr/share/doc' / PACKAGE_NAME
     docs.mkdir(parents=True)
     licenses = docs / 'licenses'
@@ -406,9 +474,10 @@ def assemble(work, version, manifest):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(p, target)
     write(docs / 'manifest.json', json.dumps(manifest, indent=2) + '\n')
-    write(dest / 'share/navigation_release/manifest.json', json.dumps(manifest, indent=2) + '\n')
+    write(dest / 'share/control_release/manifest.json', json.dumps(manifest, indent=2) + '\n')
     write(docs / 'README', 'Source /opt/ros/jazzy/setup.bash, then '
-          '/opt/inspection/navigation/local_setup.bash. No services are installed or started.\n'
+          f'{DRIVER_PREFIX}/local_setup.bash, then /opt/inspection/navigation/local_setup.bash '
+          'when navigation is installed. No services are installed or started.\n'
           'Runtime defaults are package resources; supply actual device settings externally.\n'
           'Data defaults: ${ROS_HOME:-$HOME/.ros}/navigation/<package>.\n')
     debian = work / 'dependency-scan/debian'
@@ -416,21 +485,31 @@ def assemble(work, version, manifest):
           'Maintainer: Navigation maintainers <robot@example.com>\n\n'
           f'Package: {PACKAGE_NAME}\nArchitecture: {architecture}\nDescription: Navigation runtime\n')
     args = ['dpkg-shlibdeps', '-O', '--ignore-missing-info',
-            f'-l{dest}/lib', f'-l{dest}/vendor/lib', '-l/opt/ros/jazzy/lib']
-    result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent)
-    depends = next(line.split('=', 1)[1] for line in result.splitlines() if line.startswith('shlibs:Depends='))
-    depends = ', '.join([depends, *RUNTIME_DEPENDS,
-                         *(ARM64_RUNTIME_DEPENDS if architecture == 'arm64' else [])])
+            f'-l{dest}/lib', f'-l{dest}/vendor/lib', f'-l{DRIVER_PREFIX}/lib',
+            f'-l{DRIVER_PREFIX}/vendor/lib', '-l/opt/ros/jazzy/lib']
+    result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent) if elfs else ''
+    depends = next((line.split('=', 1)[1] for line in result.splitlines()
+                    if line.startswith('shlibs:Depends=')), '')
+    runtime = list(RUNTIME_DEPENDS)
+    if COMPONENT == 'driver':
+        runtime = [v for v in runtime if v not in ('ros-jazzy-navigation2', 'ros-jazzy-grid-map')]
+        runtime += ['ros-jazzy-rviz-2d-overlay-msgs', 'ros-jazzy-cyclonedds']
+    else:
+        runtime += [f'control-driver (>= {manifest["driver_min_version"]})',
+                    f'control-driver (<< {manifest["driver_max_version"]})']
+        if architecture == 'arm64':
+            runtime += ARM64_RUNTIME_DEPENDS
+    depends = ', '.join(filter(None, [depends, *runtime]))
     control = stage / 'DEBIAN'
     control.mkdir()
     installed_kib = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file()) // 1024
     write(control / 'control', f'Package: {PACKAGE_NAME}\nVersion: {version}\nArchitecture: {architecture}\n'
           'Maintainer: Navigation maintainers <robot@example.com>\nSection: misc\nPriority: optional\n'
           f'Installed-Size: {installed_kib}\nDepends: {depends}\nRecommends: ros-jazzy-rviz2\n'
-          'Conflicts: navigation\nReplaces: navigation\n'
+          'Conflicts: navigation, fhzn-navigation\nReplaces: navigation, fhzn-navigation\n'
           'Description: Model-independent ROS 2 Jazzy navigation runtime\n'
           ' Localization, mapping, planning, sensor drivers and custom interfaces.\n'
-          ' Excludes nav_bridge, inspection_bringup, maps and system services.\n')
+          ' Excludes inspection_bringup, maps and system services.\n')
     dist = work / 'dist'
     dist.mkdir(exist_ok=True)
     deb = dist / f'{PACKAGE_NAME}_{version}_{architecture}.deb'
@@ -444,6 +523,8 @@ def inside(args):
     work = Path('/release')
     check_cache_architecture(work, host_architecture())
     manifest = json.loads((work / 'inputs.json').read_text())
+    if COMPONENT == 'driver':
+        SOURCES.update({name: None for name in EMBEDDED_SOURCES})
     flags = CPU_FLAGS[manifest['architecture']]
     complete = work / 'build-state.json'
     if args.package_only:
@@ -458,6 +539,11 @@ def inside(args):
         raise ValueError('builder image changed; use a new --work-dir for an ABI-clean build')
     if args.select and previous.get('release_recipe_sha256') != manifest['release_recipe_sha256']:
         raise ValueError('release recipe changed; run without --select to apply it to all packages')
+    if COMPONENT == 'navigation' and previous and driver_build_id(previous) != driver_build_id(manifest):
+        if args.select:
+            raise ValueError('driver underlay changed; run without --select to rebuild navigation consumers')
+        if (work / 'build').exists():
+            shutil.rmtree(work / 'build')
     if args.select and any(previous.get('native', {}).get(n, {}).get('commit') !=
                            manifest['native'][n]['commit'] for n in NATIVE):
         raise ValueError('native dependency revision changed; run without --select '
@@ -474,7 +560,8 @@ def inside(args):
         write(ownership, json.dumps(sorted(installed_files(work))))
     previous_files = set(json.loads(ownership.read_text()))
     write(work / 'build-in-progress', 'incomplete\n')
-    build_native(work, args.jobs)
+    if NATIVE:
+        build_native(work, args.jobs)
     env = environment()
     env['MAKEFLAGS'] = f'-j{args.jobs}'
     env['CMAKE_BUILD_PARALLEL_LEVEL'] = str(args.jobs)
@@ -486,7 +573,8 @@ def inside(args):
          '-DBUILD_WITH_MARCH_NATIVE=OFF', f'-DCMAKE_C_FLAGS={flags}',
          f'-DCMAKE_CXX_FLAGS={flags}',
          '-DPython3_EXECUTABLE=/usr/bin/python3', '-DPYTHON_EXECUTABLE=/usr/bin/python3',
-         f'-DGTSAM_DIR={PREFIX}/vendor/lib/cmake/GTSAM',
+         *(NAV_BRIDGE_OPTIONS if COMPONENT == 'driver' else []),
+         f'-DGTSAM_DIR={DRIVER_PREFIX}/vendor/lib/cmake/GTSAM',
          f'-DLIVOX_LIDAR_SDK_LIBRARY={PREFIX}/vendor/lib/liblivox_lidar_sdk_shared.so',
          f'-DLIVOX_LIDAR_SDK_INCLUDE_DIR={PREFIX}/vendor/include',
          f'-DCMAKE_INSTALL_RPATH={PREFIX}/lib;{PREFIX}/vendor/lib;/opt/ros/jazzy/lib'],
@@ -501,38 +589,99 @@ def inside(args):
 
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--version', required=True, help='Debian version, e.g. 0.1.0 or 0.1.1')
+    p.add_argument('--component', choices=('driver', 'navigation', 'all'), default='all')
+    p.add_argument('--version', help='default Debian version for selected components')
     p.add_argument('--tag', help='requested ggbond-control release tag, e.g. v0.3.5')
+    for component in ('driver', 'navigation'):
+        p.add_argument(f'--{component}-version', help='component version; overrides --version')
+        p.add_argument(f'--{component}-tag', help='component source tag; overrides --tag')
+    p.add_argument('--driver-deb', type=Path, help='driver build underlay for navigation-only builds')
+    p.add_argument('--driver-min-version', help='inclusive driver dependency lower bound; defaults to build driver version')
+    p.add_argument('--driver-max-version', help='exclusive driver dependency upper bound; defaults to next major (next minor for 0.x)')
     p.add_argument('--work-dir', type=Path, help='persistent cache; defaults to ~/.cache/inspection-navigation-deb/<host architecture>')
     p.add_argument('-j', '--jobs', type=int, default=1)
     mode = p.add_mutually_exclusive_group()
-    mode.add_argument('--select', nargs='+', choices=list(SOURCES), help='rebuild selected packages and their consumers')
+    mode.add_argument('--select', nargs='+', choices=list(ALL_SOURCES) + list(EMBEDDED_SOURCES), help='rebuild selected packages and their consumers')
     mode.add_argument('--package-only', action='store_true', help='repackage last complete build, without compiling')
     p.add_argument('--rebuild-image', action='store_true', help='rebuild cached Docker build environment')
     p.add_argument('--inside', action='store_true', help=argparse.SUPPRESS)
     args = p.parse_args()
     if args.jobs < 1:
         p.error('--jobs must be positive')
-    if not re.fullmatch(r'[0-9][A-Za-z0-9.+~:-]*', args.version):
-        p.error('invalid Debian version')
-    if not args.inside and not args.package_only and not args.tag:
-        p.error('--tag is required unless using --package-only')
-    if args.tag and version_tuple(args.tag) is None:
-        p.error('--tag must be a stable version such as v0.3.5 (or 0.3.5)')
-    if args.package_only and args.tag:
+    if args.inside and args.component == 'all':
+        p.error('--inside requires a single component')
+    components = ('driver', 'navigation') if args.component == 'all' else (args.component,)
+    for component in components:
+        version = getattr(args, component + '_version') or args.version
+        if not version or not re.fullmatch(r'[0-9][A-Za-z0-9.+~:-]*', version):
+            p.error(f'valid --version or --{component}-version is required')
+        tag = getattr(args, component + '_tag') or args.tag
+        if not args.inside and not args.package_only and not tag:
+            p.error('--tag is required unless using --package-only (or use component-specific tags)')
+    for tag in (args.tag, args.driver_tag, args.navigation_tag):
+        if tag and version_tuple(tag) is None:
+            p.error('--tag must be a stable version such as v0.3.5 (or 0.3.5)')
+    if args.package_only and any((args.tag, args.driver_tag, args.navigation_tag)):
         p.error('--package-only uses the previous source snapshot; omit --tag')
+    if args.package_only and (args.driver_min_version or args.driver_max_version):
+        p.error('--package-only preserves cached driver compatibility bounds')
+    if args.driver_deb and (args.component != 'navigation' or args.package_only):
+        p.error('--driver-deb is only for navigation source builds')
+    if args.component == 'navigation' and not args.package_only and not args.inside and not args.driver_deb:
+        p.error('--component navigation requires --driver-deb')
+    if args.select and args.component != 'all':
+        allowed = DRIVER_PACKAGES if args.component == 'driver' else set(ALL_SOURCES) - DRIVER_PACKAGES
+        if set(args.select) - allowed:
+            p.error('--select contains packages outside the selected component')
+    for version in (args.driver_min_version, args.driver_max_version):
+        if version and not re.fullmatch(r'[0-9][A-Za-z0-9.+~:-]*', version):
+            p.error('invalid driver compatibility version')
     return args
 
 
-def main():
-    args = arguments()
-    if args.inside:
-        inside(args)
-        return
+def driver_underlay(args, work, architecture):
+    deb = args.driver_deb.expanduser().resolve()
+    if output(['dpkg-deb', '-f', deb, 'Package']) != 'control-driver':
+        raise ValueError('--driver-deb must be a control-driver package')
+    if output(['dpkg-deb', '-f', deb, 'Architecture']) != architecture:
+        raise ValueError('driver deb architecture differs from build host')
+    version = output(['dpkg-deb', '-f', deb, 'Version'])
+    minimum = args.driver_min_version or version
+    maximum = args.driver_max_version
+    if not maximum:
+        match = re.match(r'^(\d+)\.(\d+)\.', version)
+        if not match:
+            raise ValueError('specify --driver-max-version for non-semver driver versions')
+        major, minor = map(int, match.groups())
+        maximum = f'{major + 1}.0.0' if major else f'0.{minor + 1}.0'
+    for left, op, right in [(version, 'ge', minimum), (version, 'lt', maximum)]:
+        if subprocess.run(['dpkg', '--compare-versions', left, op, right]).returncode:
+            raise ValueError(f'build driver {version} is outside [{minimum}, {maximum})')
+    directory = work / 'driver-underlay'
+    checksum = digest(deb)
+    stamp = work / 'driver-underlay.sha256'
+    if not stamp.exists() or stamp.read_text().strip() != checksum:
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        run(['dpkg-deb', '-x', deb, directory])
+        write(stamp, checksum)
+    if not (directory / DRIVER_PREFIX.relative_to('/') / 'local_setup.bash').is_file():
+        raise ValueError('driver deb does not contain its build underlay')
+    provenance = json.loads((directory / DRIVER_PREFIX.relative_to('/') /
+                             'share/control_release/manifest.json').read_text())
+    identity = {key: provenance.get(key) for key in
+                ('architecture', 'packages', 'native', 'builder_image',
+                 'release_recipe_sha256', 'packaging_recipe_sha256')}
+    build_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return {'version': version, 'sha256': checksum, 'build_id': build_id}, minimum, maximum
+
+
+def build_component(args):
     architecture = host_architecture()
     image_name = builder_image(architecture)
     platform = f'linux/{architecture}'
-    work = (args.work_dir or Path.home() / '.cache/inspection-navigation-deb' / architecture).expanduser().resolve()
+    work = (args.work_dir or Path.home() / '.cache/inspection-navigation-deb' / architecture).expanduser().resolve() / COMPONENT
     work.mkdir(parents=True, exist_ok=True)
     with (work / '.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -550,6 +699,10 @@ def main():
                         'packages': {}, 'native': {}, 'architecture': architecture, 'ros': 'jazzy',
                         'release_recipe_sha256': digest(Path(__file__))}
             manifest['requested_tag'] = args.tag
+            manifest['component'] = COMPONENT
+            if COMPONENT == 'navigation':
+                driver, minimum, maximum = driver_underlay(args, work, architecture)
+                manifest.update(driver=driver, driver_min_version=minimum, driver_max_version=maximum)
             with github_access() as git_env:
                 for name, repository in SOURCES.items():
                     source = work / 'repositories' / name
@@ -560,6 +713,8 @@ def main():
                     sha = snapshot(source, work / 'sources' / name)
                     manifest['packages'][name] = dict(revision, sha256=sha, dirty=False)
                 release_adjustments(work / 'sources')
+                if COMPONENT == 'driver':
+                    prepare_bridge_sources(work, manifest)
                 for name, (url, fixed_ref) in NATIVE.items():
                     source = work / 'native-src' / name
                     if url.startswith('https://github.com/ggbond-control/'):
@@ -580,7 +735,9 @@ def main():
         command = ['docker', 'run', '--rm', '--platform', platform, '--user', f'{os.getuid()}:{os.getgid()}',
                    '-e', 'HOME=/release/home', '-v', f'{work}:/release',
                    '-v', f'{work}/install:{PREFIX}', '-v', f'{ROOT}/scripts:/tools:ro',
-                   image_name, 'python3', '/tools/package_navigation.py', '--inside',
+                   *(['-v', f'{work}/driver-underlay{DRIVER_PREFIX}:{DRIVER_PREFIX}:ro']
+                     if COMPONENT == 'navigation' else []),
+                   image_name, 'python3', '/tools/package_navigation.py', '--inside', '--component', COMPONENT,
                    '--version', args.version, '-j', args.jobs]
         if args.package_only:
             command += ['--package-only']
@@ -588,6 +745,34 @@ def main():
             command += ['--select', *args.select]
         run(command)
         print(f'[artifact] {work}/dist/{PACKAGE_NAME}_{args.version}_{architecture}.deb', flush=True)
+        return work / 'dist' / f'{PACKAGE_NAME}_{args.version}_{architecture}.deb'
+
+
+def main():
+    args = arguments()
+    if args.inside:
+        configure_component(args.component)
+        inside(args)
+        return
+    components = ('driver', 'navigation') if args.component == 'all' else (args.component,)
+    driver_deb = args.driver_deb
+    for component in components:
+        configure_component(component)
+        current = copy.copy(args)
+        current.component = component
+        current.version = getattr(args, component + '_version') or args.version
+        current.tag = getattr(args, component + '_tag') or args.tag
+        current.driver_deb = driver_deb
+        if args.select:
+            current.select = [n for n in args.select if n in SOURCES or
+                              (component == 'driver' and n in EMBEDDED_SOURCES)]
+            if component == 'navigation' and set(args.select) & DRIVER_PACKAGES:
+                current.select = None  # Rebuild all navigation consumers of changed driver inputs.
+            elif not current.select:
+                current.package_only = True
+        artifact = build_component(current)
+        if component == 'driver':
+            driver_deb = artifact
 
 
 if __name__ == '__main__':
