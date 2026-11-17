@@ -76,10 +76,11 @@ Install Docker, Git, Python 3, `python3-yaml` and dpkg on the host. `docker vers
 a working server accessible without sudo. Docker supplies compiler/ROS build
 dependencies. Allow sufficient disk space and start with `-j1` on an 8 GiB board.
 
-Each component source build prompts for a read-only GitHub token in an interactive
-terminal without echo. It is passed only through Git subprocess environments,
-not stored in logs, Git configuration, manifests, images or debs. An `all` source
-build prompts once per component. `--package-only` neither reads credentials nor
+Each invocation prompts once for a read-only GitHub token when its first source
+fetch begins, in an interactive terminal without echo. All selected components
+reuse it in process memory. It is passed only through Git subprocess environments,
+not stored in logs, Git configuration, manifests, images or debs. The credential
+environment is cleared at process completion or failure. `--package-only` neither reads credentials nor
 contacts source repositories.
 
 ## Commands
@@ -214,7 +215,12 @@ Installed manifests are at `<prefix>/share/control_release/manifest.json`.
 New component caches do not reuse the old monolithic build directories.
 Subsequent builds reuse unchanged objects and native-library commits. Failures
 block `--package-only` until compilation succeeds. Stale files recorded by install
-manifests are removed. Use a new cache when changing the builder image/toolchain.
+manifests are removed. Image filesystem layers, architecture and process environment
+form a build-environment fingerprint. Metadata-only image ID changes reuse objects.
+Actual environment changes automatically rebuild only the affected component's
+ROS/native objects while retaining repositories, source snapshots and other
+component caches. Unknown legacy environments are rebuilt conservatively; a
+recorded object-environment stamp allows interrupted rebuilds to resume.
 Driver/navigation use `inspection-control-builder:jazzy-<architecture>`; task uses
 the independent `inspection-task-builder:jazzy-<architecture>` and
 `navigation/Dockerfile.task`. Component rule revisions are recorded separately;
@@ -237,15 +243,15 @@ are preserved. This does not change host apt sources or the Docker registry.
 ROS `deb-src` entries are disabled because this mirror does not publish the ROS
 source index; project sources are still fetched from Git.
 Existing images are reused until explicitly rebuilt. To apply the mirror change
-while keeping the old build cache, use a new cache root:
+using the existing cache root:
 
 ```bash
 bash scripts/package.sh --version 0.3.5 --tag v0.3.5 \
-  --rebuild-image --work-dir ~/release/control-sysu -j1
+  --rebuild-image -j1
 ```
 
-Changing the image ID requires a fresh component build cache under the current
-toolchain consistency checks, even when the change only affects apt mirrors.
+If the filesystem or toolchain changes, objects are rebuilt automatically in the
+same cache; there is no need to move repositories to a new `--work-dir`.
 
 ## Installation and Checks
 

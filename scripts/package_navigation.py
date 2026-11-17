@@ -4,7 +4,7 @@
 import argparse
 import copy
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack, nullcontext
 import fcntl
 import getpass
 import hashlib
@@ -113,6 +113,18 @@ PREFIX = Path(COMPONENT_CONFIG[COMPONENT]['prefix'])
 PACKAGE_NAME = COMPONENT_CONFIG[COMPONENT]['deb_name']
 SOURCES = dict(COMPONENT_CONFIG[COMPONENT]['packages'])
 NATIVE = {}
+GITHUB_SESSION = None
+
+
+class GitHubSession:
+    def __init__(self, stack):
+        self.stack = stack
+        self.env = None
+
+    def access(self):
+        if self.env is None:
+            self.env = self.stack.enter_context(github_access())
+        return nullcontext(self.env)
 
 
 def configure_component(component):
@@ -170,6 +182,17 @@ def host_architecture():
 
 def builder_image(architecture):
     return COMPONENT_CONFIG[COMPONENT]['image'].format(architecture=architecture)
+
+
+def image_environment(image):
+    """Ignore image metadata/history IDs; compare filesystem layers and process env."""
+    info = json.loads(output(['docker', 'image', 'inspect', image]))[0]
+    config = info.get('Config') or {}
+    identity = {key: info.get(key) for key in ('Architecture', 'Os', 'RootFS')}
+    identity['Env'] = config.get('Env', [])
+    identity['User'] = config.get('User', '')
+    identity['WorkingDir'] = config.get('WorkingDir', '')
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
 def recipe_id():
@@ -675,8 +698,19 @@ def inside(args):
     if args.select and not complete.exists():
         raise ValueError('first release build must be full; omit --select')
     previous = json.loads(complete.read_text()) if complete.exists() else {}
+    environment_changed = False
     if previous and previous.get('builder_image') != manifest['builder_image']:
-        raise ValueError('builder image changed; use a new --work-dir for an ABI-clean build')
+        old_environment = previous.get('builder_environment') or manifest.get('previous_builder_environment')
+        environment_stamp = work / 'object-environment.json'
+        if environment_stamp.exists():
+            old_environment = json.loads(environment_stamp.read_text()).get('builder_environment')
+        if old_environment and old_environment == manifest.get('builder_environment'):
+            print('[cache] image ID changed, build environment unchanged; reusing objects', flush=True)
+        else:
+            environment_changed = True
+            args.select = None
+            print('[cache] build environment changed or cannot be verified; rebuilding this component '
+                  'while retaining source caches', flush=True)
     if args.select and previous.get('release_recipe_sha256') != manifest['release_recipe_sha256']:
         raise ValueError('release recipe changed; run without --select to apply it to all packages')
     if COMPONENT != 'driver' and previous and driver_build_id(previous) != driver_build_id(manifest):
@@ -700,6 +734,15 @@ def inside(args):
         write(ownership, json.dumps(sorted(installed_files(work))))
     previous_files = set(json.loads(ownership.read_text()))
     write(work / 'build-in-progress', 'incomplete\n')
+    if environment_changed:
+        for directory in ('build', 'native-build'):
+            if (work / directory).exists():
+                shutil.rmtree(work / directory)
+        for name in NATIVE:
+            (work / f'{name}.installed').unlink(missing_ok=True)
+    if manifest.get('builder_environment'):
+        write(work / 'object-environment.json', json.dumps({
+            'builder_environment': manifest['builder_environment']}))
     if NATIVE:
         build_native(work, args.jobs)
     env = environment()
@@ -840,13 +883,22 @@ def build_component(args):
             manifest = {'builder_image': output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image_name]),
                         'packages': {}, 'native': {}, 'architecture': architecture, 'ros': 'jazzy',
                         'release_recipe_sha256': recipe_id()}
+            manifest['builder_environment'] = image_environment(image_name)
+            state = work / 'build-state.json'
+            if state.exists():
+                old = json.loads(state.read_text())
+                if not old.get('builder_environment') and old.get('builder_image') != manifest['builder_image']:
+                    try:
+                        manifest['previous_builder_environment'] = image_environment(old['builder_image'])
+                    except (subprocess.CalledProcessError, ValueError, KeyError, IndexError):
+                        pass  # Missing legacy image: conservatively rebuild objects, retain sources.
             manifest['requested_tag'] = args.tag
             manifest['component'] = COMPONENT
             manifest['component_config'] = copy.deepcopy(COMPONENT_CONFIG[COMPONENT])
             if COMPONENT != 'driver':
                 driver, minimum, maximum = driver_underlay(args, work, architecture)
                 manifest.update(driver=driver, driver_min_version=minimum, driver_max_version=maximum)
-            with github_access() as git_env:
+            with (GITHUB_SESSION.access() if GITHUB_SESSION else github_access()) as git_env:
                 for name, repository in SOURCES.items():
                     source = work / 'repositories' / name
                     revision = fetch_source(f'{CATALOG["repository_base"].rstrip("/")}/{repository}.git',
@@ -894,11 +946,22 @@ def build_component(args):
 
 
 def main():
+    global GITHUB_SESSION
     args = arguments()
     if args.inside:
         configure_component(args.component)
         inside(args)
         return
+    with ExitStack() as stack:
+        previous_session = GITHUB_SESSION
+        GITHUB_SESSION = GitHubSession(stack)
+        try:
+            build_components(args)
+        finally:
+            GITHUB_SESSION = previous_session
+
+
+def build_components(args):
     components = COMPONENTS if args.component == 'all' else (args.component,)
     driver_deb = args.driver_deb
     for component in components:

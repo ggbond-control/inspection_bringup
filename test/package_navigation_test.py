@@ -18,6 +18,79 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_image_environment_ignores_metadata_id_but_checks_layers(self):
+        info = dict(Id='old', Architecture='arm64', Os='linux', RootFS={'Layers': ['layer']},
+                    Config={'Env': ['PATH=/bin']})
+        with patch.object(release, 'output', side_effect=lambda *a, **k: json.dumps([info])):
+            first = release.image_environment('image')
+            info['Id'] = 'new'
+            self.assertEqual(release.image_environment('image'), first)
+            info['RootFS']['Layers'].append('new-layer')
+            self.assertNotEqual(release.image_environment('image'), first)
+
+    def test_token_is_prompted_once_and_cleared_on_failure(self):
+        argv = ['pack', '--version', '0.3.11', '--tag', 'v0.3.11']
+        environments = []
+        def build(args):
+            with release.GITHUB_SESSION.access() as env:
+                environments.append(env)
+            if args.component == 'task':
+                raise ValueError('build failed')
+            return Path('/tmp/driver.deb')
+        with patch.object(release.sys, 'argv', argv), \
+                patch.object(release.sys.stdin, 'isatty', return_value=True), \
+                patch.object(release.getpass, 'getpass', return_value='test-token') as prompt, \
+                patch.object(release, 'build_component', side_effect=build):
+            with self.assertRaisesRegex(ValueError, 'build failed'):
+                release.main()
+            prompt.assert_called_once()
+        self.assertEqual(len(environments), 3)
+        self.assertTrue(all(v is environments[0] for v in environments))
+        self.assertEqual(environments[0], {})
+        self.assertIsNone(release.GITHUB_SESSION)
+
+    def test_environment_changes_rebuild_component_and_keep_sources(self):
+        for same_environment in (True, False):
+            with self.subTest(same=same_environment), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                manifest = dict(architecture='amd64', builder_image='new', builder_environment='env',
+                                release_recipe_sha256='recipe', packages={n: {'sha256': n} for n in release.SOURCES})
+                previous = dict(manifest, builder_image='old',
+                                builder_environment='env' if same_environment else 'old-env')
+                release.write(root / 'inputs.json', json.dumps(manifest))
+                release.write(root / 'build-state.json', json.dumps(previous))
+                release.write(root / 'build/old-object', 'object')
+                release.write(root / 'repositories/local_planner/source', 'source')
+                args = type('Args', (), dict(package_only=False, select=['local_planner'], jobs=1, version='0.3.11'))()
+                with patch.object(release, 'Path', return_value=root), \
+                        patch.object(release, 'host_architecture', return_value='amd64'), \
+                        patch.object(release, 'selected_packages', return_value=['local_planner']), \
+                        patch.object(release, 'environment', return_value={}), \
+                        patch.object(release, 'run'), patch.object(release, 'assemble'):
+                    release.inside(args)
+                self.assertEqual((root / 'build/old-object').exists(), same_environment)
+                self.assertTrue((root / 'repositories/local_planner/source').exists())
+                self.assertEqual(args.select is None, not same_environment)
+
+    def test_interrupted_environment_rebuild_reuses_new_objects(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = dict(architecture='amd64', builder_image='new', builder_environment='env',
+                            release_recipe_sha256='recipe', packages={n: {'sha256': n} for n in release.SOURCES})
+            release.write(root / 'inputs.json', json.dumps(manifest))
+            release.write(root / 'build-state.json', json.dumps(dict(manifest, builder_image='old', builder_environment='old-env')))
+            args = type('Args', (), dict(package_only=False, select=None, jobs=1, version='0.3.11'))()
+            with patch.object(release, 'Path', return_value=root), \
+                    patch.object(release, 'host_architecture', return_value='amd64'), \
+                    patch.object(release, 'environment', return_value={}), \
+                    patch.object(release, 'run', side_effect=ValueError('compile failed')):
+                with self.assertRaisesRegex(ValueError, 'compile failed'):
+                    release.inside(args)
+                release.write(root / 'build/new-object', 'partial progress')
+                with self.assertRaisesRegex(ValueError, 'compile failed'):
+                    release.inside(args)
+                self.assertTrue((root / 'build/new-object').is_file())
+
     def setUp(self):
         release.configure_component('navigation')
         self.addCleanup(release.configure_component, 'navigation')
@@ -224,6 +297,7 @@ class Packaging(unittest.TestCase):
             with patch.object(release.sys, 'argv', argv), \
                     patch.object(release, 'host_architecture', return_value='amd64'), \
                     patch.object(release, 'output', return_value='amd64'), \
+                    patch.object(release, 'image_environment', return_value='environment'), \
                     patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
                     patch.object(release, 'driver_underlay', return_value=({'version': '0.3.5'}, '0.3.5', '0.4.0')), \
                     patch.object(release, 'github_access', return_value=nullcontext({})), \
