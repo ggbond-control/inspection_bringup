@@ -583,6 +583,28 @@ class LaunchConfiguration(unittest.TestCase):
             params = evaluate_parameters(context, normalize_parameters(node['parameters']))
             self.assertEqual(params[0]['navigation_to_pose_directory'], '/tmp/point-journal')
 
+    def test_both_platform_launches_forward_algorithm_result_upload_settings(self):
+        values = {
+            'mode': 'local_http',
+            'algorithm_result_upload_directory': '/tmp/algorithm-result-queue',
+            'algorithm_result_upload_max_attempts': 4,
+            'algorithm_result_upload_retry_seconds': 2.5,
+        }
+        self.robot['system']['media_upload'] = values
+        self.write_robot()
+        for module in (system, platform):
+            context = context_for(module)
+            with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                    patch.object(module, 'Node', wraps=module.Node) as factory:
+                module.launch_setup(context)
+            node = next(call.kwargs for call in factory.call_args_list
+                        if call.kwargs.get('name') == 'platform_mqtt_bridge_node')
+            params = evaluate_parameters(context, normalize_parameters(node['parameters']))[0]
+            self.assertEqual(params['media_upload_mode'], 'local_http')
+            for name, value in values.items():
+                if name != 'mode':
+                    self.assertEqual(params[name], value)
+
     def test_only_d1m_extends_charge_command_timeout(self):
         for model, expected in [('x30', {}), ('d1m', {'charge_command_timeout_sec': '180.0'})]:
             with self.subTest(model=model):

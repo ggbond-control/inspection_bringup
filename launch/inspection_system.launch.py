@@ -939,6 +939,13 @@ def launch_setup(context, *, include_cooperation=True):
             config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
         ),
         "media_upload_mode": str(config_value(config, "media_upload", "mode", "s3")),
+        "algorithm_result_upload_directory": str(config_value(
+            config, "media_upload", "algorithm_result_upload_directory",
+            "~/.ros/inspection_platform_bridge/algorithm_result_uploads")),
+        "algorithm_result_upload_max_attempts": ParameterValue(config_value(
+            config, "media_upload", "algorithm_result_upload_max_attempts", 3), value_type=int),
+        "algorithm_result_upload_retry_seconds": ParameterValue(config_value(
+            config, "media_upload", "algorithm_result_upload_retry_seconds", 5.0), value_type=float),
         "local_media_http_root_directory": str(config_value(
             config, "media_upload", "local_http_root_directory", "~/.ros/inspection_platform_bridge/algorithm_images")),
         "local_media_http_public_base_url": str(config_value(

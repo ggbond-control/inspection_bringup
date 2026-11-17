@@ -103,6 +103,11 @@ algorithm_http:
 # The algorithm center reaches cat through its wired network address.
 media_upload:
   mode: "local_http"
+  # Algorithm result images always use task photo storage (S3), regardless of
+  # the input-image mode above. Upload/delivery runs in a durable background queue.
+  algorithm_result_upload_directory: "~/.ros/inspection_platform_bridge/algorithm_result_uploads"
+  algorithm_result_upload_max_attempts: 3
+  algorithm_result_upload_retry_seconds: 5.0
   local_http_root_directory: "~/.ros/inspection_platform_bridge/algorithm_images"
   local_http_public_base_url: "http://192.168.168.111:18081"
   local_http_bind_address: "0.0.0.0"
