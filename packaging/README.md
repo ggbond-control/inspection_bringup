@@ -46,13 +46,13 @@ Build both components in order (`--component all` is the default). The generated
 driver deb automatically becomes navigation's build underlay:
 
 ```bash
-bash scripts/package_navigation.sh --version 0.3.5 --tag v0.3.5 -j1
+bash scripts/package.sh --version 0.3.5 --tag v0.3.5 -j1
 ```
 
 Build driver only, including every bridge backend:
 
 ```bash
-bash scripts/package_navigation.sh --component driver \
+bash scripts/package.sh --component driver \
   --version 0.3.5 --tag v0.3.5 -j2
 ```
 
@@ -60,7 +60,7 @@ Build navigation alone against an existing driver deb. Driver sources are not
 fetched or compiled, and the host need not have that deb installed:
 
 ```bash
-bash scripts/package_navigation.sh --component navigation \
+bash scripts/package.sh --component navigation \
   --version 0.4.2 --tag v0.4.2 \
   --driver-deb ~/.cache/inspection-navigation-deb/amd64/driver/dist/control-driver_0.3.5_amd64.deb \
   --driver-min-version 0.3.5 --driver-max-version 0.4.0 -j2
@@ -69,7 +69,7 @@ bash scripts/package_navigation.sh --component navigation \
 Give the two components independent versions and source tags:
 
 ```bash
-bash scripts/package_navigation.sh --component all \
+bash scripts/package.sh --component all \
   --driver-version 0.3.5 --driver-tag v0.3.5 \
   --navigation-version 0.4.2 --navigation-tag v0.4.2 -j1
 ```
@@ -78,18 +78,18 @@ After an initial complete component build, rebuild selected ROS packages and
 their consumers within that component:
 
 ```bash
-bash scripts/package_navigation.sh --component navigation \
+bash scripts/package.sh --component navigation \
   --version 0.4.2-1 --tag v0.4.2 --select local_planner \
   --driver-deb ~/.cache/inspection-navigation-deb/amd64/driver/dist/control-driver_0.3.5_amd64.deb -j2
 
-bash scripts/package_navigation.sh --component driver \
+bash scripts/package.sh --component driver \
   --version 0.3.5-1 --tag v0.3.5 --select nav_bridge -j2
 ```
 
 Repackage a successful build without fetching or compiling:
 
 ```bash
-bash scripts/package_navigation.sh --component navigation \
+bash scripts/package.sh --component navigation \
   --version 0.4.2-2 --package-only
 ```
 
@@ -161,6 +161,25 @@ manifests are removed. Use a new cache when changing the builder image/toolchain
 The image is `inspection-control-builder:jazzy-<architecture>` and uses the
 official multi-architecture `ros:jazzy-ros-base`. Docker's storage is separate;
 inspect it with `docker info --format '{{.DockerRootDir}}'`.
+
+The build image uses SYSU apt mirrors over HTTPS. Ubuntu noble, noble-updates,
+noble-backports and noble-security retain the base image's suites/components:
+amd64 uses `https://mirror.sysu.edu.cn/ubuntu/`, arm64 uses
+`https://mirror.sysu.edu.cn/ubuntu-ports/`. ROS 2 uses
+`https://mirror.sysu.edu.cn/ros2/ubuntu/`. Signing keys and signature verification
+are preserved. This does not change host apt sources or the Docker registry.
+ROS `deb-src` entries are disabled because this mirror does not publish the ROS
+source index; project sources are still fetched from Git.
+Existing images are reused until explicitly rebuilt. To apply the mirror change
+while keeping the old build cache, use a new cache root:
+
+```bash
+bash scripts/package.sh --version 0.3.5 --tag v0.3.5 \
+  --rebuild-image --work-dir ~/release/control-sysu -j1
+```
+
+Changing the image ID requires a fresh component build cache under the current
+toolchain consistency checks, even when the change only affects apt mirrors.
 
 ## Installation and Checks
 

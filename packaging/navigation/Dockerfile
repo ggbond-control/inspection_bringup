@@ -1,7 +1,10 @@
 FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+COPY configure_apt_mirrors.py /tmp/configure_apt_mirrors.py
+RUN python3 /tmp/configure_apt_mirrors.py \
+    && rm /tmp/configure_apt_mirrors.py \
+    && apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config patchelf dpkg-dev python3-colcon-common-extensions \
     python3-yaml python3-numpy python3-serial python3-requests python3-scipy \
     libgoogle-glog-dev libgflags-dev libyaml-cpp-dev libeigen3-dev libpcl-dev \
