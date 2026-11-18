@@ -317,7 +317,15 @@ and CPU flags target baseline x86-64 or ARMv8-A. Driver build exports are retain
 navigation remains a runtime payload. RPATHs reference the release prefixes and
 system ROS, not developer workspaces.
 
-`dpkg-shlibdeps` can warn about ROS-generated unversioned library names and the
-custom staging layout. Warnings alone do not prove missing libraries; inspect
-actual scan errors and run installation checks. Review redistribution licenses
+`DEBIAN/` is created before dependency scanning so dpkg can resolve `$ORIGIN`
+and identify the package root. The known Ubuntu `libsndio.so.7.0` versus
+`libsndio.so.7` SONAME warning is omitted from terminal output on successful
+scans only. Full scanner diagnostics are saved in each component's
+`shlibdeps.log`; unknown warnings and every diagnostic on scan failure remain
+visible. Unversioned-library name/version extraction warnings are summarized
+on successful scans, with every occurrence retained in the log. Per-file
+strip/patchelf echoes are replaced by one ELF count; errors and nonzero exits
+remain visible. RPATH entries are deduplicated.
+Warnings alone do not prove missing libraries; inspect actual scan errors and
+run installation checks. Review redistribution licenses
 and vendor SDK terms before distributing artifacts.

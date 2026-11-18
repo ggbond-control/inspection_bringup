@@ -164,8 +164,9 @@ def prepare_bridge_sources(work, manifest):
     write(path, ET.tostring(tree.getroot(), encoding='unicode'))
 
 
-def run(args, **kwargs):
-    print('+ ' + ' '.join(str(a) for a in args), flush=True)
+def run(args, *, quiet=False, **kwargs):
+    if not quiet:
+        print('+ ' + ' '.join(str(a) for a in args), flush=True)
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
@@ -567,6 +568,29 @@ def task_runtime_libraries(work, dest, architecture):
     return features
 
 
+def scan_shared_dependencies(args, cwd, log):
+    result = subprocess.run([str(v) for v in args], cwd=cwd, capture_output=True, text=True,
+                            env=dict(os.environ, LC_ALL='C'))
+    write(log, result.stderr)
+    # Filter naming diagnostics only on success; retain complete stderr on disk.
+    known = re.compile(
+        r"^dpkg-shlibdeps: warning: (?:"
+        r"/(?:usr/)?lib/(?:aarch64|x86_64)-linux-gnu/"
+        r"libsndio\.so\.7\.0 has an unexpected SONAME \(libsndio\.so\.7\)"
+        r"|can't extract name and version from library name 'lib[^/'\s]+\.so')$")
+    suppressed = 0
+    for line in result.stderr.splitlines():
+        if result.returncode or not known.fullmatch(line):
+            print(line, file=sys.stderr)
+        else:
+            suppressed += 1
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, args)
+    if suppressed:
+        print(f'[dependencies] omitted {suppressed} known naming warnings; full log: {log}', flush=True)
+    return result.stdout.strip()
+
+
 def assemble(work, version, manifest):
     architecture = manifest['architecture']
     multiarch = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}[architecture]
@@ -577,6 +601,9 @@ def assemble(work, version, manifest):
     stage = work / 'stage'
     if stage.exists():
         shutil.rmtree(stage)
+    # dpkg-shlibdeps needs this marker before scanning to resolve $ORIGIN.
+    control = stage / 'DEBIAN'
+    control.mkdir(parents=True)
     dest = stage / PREFIX.relative_to('/')
     shutil.copytree(PREFIX, dest, symlinks=True)
     if COMPONENT == 'driver':
@@ -597,6 +624,9 @@ def assemble(work, version, manifest):
         if p.exists():
             shutil.rmtree(p)
     elfs = []
+    rpath = ':'.join(dict.fromkeys([
+        '$ORIGIN', f'{PREFIX}/lib', f'{PREFIX}/vendor/lib', f'{DRIVER_PREFIX}/lib',
+        f'{DRIVER_PREFIX}/vendor/lib', '/opt/ros/jazzy/lib', ros_arch_lib]))
     for p in dest.rglob('*'):
         if p.is_symlink():
             target = p.resolve()
@@ -607,16 +637,14 @@ def assemble(work, version, manifest):
             with p.open('rb') as stream:
                 magic = stream.read(4)
             if magic == b'\x7fELF':
-                run(['strip', '--strip-unneeded', p], stdout=subprocess.DEVNULL)
-                run(['patchelf', '--set-rpath',
-                     f'$ORIGIN:{PREFIX}/lib:{PREFIX}/vendor/lib:{DRIVER_PREFIX}/lib:{DRIVER_PREFIX}/vendor/lib:'
-                     f'/opt/ros/jazzy/lib:{ros_arch_lib}', p],
-                    stdout=subprocess.DEVNULL)
+                run(['strip', '--strip-unneeded', p], quiet=True, stdout=subprocess.DEVNULL)
+                run(['patchelf', '--set-rpath', rpath, p], quiet=True, stdout=subprocess.DEVNULL)
                 elfs.append(p)
             elif p.suffix in ('.sh', '.bash', '.zsh', '.ps1', '.dsv', '.py', '.cmake', '.pc'):
                 text = p.read_text(errors='strict')
                 if '/release/' in text:
                     raise ValueError(f'build-only path in installed runtime file: {p}')
+    print(f'[package] stripped symbols and set RPATH for {len(elfs)} ELF files', flush=True)
     indexes = dest / 'share/ament_index/resource_index/packages'
     actual = {p.name for p in indexes.iterdir()}
     if actual != set(SOURCES):
@@ -649,7 +677,8 @@ def assemble(work, version, manifest):
     args = ['dpkg-shlibdeps', '-O', '--ignore-missing-info',
             f'-l{dest}/lib', f'-l{dest}/vendor/lib', f'-l{DRIVER_PREFIX}/lib',
             f'-l{DRIVER_PREFIX}/vendor/lib', '-l/opt/ros/jazzy/lib', f'-l{ros_arch_lib}']
-    result = output([*args, *['-e' + str(p) for p in elfs]], cwd=debian.parent) if elfs else ''
+    result = scan_shared_dependencies([*args, *['-e' + str(p) for p in elfs]],
+                                      debian.parent, work / 'shlibdeps.log') if elfs else ''
     depends = next((line.split('=', 1)[1] for line in result.splitlines()
                     if line.startswith('shlibs:Depends=')), '')
     spec = COMPONENT_CONFIG[COMPONENT]
@@ -660,8 +689,6 @@ def assemble(work, version, manifest):
         runtime += [f'{driver_name} (>= {manifest["driver_min_version"]})',
                     f'{driver_name} (<< {manifest["driver_max_version"]})']
     depends = ', '.join(filter(None, [depends, *runtime]))
-    control = stage / 'DEBIAN'
-    control.mkdir()
     installed_kib = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file()) // 1024
     write(control / 'control', f'Package: {PACKAGE_NAME}\nVersion: {version}\nArchitecture: {architecture}\n'
           'Maintainer: Navigation maintainers <robot@example.com>\nSection: misc\nPriority: optional\n'

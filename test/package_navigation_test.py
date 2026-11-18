@@ -18,6 +18,30 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_dependency_scan_filters_only_known_warning_and_preserves_errors(self):
+        import io
+        from contextlib import redirect_stderr
+        known = 'dpkg-shlibdeps: warning: /lib/aarch64-linux-gnu/libsndio.so.7.0 has an unexpected SONAME (libsndio.so.7)\n'
+        naming = "dpkg-shlibdeps: warning: can't extract name and version from library name 'libtf2_ros.so'\n"
+        unknown = 'dpkg-shlibdeps: warning: unexpected dependency issue\n'
+        other = 'dpkg-shlibdeps: error: cannot find library libmissing.so\n'
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / 'shlibdeps.log'
+            for code in (0, 2):
+                stream = io.StringIO()
+                result = subprocess.CompletedProcess([], code, 'shlibs:Depends=libc6\n', known + naming + unknown + other)
+                with patch.object(release.subprocess, 'run', return_value=result), redirect_stderr(stream):
+                    if code:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            release.scan_shared_dependencies(['dpkg-shlibdeps'], temp, log)
+                    else:
+                        self.assertEqual(release.scan_shared_dependencies(['dpkg-shlibdeps'], temp, log), 'shlibs:Depends=libc6')
+                self.assertEqual(log.read_text(), known + naming + unknown + other)
+                self.assertIn(other.strip(), stream.getvalue())
+                self.assertIn(unknown.strip(), stream.getvalue())
+                self.assertEqual(naming.strip() in stream.getvalue(), bool(code))
+                self.assertEqual(known.strip() in stream.getvalue(), bool(code))
+
     def test_image_environment_ignores_metadata_id_but_checks_layers(self):
         info = dict(Id='old', Architecture='arm64', Os='linux', RootFS={'Layers': ['layer']},
                     Config={'Env': ['PATH=/bin']})
