@@ -257,6 +257,61 @@ class CooperationWorkspace(unittest.TestCase):
         self.assertNotIn('cooperation_ws', content)
         self.assertIn('inspection_modules.launch.py', content)
 
+    def test_service_install_uninstall_only_changes_selected_service(self):
+        # Real file operations in a private deployment; never call host sudo/systemctl.
+        package = self.root / 'bringup'
+        for directory in ('scripts', 'systemd'):
+            shutil.copytree(ROOT / directory, package / directory)
+        unit_dir, install = self.root / 'units', self.root / 'installed'
+        unit_dir.mkdir()
+        script = package / 'scripts/manage_inspection_services.sh'
+        script.write_text(script.read_text().replace(
+            'SYSTEMD_DIR="/etc/systemd/system"', 'SYSTEMD_DIR=' + shlex.quote(str(unit_dir))))
+        services = cfg.read_yaml(self.config / 'services.yaml')
+        services['service']['install_dir'] = str(install)
+        (self.config / 'services.yaml').write_text(yaml.safe_dump(services))
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        calls = self.root / 'systemctl.jsonl'
+        (bin_dir / 'systemctl').write_text(
+            '#!/usr/bin/python3\nimport json,sys\n'
+            f'with open({str(calls)!r}, "a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n')
+        (bin_dir / 'sudo').write_text('#!/bin/bash\nif [[ "$1" == -n ]]; then exit 0; fi\nexec "$@"\n')
+        for command in bin_dir.iterdir():
+            command.chmod(0o755)
+        env = dict(self.env, PATH=str(bin_dir) + ':' + os.environ['PATH'])
+
+        def run(action, *targets):
+            calls.write_text('')
+            result = subprocess.run(['bash', str(script), action, *targets],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            selected = targets or ('navigation', 'hardware', 'system', 'cooperation')
+            label = 'installed' if action == 'install' else 'removed'
+            self.assertIn(f'[{action}] {label}: ' + ' '.join(selected), result.stdout)
+            return [json.loads(row) for row in calls.read_text().splitlines()]
+
+        run('install', 'cooperation')
+        cooperation_unit = unit_dir / 'inspection-cooperation.service'
+        cooperation_wrapper = install / 'run_inspection_cooperation.sh'
+        original = cooperation_unit.read_bytes(), cooperation_wrapper.read_bytes()
+        invoked = run('install', 'system')
+        self.assertEqual(invoked, [['daemon-reload']])
+        self.assertEqual(original, (cooperation_unit.read_bytes(), cooperation_wrapper.read_bytes()))
+        invoked = run('uninstall', 'system')
+        self.assertEqual(invoked, [['disable', '--now', 'inspection-system.service'], ['daemon-reload']])
+        self.assertFalse((unit_dir / 'inspection-system.service').exists())
+        self.assertEqual(original, (cooperation_unit.read_bytes(), cooperation_wrapper.read_bytes()))
+        run('install')
+        self.assertEqual(len(list(unit_dir.glob('*.service'))), 4)
+        invoked = run('uninstall', 'cooperation')
+        self.assertEqual(invoked, [['disable', '--now', 'inspection-cooperation.service'], ['daemon-reload']])
+        self.assertTrue((unit_dir / 'inspection-system.service').exists())
+        self.assertFalse(cooperation_wrapper.exists())
+        run('uninstall')
+        self.assertFalse(list(unit_dir.glob('*.service')))
+        self.assertFalse(list(install.glob('run_*.sh')))
+
     def test_build_selects_nine_packages_in_new_root_with_clean_underlay(self):
         # Actual ROS underlay and minimal installed interfaces; fake colcon only.
         prefix = self.task / 'install/inspection_interfaces'

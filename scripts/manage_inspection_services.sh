@@ -563,7 +563,6 @@ install_services() {
   if [[ -n "${TARGET}" ]]; then
     service_for_target "${TARGET}" >/dev/null
     target_list=("${TARGET}")
-    [[ "${TARGET}" != system ]] || target_list+=(cooperation)
   else
     target_list=(navigation hardware system cooperation)
   fi
@@ -613,7 +612,6 @@ uninstall_services() {
   if [[ -n "${TARGET}" ]]; then
     service_for_target "${TARGET}" >/dev/null
     target_list=("${TARGET}")
-    [[ "${TARGET}" != system ]] || target_list+=(cooperation)
   else
     target_list=(navigation hardware system cooperation)
   fi
