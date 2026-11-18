@@ -326,6 +326,20 @@ visible. Unversioned-library name/version extraction warnings are summarized
 on successful scans, with every occurrence retained in the log. Per-file
 strip/patchelf echoes are replaced by one ELF count; errors and nonzero exits
 remain visible. RPATH entries are deduplicated.
+
+At the end of an invocation, the terminal summary lists every completed deb's
+absolute output path, version, architecture, source tag/branch and six-character
+commit, including third-party libraries. English ASCII tables use automatic
+column widths; artifact paths are printed outside the tables. The `Cache` column
+shows `New`, `Unchanged`, `Updated (old -> new)`, or `Ref changed (same commit)`.
+Source changes are compared with the
+checkout cached before this invocation: first fetch, unchanged, updated (old to
+new commit), or reference changed with the same commit. Comparisons use full
+commits; only the display is shortened. `--package-only` reports cached sources
+without claiming to have checked the remote. Full source provenance remains in
+each deb's adjacent `.manifest.json`, with a `.sha256` checksum file. If a later
+component fails, the summary still lists artifacts completed by this invocation.
+
 Warnings alone do not prove missing libraries; inspect actual scan errors and
 run installation checks. Review redistribution licenses
 and vendor SDK terms before distributing artifacts.

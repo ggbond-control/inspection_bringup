@@ -18,6 +18,74 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_source_cache_status_compares_full_commits_and_references(self):
+        original = dict(commit='abcdef111111', tag='v1', branch=None)
+        self.assertEqual(release.source_cache_status({}, original), 'New')
+        self.assertEqual(release.source_cache_status(original, original), 'Unchanged')
+        self.assertEqual(release.source_cache_status(original, dict(original, commit='abcdef222222')),
+                         'Updated (abcdef -> abcdef)')
+        self.assertEqual(release.source_cache_status(original, dict(original, tag='v2')),
+                         'Ref changed (same commit)')
+        self.assertEqual(release.source_cache_status({}, original, True), 'Cached (remote not checked)')
+
+    def test_cache_baseline_reads_checkout_before_fetch_even_without_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'repositories/nav_bridge'
+            source.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(source)], check=True)
+            subprocess.run(['git', '-C', str(source), '-c', 'user.name=Test',
+                            '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'test'],
+                           check=True)
+            head = release.output(['git', '-C', source, 'rev-parse', 'HEAD'])
+            self.assertEqual(release.cached_sources(root)['packages']['nav_bridge']['commit'], head)
+            release.write(root / 'inputs.json', json.dumps({'packages': {
+                'nav_bridge': {'commit': 'stale', 'tag': 'v1'},
+                'deleted': {'commit': 'old'}}}))
+            baseline = release.cached_sources(root)
+            self.assertEqual(baseline['packages'], {'nav_bridge': {'commit': head}})
+
+    def test_summary_lists_all_artifacts_and_source_provenance(self):
+        import io
+        from contextlib import redirect_stdout
+        manifest = dict(version='0.3.11', architecture='amd64', requested_tag='v0.3.11',
+                        packages={'nav_bridge': dict(commit='abcdef123456', tag='v0.3.11',
+                                                     selection='exact-tag')},
+                        native={'gtsam': dict(commit='123456abcdef', tag='4.2.0',
+                                              selection='fixed-upstream-tag')})
+        items = [dict(name=name, artifact=Path('/dist') / f'{name}.deb', manifest=manifest,
+                      previous={}, package_only=False) for name in ('control-driver', 'control-task')]
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            release.print_package_summary(items, 91, True)
+        rendered = stream.getvalue()
+        for item in items:
+            self.assertIn(str(item['artifact']), rendered)
+        self.assertIn('| nav_bridge | v0.3.11      | abcdef | Exact tag | New   |', rendered)
+        self.assertIn('| gtsam   | 4.2.0        | 123456 | Pinned tag | New   |', rendered)
+        self.assertNotIn('abcdef123456', rendered)
+        stream = io.StringIO()
+        items[0]['package_only'] = True
+        with redirect_stdout(stream):
+            release.print_package_summary(items[:1], 1, False)
+        self.assertIn('INCOMPLETE', stream.getvalue())
+        self.assertIn('Cached (remote not checked)', stream.getvalue())
+
+    def test_summary_table_aligns_long_names_and_cache_changes(self):
+        import io
+        from contextlib import redirect_stdout
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            release.print_summary_table(['Package', 'Cache'], [
+                ['inspection_charge_executor', 'Updated (123456 -> abcdef)'],
+                ['gtsam', 'Unchanged']])
+        lines = stream.getvalue().splitlines()
+        self.assertEqual(len({len(line) for line in lines}), 1)
+        dividers = [[index for index, char in enumerate(line) if char == '|']
+                    for line in lines if line.startswith('|')]
+        self.assertTrue(all(columns == dividers[0] for columns in dividers))
+        self.assertTrue(stream.getvalue().isascii())
+
     def test_dependency_scan_filters_only_known_warning_and_preserves_errors(self):
         import io
         from contextlib import redirect_stderr
@@ -313,6 +381,8 @@ class Packaging(unittest.TestCase):
 
     def test_navigation_fetches_only_navigation_repositories_and_mounts_driver(self):
         with tempfile.TemporaryDirectory() as temp:
+            release.write(Path(temp) / 'navigation/dist/control-navigation_0.4.2_amd64.deb.manifest.json',
+                          json.dumps(dict(version='0.4.2', architecture='amd64')))
             def fetched(url, tag, path, env):
                 release.write(path / 'package.xml', f'<package><name>{path.name}</name></package>')
                 return {'commit': 'abc'}
@@ -438,6 +508,8 @@ class Packaging(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             release.write(root / 'driver/inputs.json', '{"architecture": "arm64"}')
+            release.write(root / 'driver/dist/control-driver_0.3.5_arm64.deb.manifest.json',
+                          json.dumps(dict(version='0.3.5', architecture='arm64')))
             argv = ['package_navigation.py', '--component', 'driver', '--version', '0.3.5', '--package-only', '--work-dir', str(root)]
             def output(args, **kwargs):
                 if args[:2] == ['dpkg', '--print-architecture']:

@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 import yaml
 
@@ -888,6 +889,85 @@ def driver_underlay(args, work, architecture):
     return {'version': version, 'sha256': checksum, 'build_id': build_id}, minimum, maximum
 
 
+def source_cache_status(previous, current, package_only=False):
+    if package_only:
+        return 'Cached (remote not checked)'
+    before, after = previous.get('commit'), current.get('commit')
+    if not before:
+        return 'New'
+    if before != after:
+        return f'Updated ({before[:6]} -> {(after or "unknown")[:6]})'
+    if (previous.get('tag'), previous.get('branch')) != (current.get('tag'), current.get('branch')):
+        return 'Ref changed (same commit)'
+    return 'Unchanged'
+
+
+def cached_sources(work):
+    path = work / 'inputs.json'
+    previous = json.loads(path.read_text()) if path.exists() else {}
+    for section, directory in (('packages', 'repositories'), ('native', 'native-src')):
+        entries = previous.setdefault(section, {})
+        root = work / directory
+        for name in list(entries):
+            if not entries[name].get('embedded_path') and not (root / name / '.git').exists():
+                del entries[name]
+        for source in root.iterdir() if root.exists() else ():
+            if not (source / '.git').exists():
+                continue
+            result = subprocess.run(['git', '-C', str(source), 'rev-parse', 'HEAD'],
+                                    capture_output=True, text=True)
+            if result.returncode == 0:
+                commit = result.stdout.strip()
+                if entries.get(source.name, {}).get('commit') != commit:
+                    entries[source.name] = {'commit': commit}
+    return previous
+
+
+def print_summary_table(headers, rows):
+    widths = [max(len(row[column]) for row in [headers, *rows])
+              for column in range(len(headers))]
+    border = '+' + '+'.join('-' * (width + 2) for width in widths) + '+'
+    def line(row):
+        return '| ' + ' | '.join(value.ljust(width) for value, width in zip(row, widths)) + ' |'
+    print(border)
+    print(line(headers))
+    print(border)
+    for row in rows:
+        print(line(row))
+    print(border)
+
+
+def print_package_summary(results, elapsed, success):
+    print('\nPACKAGE SUMMARY', flush=True)
+    print(f'Status: {"SUCCESS" if success else "INCOMPLETE"}  |  Elapsed: {elapsed:.1f}s'
+          f'  |  Completed: {len(results)}')
+    selections = {'exact-tag': 'Exact tag', 'lower-tag': 'Lower tag',
+                  'default-branch': 'Default branch', 'fixed-upstream-tag': 'Pinned tag'}
+    for item in results:
+        manifest = item['manifest']
+        print(f'\n[{item["name"]}]  {manifest["version"]} / {manifest["architecture"]}')
+        print(f'  DEB:       {item["artifact"]}')
+        print(f'  Manifest:  {item["artifact"]}.manifest.json')
+        print(f'  SHA256:    {item["artifact"]}.sha256')
+        print(f'  Requested: {manifest.get("requested_tag", "Not recorded")}')
+        if manifest.get('driver'):
+            print(f'  Underlay:  control-driver {manifest["driver"]["version"]}')
+        for section, title in (('packages', 'ROS packages'), ('native', 'Third-party libraries')):
+            entries = manifest.get(section, {})
+            if not entries:
+                continue
+            print(f'\n  {title}')
+            rows = []
+            for name, revision in entries.items():
+                previous = item['previous'].get(section, {}).get(name, {})
+                status = source_cache_status(previous, revision, item['package_only'])
+                ref = revision.get('tag') or revision.get('branch') or '-'
+                selection = selections.get(revision.get('selection'), revision.get('selection') or 'Parent repository')
+                rows.append([name, ref, revision.get('commit', '-')[:6], selection, status])
+            print_summary_table(['Package', 'Tag / Branch', 'Commit', 'Selection', 'Cache'], rows)
+    print('\nEND OF PACKAGE SUMMARY', flush=True)
+
+
 def build_component(args):
     architecture = host_architecture()
     image_name = builder_image(architecture)
@@ -896,6 +976,7 @@ def build_component(args):
     work.mkdir(parents=True, exist_ok=True)
     with (work / '.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        previous_sources = cached_sources(work) if not args.package_only else {}
         check_cache_architecture(work, architecture)
         image = subprocess.run(['docker', 'image', 'inspect', image_name], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL).returncode == 0
@@ -969,7 +1050,12 @@ def build_component(args):
             command += ['--select', *args.select]
         run(command)
         print(f'[artifact] {work}/dist/{PACKAGE_NAME}_{args.version}_{architecture}.deb', flush=True)
-        return work / 'dist' / f'{PACKAGE_NAME}_{args.version}_{architecture}.deb'
+        artifact = work / 'dist' / f'{PACKAGE_NAME}_{args.version}_{architecture}.deb'
+        if hasattr(args, '_summary'):
+            manifest = json.loads(Path(str(artifact) + '.manifest.json').read_text())
+            args._summary.append(dict(name=PACKAGE_NAME, artifact=artifact, manifest=manifest,
+                                      previous=previous_sources, package_only=args.package_only))
+        return artifact
 
 
 def main():
@@ -989,6 +1075,17 @@ def main():
 
 
 def build_components(args):
+    started = time.monotonic()
+    args._summary = []
+    success = False
+    try:
+        build_components_sequential(args)
+        success = True
+    finally:
+        print_package_summary(args._summary, time.monotonic() - started, success)
+
+
+def build_components_sequential(args):
     components = COMPONENTS if args.component == 'all' else (args.component,)
     driver_deb = args.driver_deb
     for component in components:
