@@ -13,7 +13,7 @@ from cooperation import launch_actions
 
 
 def launch_setup(context):
-    config = load_config("system", LaunchConfiguration("system_config_path").perform(context))
+    config = load_config("system", LaunchConfiguration("system_config_path").perform(context), resolve=False)
     return launch_actions(config)
 
 

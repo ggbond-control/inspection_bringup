@@ -38,6 +38,7 @@ FILE_FIELDS = {
     "services": {
         ("navigation", "launch_args", "navigate_config_path"): ("inspection_bringup", "config"),
         ("inspection_system", "launch_args", "system_config_path"): ("inspection_bringup", "config"),
+        ("cooperation", "launch_args", "system_config_path"): ("inspection_bringup", "config"),
     },
 }
 
@@ -269,13 +270,14 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
     return config
 
 
-def load_config(module, path="", config_dir=None):
+def load_config(module, path="", config_dir=None, *, resolve=True):
     """An explicit old-style path bypasses model and robot overlays entirely."""
     if module not in FILENAMES:
         raise ValueError(f"unknown configuration module: {module}")
     if path:
         origin = Path(os.path.expandvars(str(path))).expanduser().absolute()
-        return resolve_files(read_yaml(origin), module, origin, config_dir=config_dir, model='')
+        return (resolve_files(read_yaml(origin), module, origin, config_dir=config_dir, model='')
+                if resolve else read_yaml(origin))
 
     root = Path(config_dir) if config_dir is not None else default_config_dir()
     root = root.absolute()
@@ -283,7 +285,7 @@ def load_config(module, path="", config_dir=None):
     config = read_yaml(base_path)
     robot_path = root / "robot.yaml"
     if not robot_path.exists():
-        return resolve_files(config, module, base_path, config_dir=root, model='')
+        return resolve_files(config, module, base_path, config_dir=root, model='') if resolve else config
 
     robot = read_yaml(robot_path)
     unknown = set(robot) - {"model", "robot_id", *FILENAMES}
@@ -306,7 +308,8 @@ def load_config(module, path="", config_dir=None):
     # inherited paths so workers use the same automatic configuration root.
     if module == "services":
         for section, argument in (("navigation", "navigate_config_path"),
-                                  ("inspection_system", "system_config_path")):
+                                  ("inspection_system", "system_config_path"),
+                                  ("cooperation", "system_config_path")):
             config.get(section, {}).get("launch_args", {}).pop(argument, None)
     model_path = model_dir / FILENAMES[module]
     if model_path.exists():
@@ -318,7 +321,7 @@ def load_config(module, path="", config_dir=None):
         config.setdefault("cooperation", {})["robot_id"] = robot_id
     if module == "services":
         config.setdefault("service", {}).setdefault("environment", {})["INSPECTION_CONFIG_DIR"] = str(root)
-    return resolve_files(config, module, root, config_dir=root, model=model)
+    return resolve_files(config, module, root, config_dir=root, model=model) if resolve else config
 
 
 def write_snapshot(config, directory=None):

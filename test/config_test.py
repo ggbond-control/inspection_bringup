@@ -246,7 +246,7 @@ class Configuration(unittest.TestCase):
         self.robot(system={'mqtt': {'host': 'remote-broker.invalid'},
                            'cooperation': {'mode': 'swarm'}})
         config = cfg.load_config('system')
-        self.assertNotIn('swarm', config['cooperation'])
+        self.assertIn('data_root', config['cooperation']['swarm']['agent'])
         projected = swarm_configuration(config, status)
         self.assertEqual(projected['cluster_id'], 'inspection-swarm')
         self.assertEqual(projected['transport']['mqtt_prefix'], 'fh/swarm/peer')
@@ -717,6 +717,8 @@ class Configuration(unittest.TestCase):
         expected['service']['environment']['CYCLONEDDS_URI'] = ''
         expected['service']['environment']['ZENOH_CONFIG_OVERRIDE'] = 'queries_default_timeout=600000'
         expected['service']['environment']['INSPECTION_CONFIG_DIR'] = str(self.root)
+        expected['cooperation'] = cfg.read_yaml(self.root / 'services.yaml')['cooperation']
+        expected['cooperation']['launch_args'].pop('system_config_path')
         self.assertEqual(cfg.load_config('services'), expected)
 
     def test_services_explicit_launch_paths_use_bringup_config_directory(self):

@@ -155,6 +155,20 @@ source_lines() {
   else
     lines+=("echo '[warn] workspace setup not found: ${WORKSPACE_ROOT}/install/setup.bash'")
   fi
+  if [[ "${1:-}" == cooperation ]]; then
+    local cooperation_workspace
+    cooperation_workspace="$(python3 - "${SCRIPT_DIR}" "${CONFIG_PATH}" <<'PYROOT'
+import sys
+sys.path.insert(0, sys.argv[1])
+from bringup_config import load_config
+from pathlib import Path
+standalone = str(Path(sys.argv[1]).parent / 'config/services.yaml') if sys.argv[2] else ''
+print(load_config('services', standalone, resolve=False).get('cooperation', {}).get(
+    'workspace_root', '/home/cat/Workspace/cooperation_ws'))
+PYROOT
+)"
+    lines+=("source $(quote "${cooperation_workspace}/install/local_setup.bash")")
+  fi
   printf "%s; " "${lines[@]}"
 }
 
@@ -186,7 +200,7 @@ build_command() {
   launch_file="$(launch_file_for_kind "${launch_kind}")"
 
   printf "set -e; "
-  source_lines
+  source_lines "${launch_kind}"
   printf "export RCUTILS_CONSOLE_OUTPUT_FORMAT='[{time}] [{severity}] [{name}]: {message}'; "
   printf "export RCUTILS_COLORIZED_OUTPUT=1; "
   printf "export RCUTILS_LOGGING_BUFFERED_STREAM=0; "

@@ -26,7 +26,7 @@ def validate(config):
         if not isinstance(settings.get(key, {}), dict):
             raise ValueError(f'cooperation.{key} must be a mapping')
     for stack, sections in [('coordination', ('agent', 'election')),
-                            ('swarm', ('agent', 'consensus', 'coordinator', 'planner'))]:
+                            ('swarm', ('agent', 'consensus', 'coordinator', 'planner', 'transport'))]:
         for section in sections:
             if not isinstance(settings.get(stack, {}).get(section, {}), dict):
                 raise ValueError(f'cooperation.{stack}.{section} must be a mapping')
@@ -81,6 +81,8 @@ def swarm_configuration(config, device_status_path):
         'coordinator': dict(swarm.get('coordinator', {})),
         'planner': dict(swarm.get('planner', {})),
     }
+    if 'data_root' in swarm.get('transport', {}):
+        result['transport']['data_root'] = swarm['transport']['data_root']
     # These affect the map fingerprint and must never differ between preflight/planning.
     for key, default in [('footprint_radius', 0.3), ('free_thresh', 0.05)]:
         if any(key in result[part] for part in ('coordinator', 'planner')):
@@ -108,11 +110,24 @@ def launch_actions(config, default_device_status_path=None):
         f"Cooperation mode={cooperation_mode}; "
         f"robot={config.get('cooperation', {}).get('robot_id', 'unset')}"
     ))]
-    if cooperation_mode != "disabled" and default_device_status_path is None:
+    if default_device_status_path is None:
+        default_device_status_path = config.get("cooperation", {}).get("device_status_path")
+    if cooperation_mode != "disabled" and not default_device_status_path:
         default_device_status_path = str(
             Path(get_package_share_directory("inspection_platform_bridge")) /
             "platform" / "device_status.json"
         )
+    required = {
+        'coordination': ('fleet_leader_election', 'capability_mission_planner', 'mission_execution_agent'),
+        'swarm': ('swarm_protocol', 'swarm_consensus', 'swarm_mission_coordinator',
+                  'swarm_mqtt_transport', 'swarm_mission_planner', 'swarm_execution_agent'),
+    }.get(cooperation_mode, ())
+    for package in required:
+        try:
+            get_package_share_directory(package)
+        except LookupError as exc:
+            raise RuntimeError(f'Cooperation package {package} is unavailable; '
+                               'build and source cooperation_ws first') from exc
     if cooperation_mode == "coordination":
         actions.append(Node(
             package="fleet_leader_election",

@@ -37,15 +37,24 @@ cooperation:
       task_addition_retry_seconds: 2.0
       task_addition_response_timeout_seconds: 60.0
       task_event_resend_seconds: 2.0
-      data_root: /home/cat/Workspace/task_ws/src/mission_execution_agent/runtime
+      data_root: /home/cat/Workspace/cooperation_ws/src/mission_execution_agent/runtime
     election:
       cluster_id: company2-fleet
-      data_root: /home/cat/Workspace/task_ws/src/fleet_leader_election/runtime
+      data_root: /home/cat/Workspace/cooperation_ws/src/fleet_leader_election/runtime
       heartbeat_interval_seconds: 0.25
       election_timeout_seconds: 1.0
       election_timeout_step_seconds: 0.15
       quorum_timeout_seconds: 0.75
       recovery_observation_seconds: 0.5
+  swarm:
+    consensus:
+      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_consensus/runtime
+    coordinator:
+      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mission_coordinator/runtime
+    transport:
+      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mqtt_transport/runtime
+    agent:
+      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_execution_agent/runtime
   device_status_path: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/platform/device_status.json
 
 mqtt:
