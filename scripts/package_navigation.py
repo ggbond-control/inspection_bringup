@@ -8,6 +8,7 @@ from contextlib import contextmanager, ExitStack, nullcontext
 import fcntl
 import getpass
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 import yaml
 
@@ -115,6 +117,7 @@ PACKAGE_NAME = COMPONENT_CONFIG[COMPONENT]['deb_name']
 SOURCES = dict(COMPONENT_CONFIG[COMPONENT]['packages'])
 NATIVE = {}
 GITHUB_SESSION = None
+SOURCE_TRANSFERS = 0
 
 
 class GitHubSession:
@@ -289,17 +292,64 @@ def github_access():
         env.clear()
 
 
-def remote_git(args, env):
-    result = subprocess.run(['git', *map(str, args)], env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode:
-        # Git diagnostics can contain authentication data. Do not relay them.
-        raise ValueError('remote Git operation failed; check token read access, repository URL '
-                         'and network (credentials and Git diagnostics suppressed)')
-    return result.stdout.strip()
+def git_failure_reason(stderr):
+    # Classify privately; never echo Git diagnostics, URLs with credentials, or headers.
+    message = (stderr or '').lower()
+    categories = (
+        (('authentication failed', 'permission denied', 'could not read username',
+          'error: 401', 'error: 403', 'returned error: 401', 'returned error: 403'),
+         'authentication/permission denied; check token and organization access', False),
+        (('repository not found', 'does not appear to be a git repository', 'returned error: 404'),
+         'repository missing or inaccessible; check repository name and token access', False),
+        (('certificate verification failed', 'ssl certificate problem', 'server certificate verification failed'),
+         'TLS certificate verification failed; check certificates and proxy', False),
+        (('couldn\'t find remote ref', 'not our ref'), 'selected remote ref is unavailable', False),
+        (('could not resolve host', 'could not resolve proxy'), 'DNS lookup failed', True),
+        (('timed out', 'timeout', 'operation too slow'), 'network timeout', True),
+        (('connection reset', 'connection was reset', 'recv failure', 'remote end hung up',
+          'early eof', 'unexpected disconnect', 'connection closed', 'tls connection was non-properly terminated',
+          'http/2 stream', 'http2 framing', 'curl 92', 'curl 56', 'curl 18'),
+         'connection interrupted during transfer', True),
+        (('failed to connect', 'could not connect', 'connection refused', 'network is unreachable'),
+         'connection could not be established', True),
+        (('returned error: 429', 'returned error: 500', 'returned error: 502',
+          'returned error: 503', 'returned error: 504'), 'remote service temporarily unavailable', True),
+    )
+    for patterns, reason, retryable in categories:
+        if any(pattern in message for pattern in patterns):
+            return reason, retryable
+    return 'unclassified Git failure; raw diagnostics suppressed to protect credentials', False
+
+
+def remote_git(args, env, *, repository=None):
+    args = list(map(str, args))
+    operation = next((name for name in ('ls-remote', 'fetch', 'checkout') if name in args), 'git')
+    network = operation in ('ls-remote', 'fetch')
+    url = repository or next((value for value in args if value.startswith('https://')), '')
+    parsed = urlsplit(url)
+    label = '/'.join(parsed.path.strip('/').split('/')[-2:]).removesuffix('.git')
+    label = re.sub(r'[^A-Za-z0-9_./-]', '_', label) or 'local-cache'
+    stage = {'ls-remote': 'query', 'fetch': 'fetch', 'checkout': 'checkout'}.get(operation, operation)
+    attempts = 3 if network else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            result = subprocess.run(['git', *args], env=env, text=True, timeout=300 if operation == 'fetch' else 60,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                return result.stdout.strip()
+            reason, retryable = git_failure_reason(result.stderr)
+        except subprocess.TimeoutExpired:
+            reason, retryable = 'Git operation timed out', True
+        if not retryable or attempt == attempts:
+            raise ValueError(f'Git {stage} failed [{label}] after {attempt} attempt(s): {reason}')
+        delay = 2 ** attempt
+        print(f'[retry] Git {stage} [{label}]: {reason}; attempt {attempt + 1}/{attempts} in {delay}s',
+              file=sys.stderr, flush=True)
+        time.sleep(delay)
 
 
 def fetch_source(url, requested, destination, env):
+    global SOURCE_TRANSFERS
     listing = remote_git(['ls-remote', '--symref', url, 'HEAD', 'refs/tags/*'], env)
     try:
         revision = resolve_revision(listing, requested)
@@ -312,11 +362,19 @@ def fetch_source(url, requested, destination, env):
     if not (destination / '.git').is_dir():
         raise ValueError(f'not a managed Git source cache: {destination}')
     # Fetch only into our local cache; no remote mutation or developer checkout.
-    remote_git(['-C', destination, 'fetch', '--no-tags', '--depth', '1', url, revision['ref']], env)
-    actual = output(['git', '-C', destination, 'rev-parse', 'FETCH_HEAD^{commit}'])
-    if actual != revision['commit']:
-        raise ValueError(f'{url}: remote ref moved during fetch; retry to resolve a consistent revision')
-    remote_git(['-C', destination, 'checkout', '--detach', '--force', actual], env)
+    cached = subprocess.run(['git', '-C', str(destination), 'cat-file', '-e',
+                             revision['commit'] + '^{commit}'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if cached:
+        actual = revision['commit']
+        print(f'[source] {destination.name}: cached commit; fetch skipped', flush=True)
+    else:
+        SOURCE_TRANSFERS += 1
+        remote_git(['-C', destination, 'fetch', '--no-tags', '--depth', '1', url, revision['ref']], env)
+        actual = output(['git', '-C', destination, 'rev-parse', 'FETCH_HEAD^{commit}'])
+        if actual != revision['commit']:
+            raise ValueError(f'{url}: remote ref moved during fetch; retry to resolve a consistent revision')
+    remote_git(['-C', destination, 'checkout', '--detach', '--force', actual], env, repository=url)
     if (destination / '.gitmodules').exists():
         raise ValueError(f'{url}: submodules require explicit release support')
     return dict(revision, url=url, requested_tag=requested)
@@ -603,6 +661,42 @@ def scan_shared_dependencies(args, cwd, log):
     return result.stdout.strip()
 
 
+def cache_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def install_digest():
+    if not PREFIX.is_dir() or not (PREFIX / 'local_setup.bash').is_file():
+        return None
+    files = []
+    for path in sorted(PREFIX.rglob('*')):
+        if '__pycache__' in path.parts or path.suffix == '.pyc':
+            continue
+        if path.is_symlink():
+            value = ('link', str(path.readlink()))
+        elif path.is_file():
+            value = ('file', path.stat().st_mode & 0o777, digest(path))
+        else:
+            continue
+        files.append((str(path.relative_to(PREFIX)), value))
+    return cache_digest(files)
+
+
+def build_input_digest(manifest):
+    spec = COMPONENT_CONFIG[COMPONENT]
+    # Increment when changing compiler invocation or build adaptations.
+    rules = {key: spec.get(key) for key in ('packages', 'embedded_packages', 'native_libraries',
+                                          'cmake_args', 'prefix', 'recipe_revision')}
+    return cache_digest(dict(cache_version=1, rules=rules, architecture=manifest['architecture'],
+                             code=BUILD_RULES_SHA,
+                             cpu_flags=CPU_FLAGS[manifest['architecture']],
+                             environment=manifest.get('builder_environment') or manifest.get('builder_image'),
+                             packages={name: {key: value.get(key) for key in ('commit', 'sha256')}
+                                       for name, value in manifest.get('packages', {}).items()},
+                             native={name: value['commit'] for name, value in manifest.get('native', {}).items()},
+                             driver=driver_build_id(manifest)))
+
+
 def assemble(work, version, manifest):
     architecture = manifest['architecture']
     multiarch = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}[architecture]
@@ -610,6 +704,26 @@ def assemble(work, version, manifest):
     manifest = dict(manifest, version=version, component=COMPONENT, install_prefix=str(PREFIX),
                     packaging_recipe_sha256=recipe_id(),
                     component_config=copy.deepcopy(COMPONENT_CONFIG[COMPONENT]))
+    dist = work / 'dist'
+    deb = dist / f'{PACKAGE_NAME}_{version}_{architecture}.deb'
+    provenance = {key: value for key, value in manifest.items()
+                  if key not in ('builder_image', 'previous_builder_environment', 'artifact_input_sha256')}
+    artifact_key = cache_digest(dict(manifest=provenance, script=digest(Path(__file__)),
+                                    install=install_digest()))
+    metadata = Path(str(deb) + '.manifest.json')
+    checksum = Path(str(deb) + '.sha256')
+    if deb.is_file() and metadata.is_file() and checksum.is_file():
+        try:
+            recorded = json.loads(metadata.read_text())
+            expected = checksum.read_text().split()[0]
+            reusable = (isinstance(recorded, dict) and recorded.get('artifact_input_sha256') == artifact_key and
+                        expected == digest(deb))
+        except (ValueError, IndexError):
+            reusable = False
+        if reusable:
+            print(f'[cache] Artifact: reused; existing deb verified: {deb}', flush=True)
+            return 'Reused (deb checksum verified)'
+    manifest['artifact_input_sha256'] = artifact_key
     stage = work / 'stage'
     if stage.exists():
         shutil.rmtree(stage)
@@ -716,6 +830,7 @@ def assemble(work, version, manifest):
     write(dist / (deb.name + '.sha256'), digest(deb) + '  ' + deb.name + '\n')
     write(dist / (deb.name + '.manifest.json'), json.dumps(manifest, indent=2) + '\n')
     print(f'[done] {deb}', flush=True)
+    return 'Packaged'
 
 
 def inside(args):
@@ -732,11 +847,25 @@ def inside(args):
         cached = json.loads(complete.read_text())
         if cached.get('component_config', COMPONENT_CONFIG[COMPONENT]) != COMPONENT_CONFIG[COMPONENT]:
             raise ValueError('component catalog changed; rebuild before --package-only')
-        assemble(work, args.version, cached)
+        artifact_status = assemble(work, args.version, cached)
+        write(work / 'last-execution.json', json.dumps(dict(build='Skipped (package-only)',
+                                                         artifact=artifact_status)))
         return
     if args.select and not complete.exists():
         raise ValueError('first release build must be full; omit --select')
     previous = json.loads(complete.read_text()) if complete.exists() else {}
+    build_key = build_input_digest(manifest)
+    installed = install_digest() if previous.get('build_input_sha256') == build_key else None
+    if (not (work / 'build-in-progress').exists() and installed and
+            previous.get('build_input_sha256') == build_key and
+            previous.get('install_sha256') == installed):
+        print('[cache] Build: unchanged; colcon skipped', flush=True)
+        manifest.update(build_input_sha256=build_key, install_sha256=installed)
+        write(complete, json.dumps(manifest, indent=2))
+        artifact_status = assemble(work, args.version, manifest)
+        write(work / 'last-execution.json', json.dumps(dict(build='Skipped (inputs unchanged)',
+                                                         artifact=artifact_status)))
+        return
     environment_changed = False
     if previous and previous.get('builder_image') != manifest['builder_image']:
         old_environment = previous.get('builder_environment') or manifest.get('previous_builder_environment')
@@ -804,9 +933,12 @@ def inside(args):
     current_files = installed_files(work)
     prune_obsolete(previous_files, current_files)
     write(ownership, json.dumps(sorted(current_files)))
+    manifest.update(build_input_sha256=build_key, install_sha256=install_digest())
     write(complete, json.dumps(manifest, indent=2))
     (work / 'build-in-progress').unlink()
-    assemble(work, args.version, manifest)
+    artifact_status = assemble(work, args.version, manifest)
+    write(work / 'last-execution.json', json.dumps(dict(build='Built (incremental where available)',
+                                                     artifact=artifact_status)))
 
 
 def arguments():
@@ -961,6 +1093,8 @@ def print_package_summary(results, elapsed, success):
         print(f'  Manifest:  {item["artifact"]}.manifest.json')
         print(f'  SHA256:    {item["artifact"]}.sha256')
         print(f'  Requested: {manifest.get("requested_tag", "Not recorded")}')
+        for key, value in item.get('execution', {}).items():
+            print(f'  {key.title()}: {value}')
         if manifest.get('driver'):
             print(f'  Underlay:  control-driver {manifest["driver"]["version"]}')
         for section, title in (('packages', 'ROS packages'), ('native', 'Third-party libraries')):
@@ -980,6 +1114,8 @@ def print_package_summary(results, elapsed, success):
 
 
 def build_component(args):
+    global SOURCE_TRANSFERS
+    SOURCE_TRANSFERS = 0
     architecture = host_architecture()
     image_name = builder_image(architecture)
     platform = f'linux/{architecture}'
@@ -1035,6 +1171,7 @@ def build_component(args):
                         revision = fetch_source(url, args.tag, source, git_env)
                     else:
                         if not source.exists():
+                            SOURCE_TRANSFERS += 1
                             run(['git', 'clone', '--depth', '1', '--branch', fixed_ref, url, source])
                         commit = output(['git', '-C', source, 'rev-parse', 'HEAD'])
                         fixed_commit = output(['git', '-C', source, 'rev-parse', fixed_ref + '^{commit}'])
@@ -1064,8 +1201,14 @@ def build_component(args):
         artifact = work / 'dist' / f'{PACKAGE_NAME}_{args.version}_{architecture}.deb'
         if hasattr(args, '_summary'):
             manifest = json.loads(Path(str(artifact) + '.manifest.json').read_text())
+            report = work / 'last-execution.json'
+            execution = json.loads(report.read_text()) if report.exists() else {}
+            execution['source'] = ('Cached (remote not checked)' if args.package_only else
+                                   (f'{SOURCE_TRANSFERS} repositories downloaded; remaining commits cached'
+                                    if SOURCE_TRANSFERS else 'Cached (fetch skipped; remote refs checked)'))
             args._summary.append(dict(name=PACKAGE_NAME, artifact=artifact, manifest=manifest,
-                                      previous=previous_sources, package_only=args.package_only))
+                                      previous=previous_sources, package_only=args.package_only,
+                                      execution=execution))
         return artifact
 
 
@@ -1116,6 +1259,10 @@ def build_components_sequential(args):
         artifact = build_component(current)
         if component == 'driver':
             driver_deb = artifact
+
+
+BUILD_RULES_SHA = cache_digest([inspect.getsource(function) for function in
+                               (inside, build_native, release_adjustments, prepare_bridge_sources, environment)])
 
 
 if __name__ == '__main__':

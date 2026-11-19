@@ -142,6 +142,16 @@ not stored in logs, Git configuration, manifests, images or debs. The credential
 environment is cleared at process completion or failure. `--package-only` neither reads credentials nor
 contacts source repositories.
 
+Remote Git failures report the repository, stage (`query`, `fetch`, or
+`checkout`), attempt count and a fixed diagnostic category. Raw Git output,
+credential-bearing URL fields and authentication headers are not printed.
+Queries time out after 60 seconds and fetches after 300 seconds per attempt.
+Temporary DNS, connection, transfer and HTTP 429/500/502/503/504 errors retry
+up to three total attempts, waiting 2 then 4 seconds. Authentication/permission,
+missing repository/ref, certificate verification and unclassified errors stop
+immediately. Failed operations preserve existing source/build caches; rerun
+after resolving the reported issue.
+
 ## Commands
 
 Build all four components in driver, navigation, task, cooperation order (`--component all`
@@ -274,7 +284,30 @@ the extracted driver underlay. Each deb has a checksum and source manifest.
 Installed manifests are at `<prefix>/share/control_release/manifest.json`.
 
 New component caches do not reuse the old monolithic build directories.
-Subsequent builds reuse unchanged objects and native-library commits. Failures
+Normal invocations first query remote tags/default HEAD using `git ls-remote`.
+Only the selected ref is shallow-fetched, and only if its full commit is absent
+from the local repository cache. Cached commits skip fetch even when switching
+back to an older tag. Remote ref queries still require network access and a token.
+
+Unchanged source contents/commits, compiler rules, architecture, build environment
+and driver build identity skip colcon entirely when the installed outputs also
+match their saved content/permission/symlink fingerprint. Incomplete builds and
+missing or changed installation files cannot take this shortcut. The first build
+with an older cache establishes these fingerprints using its existing objects.
+Changing only the Debian version or runtime dependency declarations does not
+require recompilation. Source reference changes pointing to the same commit also
+reuse compilation; provenance changes may still require repackaging.
+
+If packaging inputs, version and installation fingerprint match, and the existing
+deb passes its saved SHA256, the existing artifact is reused without staging,
+dependency scanning or compression. Missing/corrupt artifacts are repackaged.
+Packaging-script changes invalidate artifact reuse; changes to build functions
+or build-rule configuration also invalidate the compile shortcut.
+`--package-only` remains offline for source repositories, and can reuse an
+already verified artifact or package a new Debian version without compiling.
+The final summary reports `Source`, `Build`, and `Artifact` actions separately.
+
+When a build is needed, unchanged objects and native-library commits are reused. Failures
 block `--package-only` until compilation succeeds. Stale files recorded by install
 manifests are removed. Image filesystem layers, architecture and process environment
 form a build-environment fingerprint. Metadata-only image ID changes reuse objects.

@@ -18,6 +18,120 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_remote_git_retries_network_failure_then_succeeds_without_leaking_credentials(self):
+        import io
+        from contextlib import redirect_stderr
+        failed = subprocess.CompletedProcess([], 128, '', 'Connection reset; Authorization: secret-token')
+        success = subprocess.CompletedProcess([], 0, 'refs\n', '')
+        stream = io.StringIO()
+        with patch.object(release.subprocess, 'run', side_effect=[failed, failed, success]) as run, \
+                patch.object(release.time, 'sleep') as sleep, redirect_stderr(stream):
+            result = release.remote_git(['ls-remote', 'https://user:secret-token@github.com/ggbond-control/nav_bridge.git?token=secret-token'], {})
+        self.assertEqual(result, 'refs')
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
+        self.assertEqual(run.call_args.kwargs['timeout'], 60)
+        self.assertIn('query [ggbond-control/nav_bridge]', stream.getvalue())
+        self.assertNotIn('secret-token', stream.getvalue())
+        self.assertNotIn('Authorization', stream.getvalue())
+
+    def test_remote_git_timeout_exhaustion_names_fetch_repository_and_attempts(self):
+        import io
+        from contextlib import redirect_stderr
+        with patch.object(release.subprocess, 'run', side_effect=subprocess.TimeoutExpired(
+                ['git', 'secret-token'], 300, stderr='secret-token')) as run, \
+                patch.object(release.time, 'sleep') as sleep, redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, r'fetch failed \[ggbond-control/nav_bridge\] after 3') as error:
+                release.remote_git(['-C', '/cache/nav_bridge', 'fetch', '--depth', '1',
+                                    'https://github.com/ggbond-control/nav_bridge.git', 'refs/tags/v1.0.0'], {})
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args.kwargs['timeout'], 300)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertNotIn('secret-token', str(error.exception))
+
+    def test_remote_git_permanent_errors_do_not_retry(self):
+        for diagnostic, reason in [('Authentication failed secret-token', 'authentication/permission'),
+                                   ('Repository not found', 'repository missing'),
+                                   ('SSL certificate problem', 'TLS certificate'),
+                                   ("couldn't find remote ref v1.0.0", 'remote ref'),
+                                   ('unknown secret-token failure', 'unclassified')]:
+            with self.subTest(diagnostic=diagnostic), \
+                    patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                        [], 128, '', diagnostic)) as run, patch.object(release.time, 'sleep') as sleep:
+                with self.assertRaisesRegex(ValueError, reason) as error:
+                    release.remote_git(['ls-remote', 'https://github.com/ggbond-control/nav_bridge.git'], {})
+                run.assert_called_once()
+                sleep.assert_not_called()
+                self.assertNotIn('secret-token', str(error.exception))
+
+    def test_git_failure_classification_covers_transient_http_dns_and_tls_disconnect(self):
+        for diagnostic in ('Could not resolve host: github.com', 'Failed to connect',
+                           'The requested URL returned error: 503', 'curl 92 HTTP/2 stream reset',
+                           'GnuTLS recv error: The TLS connection was non-properly terminated.'):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertTrue(release.git_failure_reason(diagnostic)[1])
+
+    def test_unchanged_build_skips_colcon_but_checks_install_and_incomplete_marker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix = root / 'install'
+            release.write(prefix / 'local_setup.bash', '# setup\n')
+            release.write(prefix / 'lib/output', 'binary')
+            manifest = dict(architecture='amd64', builder_image='image', builder_environment='env',
+                            packages={name: {'commit': name, 'sha256': name} for name in release.SOURCES}, native={})
+            release.write(root / 'inputs.json', json.dumps(manifest))
+            args = type('Args', (), dict(package_only=False, select=None, jobs=1, version='1.0.0'))()
+            with patch.object(release, 'PREFIX', prefix):
+                manifest.update(build_input_sha256=release.build_input_digest(manifest),
+                                install_sha256=release.install_digest())
+                release.write(root / 'build-state.json', json.dumps(manifest))
+                with patch.object(release, 'Path', return_value=root), \
+                        patch.object(release, 'host_architecture', return_value='amd64'), \
+                        patch.object(release, 'assemble', return_value='Reused') as assemble, \
+                        patch.object(release, 'environment', return_value={}), \
+                        patch.object(release, 'run', side_effect=ValueError('build called')) as run:
+                    release.inside(args)
+                    run.assert_not_called()
+                    assemble.assert_called_once()
+                    release.write(prefix / 'lib/output', 'damaged')
+                    with self.assertRaisesRegex(ValueError, 'build called'):
+                        release.inside(args)
+                    release.write(prefix / 'lib/output', 'binary')
+                    with self.assertRaisesRegex(ValueError, 'build called'):
+                        release.inside(args)  # Failed previous attempt left the incomplete marker.
+
+    def test_build_key_tracks_sources_environment_underlay_and_build_rules(self):
+        manifest = dict(architecture='amd64', builder_environment='env',
+                        packages={'example': {'commit': 'a', 'sha256': 'content'}}, native={},
+                        driver={'build_id': 'driver'})
+        baseline = release.build_input_digest(manifest)
+        for changed in (dict(manifest, builder_environment='new'),
+                        dict(manifest, driver={'build_id': 'new'}),
+                        dict(manifest, packages={'example': {'commit': 'b', 'sha256': 'new'}})):
+            self.assertNotEqual(release.build_input_digest(changed), baseline)
+        with patch.object(release, 'BUILD_RULES_SHA', 'new-rules'):
+            self.assertNotEqual(release.build_input_digest(manifest), baseline)
+        self.assertEqual(release.build_input_digest(dict(manifest, version='2', requested_tag='v2')), baseline)
+
+    def test_deb_reuse_checks_version_checksum_and_packaging_rules(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deb = self.make_driver_deb(root)
+            prefix = root / 'install'
+            with patch.object(release, 'PREFIX', prefix):
+                modified = deb.stat().st_mtime_ns
+                self.assertEqual(release.assemble(root, '0.3.5', {'architecture': 'amd64'}),
+                                 'Reused (deb checksum verified)')
+                self.assertEqual(deb.stat().st_mtime_ns, modified)
+                self.assertEqual(release.assemble(root, '0.3.5-1', {'architecture': 'amd64'}), 'Packaged')
+                deb.write_bytes(b'damaged archive')
+                self.assertEqual(release.assemble(root, '0.3.5', {'architecture': 'amd64'}), 'Packaged')
+                subprocess.run(['dpkg-deb', '--info', str(deb)], check=True, stdout=subprocess.DEVNULL)
+                spec = copy.deepcopy(release.COMPONENT_CONFIG)
+                spec['driver']['runtime_dependencies'].append('example-runtime')
+                with patch.object(release, 'COMPONENT_CONFIG', spec):
+                    self.assertEqual(release.assemble(root, '0.3.5', {'architecture': 'amd64'}), 'Packaged')
+
     def test_source_cache_status_compares_full_commits_and_references(self):
         original = dict(commit='abcdef111111', tag='v1', branch=None)
         self.assertEqual(release.source_cache_status({}, original), 'New')
@@ -158,7 +272,7 @@ class Packaging(unittest.TestCase):
                         patch.object(release, 'host_architecture', return_value='amd64'), \
                         patch.object(release, 'selected_packages', return_value=['local_planner']), \
                         patch.object(release, 'environment', return_value={}), \
-                        patch.object(release, 'run'), patch.object(release, 'assemble'):
+                        patch.object(release, 'run'), patch.object(release, 'assemble', return_value='Packaged'):
                     release.inside(args)
                 self.assertEqual((root / 'build/old-object').exists(), same_environment)
                 self.assertTrue((root / 'repositories/local_planner/source').exists())
@@ -453,7 +567,7 @@ class Packaging(unittest.TestCase):
                     patch.object(release, 'host_architecture', return_value='amd64'), \
                     patch.object(release, 'build_native') as native, \
                     patch.object(release, 'environment', return_value={}), \
-                    patch.object(release, 'run') as run, patch.object(release, 'assemble'):
+                    patch.object(release, 'run') as run, patch.object(release, 'assemble', return_value='Packaged'):
                 release.inside(args)
             native.assert_called_once()
             command = run.call_args.args[0]
@@ -578,7 +692,7 @@ class Packaging(unittest.TestCase):
                     patch.object(release, 'build_native') as native, \
                     patch.object(release, 'environment', return_value={}), \
                     patch.object(release, 'run') as run, \
-                    patch.object(release, 'assemble'):
+                    patch.object(release, 'assemble', return_value='Packaged'):
                 release.inside(args)
                 command = run.call_args.args[0]
                 self.assertEqual(command[0], 'colcon')
@@ -649,7 +763,7 @@ class Packaging(unittest.TestCase):
             args = type('Arguments', (), {'package_only': True, 'version': '0.3.5'})()
             with patch.object(release, 'Path', return_value=root), \
                     patch.object(release, 'host_architecture', return_value='amd64'), \
-                    patch.object(release, 'assemble') as assemble, \
+                    patch.object(release, 'assemble', return_value='Packaged') as assemble, \
                     patch.object(release, 'github_access') as auth, \
                     patch.object(release, 'fetch_source') as fetch:
                 release.inside(args)
@@ -705,7 +819,10 @@ class Packaging(unittest.TestCase):
             release.snapshot(cache, copied)
             release.write(copied / 'source.cpp', 'release adjustment')
             mtime = (copied / 'source.cpp').stat().st_mtime_ns
-            release.fetch_source(str(remote), 'v0.3.5', cache, env)
+            with patch.object(release, 'remote_git', wraps=release.remote_git) as remote_calls:
+                release.fetch_source(str(remote), 'v0.3.5', cache, env)
+                self.assertFalse(any('fetch' in call.args[0] for call in remote_calls.call_args_list))
+                self.assertTrue(any('ls-remote' in call.args[0] for call in remote_calls.call_args_list))
             release.snapshot(cache, copied)
             self.assertEqual((copied / 'source.cpp').stat().st_mtime_ns, mtime)
             release.write(remote / 'source.cpp', 'second')
