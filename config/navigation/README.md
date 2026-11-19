@@ -34,12 +34,19 @@ navigation:
 
 新模式正常只在新目标/新导航段规划，持续局部阻塞或明显偏离路径时有限重规划。
 同处 `event_replan_*` 参数控制每段重试次数、冷却、规划超时、持续恢复超时和偏离判定。
-`event_replan_server_timeout_ms` 默认 1000 毫秒，仅控制事件模式规划/跟随 action 的
-请求应答等待；必须为正数且小于整体规划期限 `event_replan_planning_timeout`
-（默认 10 秒）换算后的毫秒数，可在上述 robot.yaml 参数层覆盖。
-默认仍为周期模式，所有型号继承；启动文件按模式加载事件 BT 和专用进展检测器，
-局部规划器由上层逐段协商，无需另配模式。启用前同时部署新版 multi_map_nav 与
-local_planner，修改参数后重启导航。全局地图不增加实时障碍层，stop 策略也不改为绕障。
+`event_replan_server_timeout_ms` 默认 1000 毫秒，控制事件行为树中规划和跟随 action 的
+请求应答等待。该值必须为正数且小于 `event_replan_planning_timeout` 换算后的毫秒数，
+整体规划期限默认 10 秒。
+
+持续封堵重规划默认关闭。可在同一 `ros__parameters` 下设
+`global_blockage_replan: true`，并用 `global_blockage_confirm_sec` 设置路线持续封堵且局部
+无路的确认时间（默认 20.0 秒，须为有限正数）。开关适用于 `periodic` 和
+`event_driven`。开启后，子 launch 加载事件行为树、专用进展检测器和全局代价地图的
+`TerrainObstacleLayer`。局部规划器按导航段接收参数并上报确认的封堵。
+
+在机器狗端的 `nav` 模式使用时，需配套部署支持该功能的 `multi_map_nav` 和
+`local_planner`，由 terrain 模块提供地形数据。修改 `robot.yaml` 后重启
+`navigation` 服务以重新生成参数快照。
 
 local_planner 使用 `param_default_local_planner.yaml` 和各型号的
 `param_<model>_local_planner.yaml`。公共参数以 X30 部署值为基准，

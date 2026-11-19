@@ -131,11 +131,11 @@ class Configuration(unittest.TestCase):
                 expected = cfg.read_yaml(ROOT / 'test/fixtures/multi_map_nav' / f'{profile}.yaml')
                 expected['multi_map_nav_node']['ros__parameters']['normal_xy_tolerance'] = 0.25
                 expected['multi_map_nav_node']['ros__parameters']['normal_yaw_tolerance'] = 0.25
-                event_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
+                replan_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
                     'multi_map_nav_node']['ros__parameters']
                 expected['multi_map_nav_node']['ros__parameters'].update({
-                    key: value for key, value in event_defaults.items()
-                    if key == 'global_replanning_mode' or key.startswith('event_replan_')})
+                    key: value for key, value in replan_defaults.items()
+                    if key == 'global_replanning_mode' or key.startswith(('event_replan_', 'global_blockage_'))})
                 self.assertEqual(actual, expected)
                 model_data = cfg.read_yaml(self.root / 'models' / model / 'navigation' /
                                            f'param_{model}_multi_map_nav.yaml')
@@ -176,6 +176,29 @@ class Configuration(unittest.TestCase):
             self.assertEqual(event['bt_navigator'], params['bt_navigator'])
             self.assertEqual(event['planner_server'], params['planner_server'])
             self.assertEqual(event['global_costmap'], params['global_costmap'])
+
+    def test_global_blockage_defaults_and_robot_overrides(self):
+        for model_dir in sorted((self.root / 'models').iterdir()):
+            if model_dir.is_dir():
+                with self.subTest(model=model_dir.name):
+                    self.robot(model=model_dir.name)
+                    config = cfg.load_config('navigation')
+                    params = cfg.read_yaml(config['global_planner']['config'])
+                    policy = params['multi_map_nav_node']['ros__parameters']
+                    self.assertIs(policy['global_blockage_replan'], False)
+                    self.assertEqual(policy['global_blockage_confirm_sec'], 20.0)
+
+        self.robot(model='d1m')
+        config = cfg.load_config('navigation')
+        expected = cfg.read_yaml(config['global_planner']['config'])
+        overrides = {'global_blockage_replan': True, 'global_blockage_confirm_sec': 12.5}
+        self.robot(model='d1m', navigation={'global_planner': {'parameters': {
+            'multi_map_nav_node': {'ros__parameters': overrides}}}})
+        config = cfg.load_config('navigation')
+        actual = cfg.read_yaml(config['global_planner']['config'])
+        expected['multi_map_nav_node']['ros__parameters'].update(overrides)
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'periodic')
 
     def test_defaults_model_robot_merge_and_identity(self):
         self.write('models/d1m/system.yaml', {'mqtt': {'port': 2345}, 'modules': {'gas': False}})

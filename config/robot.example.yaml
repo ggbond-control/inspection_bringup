@@ -112,8 +112,10 @@ robot_id: D1M-A
 #       multi_map_nav_node:
 #         ros__parameters:
 #           global_replanning_mode: event_driven  # 默认 periodic；重启导航后生效
+#           global_blockage_replan: true  # 默认 false，支持 periodic 和 event_driven
+#           global_blockage_confirm_sec: 20.0  # 路线持续封堵且局部无路的确认时间（秒）
 #           event_replan_max_replans: 2
-#           event_replan_server_timeout_ms: 1000  # 请求应答超时，毫秒；仅事件模式
+#           event_replan_server_timeout_ms: 1000  # 事件行为树的请求应答超时（毫秒）
 #   local_planner:
 #     parameters:
 #       localPlanner:
