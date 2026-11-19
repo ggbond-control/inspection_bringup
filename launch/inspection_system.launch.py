@@ -20,6 +20,7 @@ from launch_ros.substitutions import FindPackageShare
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
 from bringup_config import file_path, load_config as load_bringup_config
+from cooperation import launch_actions as cooperation_actions, validate as validate_cooperation
 
 
 def load_system_config(path):
@@ -262,7 +263,7 @@ def live_stream_params(config):
     }
 
 
-def generate_launch_description():
+def generate_launch_description(*, include_cooperation=True):
     declared_arguments = [
         DeclareLaunchArgument(
             "system_config_path",
@@ -337,11 +338,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "enable_algorithm_transport", default_value="",
             description="Start the configured algorithm HTTP or MQTT transport.",
-        ),
-        DeclareLaunchArgument(
-            "enable_mission_execution_agent",
-            default_value="",
-            description="Start the mission execution agent and local planner service.",
         ),
         DeclareLaunchArgument(
             "sn",
@@ -528,11 +524,12 @@ def generate_launch_description():
             SetEnvironmentVariable("RCUTILS_LOGGING_BUFFERED_STREAM", "0"),
         ]
         + declared_arguments
-        + [OpaqueFunction(function=launch_setup)]
+        + [OpaqueFunction(function=launch_setup,
+                          kwargs={"include_cooperation": include_cooperation})]
     )
 
 
-def launch_setup(context):
+def launch_setup(context, *, include_cooperation=True):
     config = load_system_config(LaunchConfiguration("system_config_path").perform(context))
 
     default_route_config_path = os.path.join(
@@ -574,9 +571,8 @@ def launch_setup(context):
         "modules", "sensor_rs485", True
     ))
     enable_mqtt = as_bool_text(override_or_config(context, "enable_mqtt", config, "modules", "mqtt", True))
-    enable_mission_execution_agent = as_bool_text(override_or_config(
-        context, "enable_mission_execution_agent", config, "modules", "mission_execution_agent", False
-    ))
+    cooperation_mode = validate_cooperation(config)
+    coordination = config.get("cooperation", {}).get("coordination", {})
 
     task_hub_params = {
         "algorithm_command_topic": str(config_value(
@@ -921,11 +917,11 @@ def launch_setup(context):
         ),
         "mqtt_base_prefix": mqtt_base_prefix(config),
         "robot_heartbeat_topic": str(config_value(
-            config, "mission_execution_agent", "heartbeat_topic", "/mission_execution/heartbeat"
+            coordination, "agent", "heartbeat_topic", "/mission_execution/heartbeat"
         )),
-        "enable_mission_execution_agent": as_bool(enable_mission_execution_agent),
+        "enable_mission_execution_agent": cooperation_mode == "coordination",
         "fleet_state_topic": str(config_value(
-            config, "mission_execution_agent", "fleet_state_topic", "/fleet/state"
+            coordination, "agent", "fleet_state_topic", "/fleet/state"
         )),
         "fleet_heartbeat_mqtt_suffix": str(config_value(
             config, "mqtt", "fleet_heartbeat_mqtt_suffix", "fleet/heartbeat"
@@ -943,6 +939,13 @@ def launch_setup(context):
             config_value(config, "mqtt", "media_upload_service_name", "/platform/media/upload")
         ),
         "media_upload_mode": str(config_value(config, "media_upload", "mode", "s3")),
+        "algorithm_result_upload_directory": str(config_value(
+            config, "media_upload", "algorithm_result_upload_directory",
+            "~/.ros/inspection_platform_bridge/algorithm_result_uploads")),
+        "algorithm_result_upload_max_attempts": ParameterValue(config_value(
+            config, "media_upload", "algorithm_result_upload_max_attempts", 3), value_type=int),
+        "algorithm_result_upload_retry_seconds": ParameterValue(config_value(
+            config, "media_upload", "algorithm_result_upload_retry_seconds", 5.0), value_type=float),
         "local_media_http_root_directory": str(config_value(
             config, "media_upload", "local_http_root_directory", "~/.ros/inspection_platform_bridge/algorithm_images")),
         "local_media_http_public_base_url": str(config_value(
@@ -1241,113 +1244,6 @@ def launch_setup(context):
     actions.append(platform_mqtt_bridge)
     actions.append(algorithm_mqtt_bridge)
     actions.append(algorithm_http_bridge)
-    if as_bool(enable_mission_execution_agent):
-        if as_bool(config_value(config, "modules", "fleet_leader_election", False)):
-            actions.append(Node(
-                package="fleet_leader_election",
-                executable="fleet_leader_election_node",
-                name="fleet_leader_election",
-                output="screen",
-                parameters=[{
-                    "robot_id": str(config_value(config, "mission_execution_agent", "robot_id", config_value(config, "mqtt", "sn", "x30"))),
-                    "cluster_id": str(config_value(config, "fleet_leader_election", "cluster_id", "inspection-fleet")),
-                    "data_root": str(config_value(config, "fleet_leader_election", "data_root", "~/fleet_leader_election/runtime")),
-                    "heartbeat_interval_seconds": float(config_value(config, "fleet_leader_election", "heartbeat_interval_seconds", 0.25)),
-                    "election_timeout_seconds": float(config_value(config, "fleet_leader_election", "election_timeout_seconds", 1.0)),
-                    "election_timeout_step_seconds": float(config_value(config, "fleet_leader_election", "election_timeout_step_seconds", 0.15)),
-                    "quorum_timeout_seconds": float(config_value(config, "fleet_leader_election", "quorum_timeout_seconds", 0.75)),
-                    "recovery_observation_seconds": float(config_value(config, "fleet_leader_election", "recovery_observation_seconds", 0.5)),
-                }],
-            ))
-        actions.append(Node(
-            package="capability_mission_planner",
-            executable="capability_mission_planner_node",
-            name="capability_mission_planner",
-            output="screen",
-        ))
-        actions.append(Node(
-            package="mission_execution_agent",
-            executable="mission_execution_agent_node",
-            name="mission_execution_agent",
-            output="screen",
-            parameters=[{
-                "robot_id": str(config_value(
-                    config, "mission_execution_agent", "robot_id", config_value(config, "mqtt", "sn", "x30")
-                )),
-                "device_status_path": str(config_value(
-                    config, "mission_execution_agent", "device_status_path", default_device_status_path
-                )),
-                "heartbeat_topic": str(config_value(
-                    config, "mission_execution_agent", "heartbeat_topic", "/mission_execution/heartbeat"
-                )),
-                "odometry_topic": str(config_value(
-                    config, "mission_execution_agent", "odometry_topic", "/odometry_multi_maps"
-                )),
-                "task_hub_status_service": str(config_value(
-                    config, "mission_execution_agent", "task_hub_status_service", "/get_status"
-                )),
-                "planning_leader": bool(config_value(config, "mission_execution_agent", "planning_leader", False)),
-                "leader_epoch": int(config_value(config, "mission_execution_agent", "leader_epoch", 0)),
-                "heartbeat_period_seconds": float(config_value(
-                    config, "mission_execution_agent", "heartbeat_period_seconds", 1.0
-                )),
-                "odometry_max_age_seconds": float(config_value(
-                    config, "mission_execution_agent", "odometry_max_age_seconds", 3.0
-                )),
-                "map_root_directory": str(config_value(
-                    config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps"
-                )),
-                "auto_execute": bool(config_value(
-                    config, "mission_execution_agent", "auto_execute", False
-                )),
-                "task_hub_start_service": str(config_value(
-                    config, "mission_execution_agent", "task_hub_start_service", "/start_route"
-                )),
-                "task_hub_pause_service": str(config_value(
-                    config, "mission_execution_agent", "task_hub_pause_service", "/pause_route"
-                )),
-                "task_hub_cancel_service": str(config_value(
-                    config, "mission_execution_agent", "task_hub_cancel_service", "/cancel_route"
-                )),
-                "task_event_topic": str(config_value(
-                    config, "mission_execution_agent", "task_event_topic",
-                    "/mission_execution/task_event"
-                )),
-                "task_event_ack_topic": str(config_value(
-                    config, "mission_execution_agent", "task_event_ack_topic",
-                    "/mission_execution/task_event_ack"
-                )),
-                "mission_control_topic": str(config_value(
-                    config, "mission_execution_agent", "mission_control_topic",
-                    "/mission_execution/mission_control"
-                )),
-                "mission_control_ack_topic": str(config_value(
-                    config, "mission_execution_agent", "mission_control_ack_topic",
-                    "/mission_execution/mission_control_ack"
-                )),
-                "task_addition_topic": str(config_value(
-                    config, "mission_execution_agent", "task_addition_topic",
-                    "/mission_execution/task_addition"
-                )),
-                "task_addition_status_topic": str(config_value(
-                    config, "mission_execution_agent", "task_addition_status_topic",
-                    "/mission_execution/task_addition_status"
-                )),
-                "task_addition_retry_seconds": float(config_value(
-                    config, "mission_execution_agent", "task_addition_retry_seconds", 2.0
-                )),
-                "task_addition_response_timeout_seconds": float(config_value(
-                    config, "mission_execution_agent", "task_addition_response_timeout_seconds", 60.0
-                )),
-                "task_event_resend_seconds": float(config_value(
-                    config, "mission_execution_agent", "task_event_resend_seconds", 2.0
-                )),
-                "data_root": str(config_value(
-                    config,
-                    "mission_execution_agent",
-                    "data_root",
-                    "~/.ros/mission_execution_agent",
-                )),
-            }],
-        ))
+    if include_cooperation:
+        actions.extend(cooperation_actions(config, default_device_status_path))
     return actions

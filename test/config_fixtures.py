@@ -6,6 +6,15 @@ from pathlib import Path
 def package_prefix(directory):
     prefix = Path(directory) / 'packages'
     files = {
+        'fleet_leader_election': ['package.xml'],
+        'capability_mission_planner': ['package.xml'],
+        'mission_execution_agent': ['package.xml'],
+        'swarm_protocol': ['package.xml'],
+        'swarm_consensus': ['package.xml'],
+        'swarm_mission_coordinator': ['package.xml'],
+        'swarm_mqtt_transport': ['package.xml'],
+        'swarm_mission_planner': ['package.xml'],
+        'swarm_execution_agent': ['package.xml'],
         'nav_bridge': ['config/d1_max_params.yaml', 'config/cyvet_cyclonedds.xml'],
         'faster_lio': ['config/mid360.yaml', 'config/airy.yaml'],
         'local_planner': ['config/d1m.yaml', 'config/x30.yaml'],

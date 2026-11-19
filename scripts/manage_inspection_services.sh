@@ -14,15 +14,15 @@ usage() {
 Usage: manage_inspection_services.sh [--config PATH] <command> [service]
 
 Commands:
-  install [service]   Generate and install all or one: navigation|hardware|system.
-  uninstall [service] Disable and remove all or one: navigation|hardware|system.
-  enable [service]    Enable configured services or one: navigation|hardware|system.
-  disable [service]   Disable all services or one: navigation|hardware|system.
-  start [service]     Start all services or one: navigation|hardware|system.
-  stop [service]      Stop all services or one: navigation|hardware|system.
-  restart [service]   Restart all services or one: navigation|hardware|system.
+  install [service]   Generate and install all or one: navigation|hardware|system|cooperation.
+  uninstall [service] Disable and remove all or one: navigation|hardware|system|cooperation.
+  enable [service]    Enable configured services or one: navigation|hardware|system|cooperation.
+  disable [service]   Disable all services or one: navigation|hardware|system|cooperation.
+  start [service]     Start all services or one: navigation|hardware|system|cooperation.
+  stop [service]      Stop all services or one: navigation|hardware|system|cooperation.
+  restart [service]   Restart all services or one: navigation|hardware|system|cooperation.
   status [service]    Show systemd status.
-  logs <service>      Follow journal logs for navigation|hardware|system.
+  logs <service>      Follow journal logs for navigation|hardware|system|cooperation.
   render              Render files to a temporary directory without installing.
 
 Options:
@@ -81,6 +81,9 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 127
 fi
 
+CONFIG_ROOT="$(python3 "${SCRIPT_DIR}/bringup_config.py" root)"
+export INSPECTION_CONFIG_DIR="${CONFIG_ROOT}"
+
 # One effective snapshot for the entire management command. Generated service
 # wrappers continue reading the original configuration root at runtime.
 RESOLVED_CONFIG="$(mktemp /tmp/inspection-services.XXXXXX.yaml)"
@@ -120,6 +123,7 @@ INSTALL_DIR="$(config_value service.install_dir /opt/inspection_bringup)"
 NAV_SERVICE="$(config_value navigation.service_name inspection-navigation.service)"
 HARDWARE_SERVICE="$(config_value hardware.service_name inspection-hardware.service)"
 SYSTEM_SERVICE="$(config_value inspection_system.service_name inspection-system.service)"
+COOPERATION_SERVICE="$(config_value cooperation.service_name inspection-cooperation.service)"
 
 require_sudo() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -151,6 +155,9 @@ service_for_target() {
     hardware)
       echo "${HARDWARE_SERVICE}"
       ;;
+    cooperation)
+      echo "${COOPERATION_SERVICE}"
+      ;;
     system|inspection_system)
       echo "${SYSTEM_SERVICE}"
       ;;
@@ -158,7 +165,7 @@ service_for_target() {
       return 1
       ;;
     *)
-      echo "error: unknown service target '$1' (expected navigation, hardware, or system)" >&2
+      echo "error: unknown service target '$1' (expected navigation, hardware, system, or cooperation)" >&2
       exit 2
       ;;
   esac
@@ -190,11 +197,12 @@ systemctl_for_target() {
     run_service_action "${action}" "${HARDWARE_SERVICE}"
     run_service_action "${action}" "${SYSTEM_SERVICE}"
   elif [[ "${action}" == "stop" ]]; then
+    run_service_action "${action}" "${COOPERATION_SERVICE}" || true
     run_service_action "${action}" "${SYSTEM_SERVICE}" || true
     run_service_action "${action}" "${HARDWARE_SERVICE}" || true
     run_service_action "${action}" "${NAV_SERVICE}" || true
   else
-    sudo_run systemctl "${action}" "${NAV_SERVICE}" "${HARDWARE_SERVICE}" "${SYSTEM_SERVICE}"
+    sudo_run systemctl "${action}" "${NAV_SERVICE}" "${HARDWARE_SERVICE}" "${SYSTEM_SERVICE}" "${COOPERATION_SERVICE}"
   fi
 }
 
@@ -202,6 +210,7 @@ render_files() {
   local output_dir="$1"
   mkdir -p "${output_dir}/wrappers" "${output_dir}/systemd"
   python3 - "${CONFIG_PATH}" "${TEMPLATE_DIR}" "${output_dir}" <<'PY'
+import json
 import os
 import shlex
 import stat
@@ -293,9 +302,9 @@ def library_path_export():
     return f'export LD_LIBRARY_PATH={prefix}"${{LD_LIBRARY_PATH:+:${{LD_LIBRARY_PATH}}}}"'
 
 
-def workspace_setup_block():
+def workspace_setup_block(paths=None):
     setup_lines = []
-    for setup_path in setup_paths:
+    for setup_path in (setup_paths if paths is None else paths):
         quoted_path = shlex.quote(setup_path)
         setup_lines.append(
             f"""if [[ ! -f {quoted_path} ]]; then
@@ -308,7 +317,7 @@ source {quoted_path}
     return "\n".join(setup_lines)
 
 
-def wrapper_content(kind, launch_file, args):
+def wrapper_content(kind, launch_file, args, paths=None, prelude=""):
     environment_lines = []
     for key, value in environment.items():
         if not key:
@@ -318,9 +327,10 @@ def wrapper_content(kind, launch_file, args):
     return f"""#!/usr/bin/env bash
 set -eo pipefail
 
+{prelude}
 source /opt/ros/{shlex.quote(ros_distro)}/setup.bash
 
-{workspace_setup_block()}
+{workspace_setup_block(paths)}
 
 set -u
 
@@ -453,6 +463,30 @@ exit "${{exit_code}}"
 navigation = config.get("navigation", {})
 hardware = config.get("hardware", {})
 inspection_system = config.get("inspection_system", {})
+cooperation = config.get("cooperation", {})
+cooperation_workspace = str(cooperation.get("workspace_root", os.path.join(os.path.dirname(workspace_root), "cooperation_ws")))
+# local_setup avoids following stale parent workspace chains generated by colcon.
+cooperation_paths = cooperation.get("setup_paths", [path.replace("/setup.bash", "/local_setup.bash") for path in setup_paths])
+if not isinstance(cooperation_paths, list) or not all(isinstance(path, str) and path for path in cooperation_paths):
+    raise SystemExit("cooperation.setup_paths must be a list of underlay paths")
+cooperation_paths = list(cooperation_paths)
+cooperation_paths.append(os.path.join(cooperation_workspace, "install", "local_setup.bash"))
+cooperation_args = launch_args_text(cooperation.get("launch_args", {}))
+check_script = os.path.join(install_dir, "check_cooperation.py")
+check_arguments = ["--workspace", cooperation_workspace, "--task-workspace", workspace_root]
+config_arg = cooperation.get("launch_args", {}).get("system_config_path", "")
+if config_arg:
+    check_arguments += ["--config", str(config_arg)]
+check_args = " ".join(shlex.quote(x) for x in check_arguments)
+# ExecCondition runs before workspace sourcing, so disabled devices need no overlay.
+write_executable(os.path.join(output_dir, "wrappers", "check_cooperation.py"),
+                 open(os.path.join(template_dir, "..", "scripts", "check_cooperation.py"), encoding="utf-8").read())
+write_executable(
+    os.path.join(output_dir, "wrappers", "run_inspection_cooperation.sh"),
+    wrapper_content("cooperation", "cooperation.launch.py", cooperation_args,
+                    paths=cooperation_paths,
+                    prelude="unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH\nexport INSPECTION_CONFIG_DIR=" + shlex.quote(str(environment.get("INSPECTION_CONFIG_DIR", os.environ["INSPECTION_CONFIG_DIR"]))) + "\npython3 " + shlex.quote(check_script) + " " + check_args),
+)
 
 write_executable(
     os.path.join(output_dir, "wrappers", "run_navigation.sh"),
@@ -470,7 +504,7 @@ write_executable(
     os.path.join(output_dir, "wrappers", "run_inspection_system.sh"),
     wrapper_content(
         "inspection_system",
-        "inspection_system.launch.py",
+        "inspection_modules.launch.py",
         launch_args_text(inspection_system.get("launch_args", {})),
     ),
 )
@@ -480,6 +514,13 @@ replacements = {
     "@HOME_DIR@": home_dir,
     "@WORKSPACE_ROOT@": workspace_root,
     "@INSTALL_DIR@": install_dir,
+    "@SYSTEM_SERVICE@": str(inspection_system.get("service_name", "inspection-system.service")),
+    "@COOPERATION_SERVICE@": str(cooperation.get("service_name", "inspection-cooperation.service")),
+    "@COOPERATION_CHECK@": " ".join(json.dumps(word.replace("%", "%%").replace("$", "$$"))
+                                     for word in ["/usr/bin/python3", check_script, *check_arguments]),
+    "@COOPERATION_START@": json.dumps(os.path.join(install_dir, "run_inspection_cooperation.sh").replace("%", "%%")),
+    "@CONFIG_ENVIRONMENT@": json.dumps("INSPECTION_CONFIG_DIR=" + str(environment.get(
+        "INSPECTION_CONFIG_DIR", os.environ["INSPECTION_CONFIG_DIR"])).replace("%", "%%")),
     "@HARDWARE_SERVICE@": str(hardware.get("service_name", "inspection-hardware.service")),
     "@RESTART@": restart,
     "@RESTART_SEC@": restart_sec,
@@ -490,6 +531,7 @@ for template_name, section, default_service in (
     ("inspection-navigation.service.in", navigation, "inspection-navigation.service"),
     ("inspection-hardware.service.in", hardware, "inspection-hardware.service"),
     ("inspection-system.service.in", inspection_system, "inspection-system.service"),
+    ("inspection-cooperation.service.in", cooperation, "inspection-cooperation.service"),
 ):
     with open(os.path.join(template_dir, template_name), "r", encoding="utf-8") as stream:
         content = stream.read()
@@ -522,7 +564,7 @@ install_services() {
     service_for_target "${TARGET}" >/dev/null
     target_list=("${TARGET}")
   else
-    target_list=(navigation hardware system)
+    target_list=(navigation hardware system cooperation)
   fi
 
   tmp_dir="$(mktemp -d)"
@@ -531,6 +573,9 @@ install_services() {
   render_files "${tmp_dir}"
   require_sudo
   sudo_run install -d -m 0755 "${INSTALL_DIR}"
+  for helper in bringup_config.py cooperation.py cooperation_workspace.py; do
+    sudo_run install -m 0644 "${SCRIPT_DIR}/${helper}" "${INSTALL_DIR}/${helper}"
+  done
   for target in "${target_list[@]}"; do
     case "${target}" in
       navigation)
@@ -544,6 +589,11 @@ install_services() {
           acoustic_monitor_agent.service \
           light_manager_agent.service \
           gas_monitor_pump_agent.service >/dev/null 2>&1 || true
+        ;;
+      cooperation)
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_cooperation.sh" "${INSTALL_DIR}/run_inspection_cooperation.sh"
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/check_cooperation.py" "${INSTALL_DIR}/check_cooperation.py"
+        sudo_run install -m 0644 "${tmp_dir}/systemd/${COOPERATION_SERVICE}" "${SYSTEMD_DIR}/${COOPERATION_SERVICE}"
         ;;
       system)
         sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_system.sh" "${INSTALL_DIR}/run_inspection_system.sh"
@@ -563,7 +613,7 @@ uninstall_services() {
     service_for_target "${TARGET}" >/dev/null
     target_list=("${TARGET}")
   else
-    target_list=(navigation hardware system)
+    target_list=(navigation hardware system cooperation)
   fi
 
   require_sudo
@@ -576,6 +626,10 @@ uninstall_services() {
       hardware)
         sudo_run systemctl disable --now "${HARDWARE_SERVICE}" >/dev/null 2>&1 || true
         sudo_run rm -f "${SYSTEMD_DIR}/${HARDWARE_SERVICE}" "${INSTALL_DIR}/run_inspection_hardware.sh"
+        ;;
+      cooperation)
+        sudo_run systemctl disable --now "${COOPERATION_SERVICE}" >/dev/null 2>&1 || true
+        sudo_run rm -f "${SYSTEMD_DIR}/${COOPERATION_SERVICE}" "${INSTALL_DIR}/run_inspection_cooperation.sh" "${INSTALL_DIR}/check_cooperation.py"
         ;;
       system)
         sudo_run systemctl disable --now "${SYSTEM_SERVICE}" >/dev/null 2>&1 || true
@@ -630,7 +684,7 @@ case "${COMMAND}" in
     ;;
   logs)
     if [[ -z "${TARGET}" ]]; then
-      echo "error: logs requires service target: navigation, hardware, or system" >&2
+      echo "error: logs requires service target: navigation, hardware, system, or cooperation" >&2
       exit 2
     fi
     journalctl -u "$(service_for_target "${TARGET}")" -f

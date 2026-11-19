@@ -38,8 +38,8 @@ robot_id: D1M-A
 ```
 
 第二台 D1M 只修改 `robot_id`；X30 使用 `model: x30`。`robot_id` 覆盖公共配置
-中的 `mqtt.sn` 和 `mission_execution_agent.robot_id`。有意使用不同身份时，
-可以在本机 `system` 字段中分别覆盖。
+中的 `mqtt.sn` 和 `cooperation.robot_id`。平台身份如需不同，可覆盖 `system.mqtt.sn`；
+协同身份始终取顶层 `robot_id`，不能通过内层字段覆盖。
 
 Cyvet 使用以下本机身份配置（另一台改为 CYVET-B）：
 
@@ -48,8 +48,8 @@ model: cyvet
 robot_id: CYVET-A
 ```
 
-`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块，开启任务执行和集群选主，
-集群列表包含 X30-A、X30-B、CYVET-A、CYVET-B。任务中枢的充电退出地址保留
+`models/cyvet/system.yaml` 关闭未安装的传感器及充电模块；协同模式由
+`system.cooperation.mode` 统一选择，设备不维护其他设备名单。任务中枢的充电退出地址保留
 部署值 `/inspection_charge_executor/exit_charge`，但 charge 模块关闭，不会由本启动
 提供该服务；Cyvet 导航也关闭充电预检查。没有外部实现时，不应执行充电任务。
 `auto_execute: true` 继承公共值，表示自动执行任务。
@@ -59,6 +59,24 @@ robot_id: CYVET-A
 不要在型号层重新填写固定 navigate_config_path/system_config_path，否则会绕过型号加载。
 Cyvet 定位调用超时按部署值设为 60 秒；若初始化超过该时间，调用方可能先超时，
 导航启动不会因此自动取消。
+
+### 协同模式
+
+在同一个 `robot.yaml` 中按需增加：
+
+```yaml
+system:
+  cooperation:
+    mode: swarm  # disabled | coordination | swarm
+```
+
+`disabled` 关闭协同节点及协同心跳，`coordination` 启用半分布式协同，`swarm` 启用全分布式协同；
+单机任务中枢和其他模块继续使用原配置。修改后重启 system 服务。
+
+全分布式复用已有 `mqtt` 认证和 TLS 配置，不需要 `allow_insecure_remote`。
+日常无需填写 `cooperation.swarm`：集群固定为 `inspection-swarm`，设备内部前缀固定为
+`fh/swarm/peer`，平台前缀固定为 `fh/swarm/dispatch`，不含日期或版本号，不复用 fleet 主题。
+`cooperation.swarm` 仅用于可选高级覆盖。
 
 需要单机差异时，直接写在同一个文件中：
 
@@ -575,7 +593,12 @@ scripts/manage_inspection_services.sh render
 机器人模式下，service 管理脚本移除公共 services 配置中继承的两个固定 YAML
 启动路径，改为向 wrapper 写入同一个 `INSPECTION_CONFIG_DIR`。机型和本机
 `services` 仍可显式指定完整独立配置。tmux 的窗口开关和实际子进程使用相同
-的配置根目录；各窗口只启动所属模块，平台与算法传输合并在 platform 窗口。
+的配置根目录；TaskHub、云台、充电及各传感器保持原有独立窗口，平台与算法
+传输继续共用 platform 窗口。多机协同仅在 cooperation 窗口启动一次，模式仍
+只取 cooperation.mode，不新增命令行模式开关。tmux 内部使用
+inspection_modules.launch.py 启动单机模块、cooperation.launch.py 启动协同；
+原 inspection_system.launch.py 继续作为 systemd 的完整系统入口。
+协同节点构造集中在新增 scripts/cooperation.py，单机节点仍使用原有构造逻辑。
 
 单机 service 差异示例：
 

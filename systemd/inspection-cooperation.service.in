@@ -1,0 +1,24 @@
+[Unit]
+Description=Inspection Cooperation
+After=network-online.target @SYSTEM_SERVICE@
+Wants=network-online.target
+BindsTo=@SYSTEM_SERVICE@
+PartOf=@SYSTEM_SERVICE@
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@WORKSPACE_ROOT@
+Environment=HOME=@HOME_DIR@
+Environment=@CONFIG_ENVIRONMENT@
+ExecCondition=@COOPERATION_CHECK@
+ExecStart=@COOPERATION_START@
+Restart=@RESTART@
+RestartSec=@RESTART_SEC@
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=@TIMEOUT_STOP_SEC@
+@SYSTEMD_OPTIONS@
+
+[Install]
+WantedBy=@SYSTEM_SERVICE@

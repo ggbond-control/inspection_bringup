@@ -49,3 +49,9 @@ inspection_system:
   enabled_on_boot: true
   launch_args:
     system_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/system.yaml
+
+cooperation:
+  service_name: inspection-cooperation.service
+  workspace_root: /home/cat/Workspace/cooperation_ws
+  launch_args:
+    system_config_path: /home/cat/Workspace/task_ws/src/inspection_bringup/config/system.yaml

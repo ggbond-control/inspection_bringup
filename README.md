@@ -264,10 +264,122 @@ Start only the platform bridge:
 ros2 launch inspection_bringup platform_bridge.launch.py
 ```
 
+## Cooperation Workspace
+
+Device cooperation runs in a separate `/home/cat/Workspace/cooperation_ws`.
+Bringup, TaskHub, Platform Bridge and the single copy of `inspection_interfaces`
+remain in `task_ws`. The dispatch Server remains on its server host.
+
+Choose `system.cooperation.mode: disabled | coordination | swarm` in
+`config/robot.yaml`. Only the selected stack starts. Coordination runs
+`fleet_leader_election`, `capability_mission_planner`, and `mission_execution_agent`.
+Swarm installs six packages (including the `swarm_protocol` library) and runs five
+nodes. Identity, capabilities, MQTT, ROS domain and middleware still come from
+Bringup's existing device configuration.
+
+Build task_ws first, then cooperation_ws:
+
+```bash
+cd /home/cat/Workspace/task_ws
+src/inspection_bringup/scripts/build_inspection.sh -j4
+src/inspection_bringup/scripts/build_cooperation.sh -j4
+```
+
+The cooperation builder fetches/builds all nine device packages by default.
+It reuses the existing repository helper and supports the same update options as
+`build_inspection.sh`, including
+`--fetch-only`, `--build-only`, `--check-updates`, `--update-only`, `--checkout`,
+`--repos-file` and `--rosdep`. Existing repositories are not updated automatically.
+Use `--workspace-root` and `--task-workspace` for nonstandard locations. Build
+outputs are always under the destination workspace, never under `src`.
+The cooperation builder sources ROS and task_ws's `local_setup.bash`, without
+following older workspace setup chains. Do not source cooperation_ws while
+building task_ws. After changing interface definitions, rebuild task_ws before
+rebuilding cooperation_ws.
+
+### Migrating an existing device
+
+Perform this maintenance with no active fleet mission. End/reset the round,
+stop `system` (and `cooperation` if already installed), and close any manual/tmux
+cooperation nodes. Do not migrate data from running processes.
+
+```bash
+cd /home/cat/Workspace/task_ws
+src/inspection_bringup/scripts/manage_inspection_services.sh stop system
+
+# Preview; no changes.
+python3 src/inspection_bringup/scripts/cooperation_workspace.py migrate \
+  --task-workspace /home/cat/Workspace/task_ws \
+  --workspace /home/cat/Workspace/cooperation_ws --robot-id X30-A
+
+# After checking the preview and ending/resetting the fleet round:
+python3 src/inspection_bringup/scripts/cooperation_workspace.py migrate \
+  --task-workspace /home/cat/Workspace/task_ws \
+  --workspace /home/cat/Workspace/cooperation_ws --robot-id X30-A \
+  --apply --tasks-stopped
+
+src/inspection_bringup/scripts/build_inspection.sh -j4
+src/inspection_bringup/scripts/build_cooperation.sh -j4
+src/inspection_bringup/scripts/manage_inspection_services.sh install system
+src/inspection_bringup/scripts/manage_inspection_services.sh restart system
+```
+
+The migration preserves `.git`, local edits, Agent history and persistent election
+term/votes. It refuses conflicting destinations, ambiguous runtime copies, merged
+install layouts and detected running services/nodes. Finish pending swarm report
+uploads before relocation, because their queued file paths belong to the old
+data root. Use `--config-root` or the
+explicit `--agent-data`, `--election-data`, `--swarm-data` source options for a
+nonstandard existing deployment; `--swarm-data` is the base before robot_id.
+
+Data remains in each ROS package's `runtime` directory, for example
+`cooperation_ws/src/mission_execution_agent/runtime` and
+`cooperation_ws/src/fleet_leader_election/runtime`. The four swarm nodes with
+persistent data also use their own package `runtime` directories; the protocol
+library and stateless planner need no empty runtime directory. Configuration keeps
+the original `data_root` names. Source-adjacent data moves with its repository;
+external/custom roots and the old `~/.ros/swarm/<robot_id>/<section>` data are
+relocated only when present. The migration updates device overrides when needed,
+archives stale task_ws build/install artifacts, and leaves historical file contents
+unchanged. `build_inspection.sh` and the original system/modules launch interfaces
+retain their original implementation; the new builder is independent. No active task is resumed by the migration.
+
+Before moving anything, the tool saves repositories, config and runtime under
+`Workspace/cooperation-backups/<timestamp>/` (private directory). `operations.json`
+and `completed.jsonl` identify moves. For rollback, keep services stopped, reverse
+the completed moves in reverse order, restore configuration from the archive,
+restore/rebuild the matching old source and task_ws installation, reinstall the old
+service definitions, then start. Never merge two divergent election-state copies
+or overwrite newer term/votes with an older backup after post-migration execution.
+
+For manual launches, source ROS, the required middleware underlay, task_ws's
+`install/local_setup.bash`, then cooperation_ws's `install/local_setup.bash`:
+
+```bash
+ros2 launch inspection_bringup inspection_modules.launch.py
+# A separate terminal with the same overlays/config:
+ros2 launch inspection_bringup cooperation.launch.py
+```
+
+The original `inspection_system.launch.py` default behavior is retained: it can
+launch business modules together with the configured cooperation stack. For
+separate supervision, systemd and tmux use the existing
+`inspection_modules.launch.py` (`include_cooperation=False`) plus
+`cooperation.launch.py`. Do not additionally start cooperation when using the
+combined system launch, or run manual/tmux launches alongside the corresponding
+systemd services. Missing selected-stack packages fail before
+any cooperation node is launched; disabled mode requires no cooperation install.
+
+For X30-A's dual-board deployment, this service remains on FHZN-A. The inner board
+keeps navigation/driver ownership and existing ROS network/domain configuration.
+No remote SSH launch or second Bringup configuration is introduced.
+
 ## Debug With Tmux
 
 For field debugging, start enabled modules from the same `config/system.yaml`
-in separate tmux windows:
+in separate tmux windows. TaskHub, gimbal and charging keep their own windows;
+platform and algorithm transport share the original `platform` window. Cooperation
+runs once in a separate `cooperation` window when its configured mode is enabled:
 
 ```bash
 src/inspection_bringup/scripts/start_inspection_tmux.sh
@@ -294,12 +406,13 @@ tmux attach -t inspection
 
 ## Systemd Services
 
-`inspection_bringup` can install and manage three endpoint system services:
+`inspection_bringup` can install and manage four endpoint system services:
 
 ```text
-inspection-navigation.service -> navigation.launch.py
-inspection-hardware.service   -> acoustic, light, and gas pump hardware processes
-inspection-system.service     -> inspection_system.launch.py
+inspection-navigation.service  -> navigation.launch.py
+inspection-hardware.service    -> acoustic, light, and gas pump hardware processes
+inspection-system.service      -> inspection_modules.launch.py (business modules only)
+inspection-cooperation.service -> cooperation.launch.py (one selected stack)
 ```
 
 The hardware service runs as root and replaces the package-specific
@@ -340,6 +453,23 @@ The management script first tries sudo with the default endpoint password from
 `config/services.yaml`, which is `cat`. If that fails, it falls back to the
 normal sudo password prompt.
 
+System starts cooperation via a systemd dependency. Cooperation is ordered after,
+bound to, and restarted/stopped with system. It does not require navigation to be
+running. `restart cooperation` leaves TaskHub, Platform Bridge and navigation
+running; `restart system` restarts cooperation too. A disabled mode is skipped by
+`ExecCondition` before checking or sourcing cooperation_ws. Invalid configuration
+or a missing enabled stack produces a startup failure without stopping system's
+other modules. Cooperation does not need independent boot enablement.
+
+Change coordination/swarm mode only with the fleet idle, then `restart system`,
+so Platform Bridge and cooperation use the same mode. Service wrappers share the
+configured ROS domain/RMW, with cooperation adding its independent overlay.
+By default cooperation uses the common underlay list with `local_setup.bash`;
+optional `services.cooperation.setup_paths` replaces that underlay list when
+needed. Its own cooperation overlay is always appended once. On a
+board without algor_ws/driver_ws, keep `service.setup_paths` limited to actual
+local underlays (as in the existing FHZN-A configuration).
+
 Useful commands:
 
 ```bash
@@ -354,6 +484,9 @@ src/inspection_bringup/scripts/manage_inspection_services.sh disable hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh logs navigation
 src/inspection_bringup/scripts/manage_inspection_services.sh logs hardware
 src/inspection_bringup/scripts/manage_inspection_services.sh logs system
+src/inspection_bringup/scripts/manage_inspection_services.sh restart cooperation
+src/inspection_bringup/scripts/manage_inspection_services.sh status cooperation
+src/inspection_bringup/scripts/manage_inspection_services.sh logs cooperation
 src/inspection_bringup/scripts/manage_inspection_services.sh uninstall
 ```
 

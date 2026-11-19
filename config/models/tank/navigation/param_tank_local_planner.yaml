@@ -4,6 +4,7 @@
     # SLAM horizon odometry and terrain points already use the navigation center.
     sensorOffsetX: 0.0  # Do not apply the physical LiDAR offset a second time.
     sensorOffsetY: 0.0
+    tracking_mode: differential  # 差速底盘，不输出横向速度
     initialModel: "flat"  # 启动时使用的运动模型名称
     flat:
       maxSpeed: 1.0  # 模型允许的最大前向速度（m/s）
@@ -26,7 +27,6 @@ localPlanner:
 
 pathFollower:
   ros__parameters:
-    tracking_mode: differential  # 差速底盘，不输出横向速度
     differential:
       response_delay: 0.5        # 指令及反馈延迟预留时间（s），非速度 PID
       braking_decel: 1.0         # 保守物理制动减速度（m/s2），区别于 maxDecelX 指令斜率

@@ -1,0 +1,37 @@
+repositories:
+  src/capability_mission_planner:
+    type: git
+    url: https://github.com/ggbond-control/capability_mission_planner.git
+    main_branch: master
+  src/fleet_leader_election:
+    type: git
+    url: https://github.com/ggbond-control/fleet_leader_election.git
+    main_branch: master
+  src/mission_execution_agent:
+    type: git
+    url: https://github.com/ggbond-control/mission_execution_agent.git
+    main_branch: main
+  src/swarm_protocol:
+    type: git
+    url: https://github.com/ggbond-control/swarm_protocol.git
+    main_branch: main
+  src/swarm_consensus:
+    type: git
+    url: https://github.com/ggbond-control/swarm_consensus.git
+    main_branch: main
+  src/swarm_mission_planner:
+    type: git
+    url: https://github.com/ggbond-control/swarm_mission_planner.git
+    main_branch: main
+  src/swarm_execution_agent:
+    type: git
+    url: https://github.com/ggbond-control/swarm_execution_agent.git
+    main_branch: main
+  src/swarm_mqtt_transport:
+    type: git
+    url: https://github.com/ggbond-control/swarm_mqtt_transport.git
+    main_branch: main
+  src/swarm_mission_coordinator:
+    type: git
+    url: https://github.com/ggbond-control/swarm_mission_coordinator.git
+    main_branch: main

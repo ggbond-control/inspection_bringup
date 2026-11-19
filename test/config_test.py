@@ -44,6 +44,25 @@ def with_navigation_health(value):
 
 
 class Configuration(unittest.TestCase):
+    def test_d1m_stair_capability_is_shared_and_configurable(self):
+        self.robot(model='d1m')
+        actual = cfg.read_yaml(cfg.load_config('navigation')['local_planner']['config'])
+        shared = actual['/**']['ros__parameters']
+        expected = {key: value for key, value in D1M_TRACKING_SHARED.items()
+                    if key.startswith('turn_stair_')}
+        self.assertEqual({key: shared[key] for key in expected}, expected)
+        for name in ('localPlanner', 'pathFollower'):
+            self.assertFalse(any(key.startswith('turn_stair_')
+                                 for key in actual[name]['ros__parameters']))
+        overrides = {'turn_stair_max_forward_speed': 0.6,
+                     'turn_stair_max_lateral_speed': 0.2,
+                     'turn_stair_max_yaw_rate': 0.35,
+                     'turn_stair_gaits': [42]}
+        self.robot(model='d1m', navigation={'local_planner': {'parameters': {
+            '/**': {'ros__parameters': overrides}}}})
+        actual = cfg.read_yaml(cfg.load_config('navigation')['local_planner']['config'])
+        self.assertEqual({key: actual['/**']['ros__parameters'][key] for key in overrides}, overrides)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='inspection config ')
         self.addCleanup(self.temp.cleanup)
@@ -165,7 +184,7 @@ class Configuration(unittest.TestCase):
         self.assertEqual(value['mqtt']['host'], 'unit-test.invalid')
         self.assertEqual(value['mqtt']['port'], 2345)
         self.assertEqual(value['mqtt']['sn'], 'D1M-001')
-        self.assertEqual(value['mission_execution_agent']['robot_id'], 'D1M-001')
+        self.assertEqual(value['cooperation']['robot_id'], 'D1M-001')
         self.assertFalse(value['modules']['gas'])
         self.assertTrue(value['modules']['charge'])
 
@@ -173,16 +192,77 @@ class Configuration(unittest.TestCase):
         self.robot(system={'mqtt': {'sn': 'platform-device'}})
         value = cfg.load_config('system')
         self.assertEqual(value['mqtt']['sn'], 'platform-device')
-        self.assertEqual(value['mission_execution_agent']['robot_id'], 'D1M-001')
+        self.assertEqual(value['cooperation']['robot_id'], 'D1M-001')
 
     def test_false_zero_empty_list_and_empty_string_are_preserved(self):
         self.robot(system={'modules': {'gas': False}, 'mqtt': {'port': 0, 'password': ''},
-                           'fleet_leader_election': {'robot_ids': []}})
+                           'cooperation': {'swarm': {'coordinator': {'media_roots': []}}}})
         value = cfg.load_config('system')
         self.assertIs(value['modules']['gas'], False)
         self.assertEqual(value['mqtt']['port'], 0)
         self.assertEqual(value['mqtt']['password'], '')
-        self.assertEqual(value['fleet_leader_election']['robot_ids'], [])
+        self.assertEqual(value['cooperation']['swarm']['coordinator']['media_roots'], [])
+
+    def test_swarm_parameters_share_identity_mqtt_and_device_capabilities(self):
+        import json
+        from cooperation import swarm_configuration
+        status = self.root / 'status.json'
+        status.write_text(json.dumps({'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 2.0}))
+        self.robot(system={'mqtt': {'host': 'broker.invalid', 'port': 1884, 'password': 'test'},
+                           'cooperation': {'mode': 'swarm', 'robot_id': 'SHOULD-NOT-OVERRIDE',
+                                           'swarm': {'footprint_radius': 0.4}}})
+        config = cfg.load_config('system')
+        projected = swarm_configuration(config, status)
+        self.assertEqual(projected['robot_id'], 'D1M-001')
+        self.assertEqual(projected['transport']['mqtt_host'], 'broker.invalid')
+        self.assertEqual(projected['transport']['mqtt_port'], 1884)
+        self.assertEqual(projected['transport']['mqtt_password'], 'test')
+        self.assertEqual(projected['agent']['capabilities'], ['device', 'gimbal.vis'])
+        self.assertEqual(projected['agent']['nominal_speed'], 2.0)
+        self.assertNotIn('allow_motion', projected['agent'])
+        self.assertEqual(projected['coordinator']['footprint_radius'], 0.4)
+        self.assertEqual(projected['planner']['footprint_radius'], 0.4)
+        config['cooperation']['swarm']['planner'] = {'free_thresh': 0.2}
+        with self.assertRaises(ValueError):
+            swarm_configuration(config, status)
+
+    def test_swarm_invalid_device_metadata_refuses_startup(self):
+        import json
+        from cooperation import swarm_configuration
+        self.robot(system={'cooperation': {'mode': 'swarm'}})
+        config = cfg.load_config('system')
+        status = self.root / 'bad.json'
+        for value in [{'capabilities': 'device'}, {'nominal_speed_mps': 0},
+                      {'nominal_speed_mps': True}, {'capabilities': [' gas']}]:
+            status.write_text(json.dumps(value))
+            with self.assertRaises(ValueError):
+                swarm_configuration(config, status)
+
+    def test_swarm_mode_alone_uses_stable_topics_and_existing_tls_configuration(self):
+        import json
+        from cooperation import swarm_configuration
+        status = self.root / 'status.json'
+        status.write_text(json.dumps({'capabilities': ['device']}))
+        self.robot(system={'mqtt': {'host': 'remote-broker.invalid'},
+                           'cooperation': {'mode': 'swarm'}})
+        config = cfg.load_config('system')
+        self.assertIn('data_root', config['cooperation']['swarm']['agent'])
+        projected = swarm_configuration(config, status)
+        self.assertEqual(projected['cluster_id'], 'inspection-swarm')
+        self.assertEqual(projected['transport']['mqtt_prefix'], 'fh/swarm/peer')
+        self.assertEqual(projected['transport']['platform_prefix'], 'fh/swarm/dispatch')
+        self.assertNotIn('allow_insecure_remote', projected['transport'])
+        self.assertFalse(projected['transport']['mqtt_tls'])
+        config['mqtt'].update(tls=True, ca='/test/ca.pem')
+        tls = swarm_configuration(config, status)['transport']
+        self.assertTrue(tls['mqtt_tls'])
+        self.assertEqual(tls['mqtt_ca'], '/test/ca.pem')
+        config['cooperation']['swarm'] = {'cluster_id': 'isolated-test',
+            'mqtt_prefix': 'test/swarm/peer', 'platform_prefix': 'test/swarm/dispatch'}
+        isolated = swarm_configuration(config, status)
+        self.assertEqual(isolated['cluster_id'], 'isolated-test')
+        self.assertEqual(isolated['transport']['mqtt_prefix'], 'test/swarm/peer')
+        self.assertEqual(isolated['transport']['platform_prefix'], 'test/swarm/dispatch')
 
     def test_lists_replace_instead_of_append(self):
         self.robot(navigation={'bringup': {'modes': {'nav': {'sequence': ['nav_bridge']}}}})
@@ -336,7 +416,7 @@ class Configuration(unittest.TestCase):
         self.robot(robot_id='D1M-002')
         expected = cfg.read_yaml(ROOT / 'store/d1m_zenoh/system_d1m.yaml')
         expected['mqtt']['sn'] = 'D1M-002'
-        expected['mission_execution_agent']['robot_id'] = 'D1M-002'
+        expected['cooperation']['robot_id'] = 'D1M-002'
         expected['task_hub']['obstacle_snapshot_enabled'] = False
         expected['task_hub']['obstacle_photo_enabled'] = False
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
@@ -637,6 +717,8 @@ class Configuration(unittest.TestCase):
         expected['service']['environment']['CYCLONEDDS_URI'] = ''
         expected['service']['environment']['ZENOH_CONFIG_OVERRIDE'] = 'queries_default_timeout=600000'
         expected['service']['environment']['INSPECTION_CONFIG_DIR'] = str(self.root)
+        expected['cooperation'] = cfg.read_yaml(self.root / 'services.yaml')['cooperation']
+        expected['cooperation']['launch_args'].pop('system_config_path')
         self.assertEqual(cfg.load_config('services'), expected)
 
     def test_services_explicit_launch_paths_use_bringup_config_directory(self):
@@ -687,10 +769,45 @@ class Configuration(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('[window] gas\n', result.stdout)
         self.assertNotIn('[window] sensor_gimbal\n', result.stdout)
-        self.assertIn('[window] task_hub\n', result.stdout)
+        for name in ('task_hub', 'charge', 'platform'):
+            self.assertIn(f'[window] {name}\n', result.stdout)
+        self.assertNotIn('[window] system\n', result.stdout)
         self.assertIn('export INSPECTION_CONFIG_DIR=', result.stdout)
         self.assertNotIn('system_config_path:=', result.stdout)
         self.assertNotIn('enable_gimbal:=', result.stdout)
+
+    def test_tmux_preserves_module_windows_for_every_cooperation_mode(self):
+        for mode in ('disabled', 'coordination', 'swarm'):
+            with self.subTest(mode=mode):
+                self.robot(system={'modules': {'sensor_gimbal': True},
+                                   'cooperation': {'mode': mode}})
+                result = self.run_script('start_inspection_tmux.sh', '--dry-run')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                windows = [line.split(' ', 1)[1] for line in result.stdout.splitlines()
+                           if line.startswith('[window] ')]
+                expected = ['task_hub', 'sensor_gimbal', 'charge',
+                            'alarm', 'light', 'gas', 'sensor_rs485', 'acoustic', 'platform']
+                if mode != 'disabled':
+                    expected.insert(3, 'cooperation')
+                self.assertEqual(windows, expected)
+                self.assertNotIn('cooperation_mode:=', result.stdout)
+                self.assertNotIn('enable_mission_execution_agent:=', result.stdout)
+
+    def test_tmux_cooperation_only_does_not_start_single_device_modules(self):
+        switches = {name: False for name in ('task_hub', 'sensor_gimbal', 'charge',
+                    'sensors', 'mqtt', 'algorithm_transport')}
+        for mode in ('disabled', 'coordination', 'swarm'):
+            with self.subTest(mode=mode):
+                self.robot(system={'modules': switches, 'cooperation': {'mode': mode}})
+                result = self.run_script('start_inspection_tmux.sh', '--dry-run')
+                if mode == 'disabled':
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('no modules are enabled', result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.count('[window] '), 1)
+                    self.assertIn('[window] cooperation\n', result.stdout)
+                    self.assertIn('cooperation.launch.py', result.stdout)
 
     def test_tmux_explicit_config_bypasses_robot(self):
         self.robot(model='absent')

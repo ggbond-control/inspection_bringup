@@ -234,21 +234,58 @@ builds the D1 Max nav bridge backend. It follows this order:
 4. Build managed driver packages, including `robots_dog_msgs` and `gnss_driver`.
 5. Build managed algorithm packages, including `smac_straight_planner`.
 
-The current build profiles explicitly support D1M. X30 and Cyvet runtime
-configuration files do not select their CMake backends: dedicated build profiles
-are not yet provided. A fresh unconfigured nav_bridge build defaults to X30;
-Cyvet needs its backend enabled and the UniUbi dependencies supplied separately.
-Do not reuse a D1M build directory for another model with this version: cached
-backend switches are not reset when a model profile is absent. Each additional
-model should explicitly set all three `NAV_BRIDGE_BUILD_*` switches before it is
-considered supported. `--model` changes this build's profile only; it does not
-modify runtime `robot.yaml`.
+The D1M, Cyvet, TANK and R750 build profiles explicitly select their chassis
+backend and disable the other backends. X30 still uses nav_bridge's default
+backend options; when switching an existing build directory to X30, clear its
+nav_bridge CMake cache or explicitly reset its backend switches. `--model`
+changes this build's profile only; it does not modify runtime `robot.yaml`.
 
 Each stage loads only its declared underlays. Workspace `local_setup.bash` and
 the interface package's own setup are used to avoid recorded chains that import
 old task/driver/algorithm overlays. Ambient ROS, middleware and library search
 variables are cleared. Repositories are discovered with colcon, respecting
 `COLCON_IGNORE`; missing/empty package lists stop the build.
+
+### Cyvet driver build and missing-executable recovery
+
+Set `model: cyvet` in `config/robot.yaml`. The shared build entry automatically
+loads `config/build/cyvet.yaml`, enables `NAV_BRIDGE_BUILD_CYVET`, disables the
+other chassis backends and uses CycloneDDS. The profile explicitly discovers
+`uniubi` and `uniubi_motion_client` beneath the vendored `COLCON_IGNORE`, leaving
+the marker intact for other models. Colcon metadata supplies their build and
+runtime dependencies to nav_bridge so both vendor packages are built first.
+
+```bash
+# Full navigation build; no manual vendor workspace is required.
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh -j4
+
+# Repair/rebuild only the Cyvet bridge and its two vendor packages.
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh \
+  --select uniubi uniubi_motion_client nav_bridge -j4
+
+# Check the resolved profile without building, then inspect installed executables.
+~/Workspace/task_ws/src/inspection_bringup/scripts/build_navigation.sh --plan
+source /opt/ros/jazzy/setup.bash
+source ~/Workspace/driver_ws/install/local_setup.bash
+ros2 pkg executables nav_bridge
+grep NAV_BRIDGE_BUILD_ ~/Workspace/driver_ws/build/nav_bridge/CMakeCache.txt
+```
+
+The executable list must contain `nav_bridge cyvet_nav_bridge_node`, and the cache
+must show `NAV_BRIDGE_BUILD_CYVET:BOOL=ON`. If only `x30_nav_bridge_node` exists,
+the package built successfully with the wrong backend; changing runtime
+`robot_type` alone cannot create an executable. Update inspection_bringup to
+include the Cyvet build profile and run the repair command above. Do not remove
+the entire three-workspace build/install directories or delete vendor ignore
+markers. `--select` builds only the named packages, so include both vendor
+packages on a fresh Cyvet build. It does not build other missing dependencies.
+
+After rebuilding, restart the navigation supervisor with
+`manage_inspection_services.sh restart navigation`, then repeat the normal
+`/navigation_bringup/start` request. A later localization TRACKING timeout is a
+separate map/sensor/initial-pose issue; use the navigation journal to distinguish
+it from a missing bridge executable. Starting the supervisor itself does not
+mean localization or the full navigation stack is ready.
 
 **GTSAM is built on first initialization only.** When its installed CMake config,
 headers and libraries already exist, the helper does not configure, compile or

@@ -113,13 +113,14 @@ def enabled(name, default=True):
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
-system_modules = ("task_hub", "sensor_gimbal", "charge", "sensors", "mqtt", "algorithm_transport",
-                  "mission_execution_agent")
-for module in ("task_hub", "sensor_gimbal", "charge", "mission_execution_agent"):
-    if enabled(module, module not in ("mission_execution_agent", "sensor_gimbal")):
+system_modules = ("task_hub", "sensor_gimbal", "charge", "sensors", "mqtt", "algorithm_transport")
+for module in ("task_hub", "sensor_gimbal", "charge"):
+    if enabled(module, module != "sensor_gimbal"):
         args = " ".join(f"enable_{name}:={'true' if name == module else 'false'}"
                         for name in system_modules)
         print(f"{module}\tsystem\t{args}")
+if config.get("cooperation", {}).get("mode", "disabled") != "disabled":
+    print("cooperation\tcooperation\t")
 if enabled("sensors"):
     for module in ("alarm", "light", "gas", "sensor_rs485", "acoustic"):
         if enabled(module):
@@ -154,13 +155,30 @@ source_lines() {
   else
     lines+=("echo '[warn] workspace setup not found: ${WORKSPACE_ROOT}/install/setup.bash'")
   fi
+  if [[ "${1:-}" == cooperation ]]; then
+    local cooperation_workspace
+    cooperation_workspace="$(python3 - "${SCRIPT_DIR}" "${CONFIG_PATH}" <<'PYROOT'
+import sys
+sys.path.insert(0, sys.argv[1])
+from bringup_config import load_config
+from pathlib import Path
+standalone = str(Path(sys.argv[1]).parent / 'config/services.yaml') if sys.argv[2] else ''
+print(load_config('services', standalone, resolve=False).get('cooperation', {}).get(
+    'workspace_root', '/home/cat/Workspace/cooperation_ws'))
+PYROOT
+)"
+    lines+=("source $(quote "${cooperation_workspace}/install/local_setup.bash")")
+  fi
   printf "%s; " "${lines[@]}"
 }
 
 launch_file_for_kind() {
   case "$1" in
     system)
-      echo "inspection_system.launch.py"
+      echo "inspection_modules.launch.py"
+      ;;
+    cooperation)
+      echo "cooperation.launch.py"
       ;;
     sensors)
       echo "sensors.launch.py"
@@ -182,7 +200,7 @@ build_command() {
   launch_file="$(launch_file_for_kind "${launch_kind}")"
 
   printf "set -e; "
-  source_lines
+  source_lines "${launch_kind}"
   printf "export RCUTILS_CONSOLE_OUTPUT_FORMAT='[{time}] [{severity}] [{name}]: {message}'; "
   printf "export RCUTILS_COLORIZED_OUTPUT=1; "
   printf "export RCUTILS_LOGGING_BUFFERED_STREAM=0; "
