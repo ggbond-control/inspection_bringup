@@ -1,0 +1,15 @@
+FROM ros:jazzy-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+COPY configure_apt_mirrors.py /tmp/configure_apt_mirrors.py
+RUN python3 /tmp/configure_apt_mirrors.py \
+    && rm /tmp/configure_apt_mirrors.py \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git pkg-config patchelf dpkg-dev python3-colcon-common-extensions \
+    libyaml-cpp-dev libopencv-dev libgif-dev libboost-dev \
+    python3-yaml python3-numpy python3-scipy python3-pil python3-paho-mqtt python3-boto3 \
+    ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-rosidl-default-generators \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ROS_DISTRO=jazzy
+ENTRYPOINT []

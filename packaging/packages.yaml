@@ -2,6 +2,31 @@
 schema_version: 1
 repository_base: https://github.com/ggbond-control
 components:
+  cooperation:
+    deb_name: control-cooperation
+    prefix: /opt/inspection/cooperation
+    image: inspection-cooperation-builder:jazzy-{architecture}
+    dockerfile: navigation/Dockerfile.cooperation
+    recipe_revision: cooperation-v1
+    packages:
+      capability_mission_planner: capability_mission_planner
+      fleet_leader_election: fleet_leader_election
+      mission_execution_agent: mission_execution_agent
+      swarm_protocol: swarm_protocol
+      swarm_consensus: swarm_consensus
+      swarm_mission_planner: swarm_mission_planner
+      swarm_execution_agent: swarm_execution_agent
+      swarm_mqtt_transport: swarm_mqtt_transport
+      swarm_mission_coordinator: swarm_mission_coordinator
+    runtime_dependencies:
+      - ros-jazzy-ros-base
+      - ros-jazzy-rmw-cyclonedds-cpp
+      - python3-yaml
+      - python3-numpy
+      - python3-scipy
+      - python3-pil
+      - python3-paho-mqtt
+      - python3-boto3
   driver:
     deb_name: control-driver
     prefix: /opt/inspection/driver

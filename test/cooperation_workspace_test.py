@@ -78,6 +78,32 @@ class CooperationWorkspace(unittest.TestCase):
             self.assertTrue(path.endswith('/cooperation_ws/src/' + package + '/runtime'))
         self.assertNotIn('runtime_root', config['cooperation'])
 
+    def test_deb_prefix_condition_and_service_rendering(self):
+        prefix = self.root / 'deb/cooperation'
+        prefix.mkdir(parents=True)
+        (prefix / 'local_setup.bash').write_text('# installed deb overlay\n')
+        args = [sys.executable, str(ROOT / 'scripts/check_cooperation.py'),
+                '--workspace', str(self.coop), '--task-workspace', str(self.task),
+                '--install-prefix', str(prefix)]
+        result = subprocess.run(args, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.robot['services'] = {'cooperation': {'install_prefix': str(prefix)}}
+        self.save_robot()
+        result = subprocess.run(['bash', str(ROOT / 'scripts/manage_inspection_services.sh'), 'render'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = Path(result.stdout.strip())
+        self.addCleanup(shutil.rmtree, output)
+        wrapper = (output / 'wrappers/run_inspection_cooperation.sh').read_text()
+        self.assertIn(str(prefix / 'local_setup.bash'), wrapper)
+        self.assertNotIn('cooperation_ws/install/local_setup.bash', wrapper)
+        unit = (output / 'systemd/inspection-cooperation.service').read_text()
+        self.assertIn('--install-prefix', unit)
+        (prefix / 'local_setup.bash').unlink()
+        result = subprocess.run(args, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 255)
+        self.assertIn('missing cooperation installation', result.stderr)
+
     def repo(self, name):
         path = self.task / 'src' / name
         path.mkdir()

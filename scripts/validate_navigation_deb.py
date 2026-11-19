@@ -19,12 +19,13 @@ def main():
     prefix = Path('/opt/inspection/navigation')
     driver = Path('/opt/inspection/driver')
     manifests = [json.loads((driver / 'share/control_release/manifest.json').read_text())]
-    for component in ('navigation', 'task'):
+    for component in ('navigation', 'task', 'cooperation'):
         path = Path('/opt/inspection') / component / 'share/control_release/manifest.json'
         if path.exists():
             manifests.append(json.loads(path.read_text()))
     has_navigation = any(v['component'] == 'navigation' for v in manifests)
     has_task = any(v['component'] == 'task' for v in manifests)
+    has_cooperation = any(v['component'] == 'cooperation' for v in manifests)
     for item in manifests:
         component_prefix = Path(item['install_prefix'])
         for name in item['packages']:
@@ -72,6 +73,14 @@ def main():
                                     ('sensor_gimbal', 'sensor_gimbal_node'),
                                     ('inspection_task_hub', 'task_hub_node')]:
             assert os.access(task / 'lib' / package / executable, os.X_OK), executable
+    if has_cooperation:
+        for module in ('fleet_election.ros_node', 'mission_execution_agent.node',
+                       'swarm_protocol.ros', 'swarm_consensus.node', 'swarm_execution_agent.node',
+                       'swarm_mission_coordinator.node', 'swarm_mission_planner.node',
+                       'swarm_mqtt_transport.node'):
+            importlib.import_module(module)
+        assert os.access('/opt/inspection/cooperation/lib/capability_mission_planner/'
+                         'capability_mission_planner_node', os.X_OK)
     if not has_navigation:
         print(f'PASS: {len(manifests)} components, bridge executables, interfaces and {count} ELF files')
         return

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build control-driver/control-navigation/control-task debs using persistent Docker caches."""
+"""Build control driver/navigation/task/cooperation debs using persistent Docker caches."""
 
 import argparse
 import copy
@@ -43,8 +43,8 @@ def load_package_catalog(path):
     if not isinstance(catalog, dict) or catalog.get('schema_version') != 1:
         raise ValueError('packages.yaml: expected schema_version: 1')
     components = catalog.get('components')
-    if not isinstance(components, dict) or set(components) != {'driver', 'navigation', 'task'}:
-        raise ValueError('packages.yaml: expected driver, navigation and task components')
+    if not isinstance(components, dict) or set(components) != {'driver', 'navigation', 'task', 'cooperation'}:
+        raise ValueError('packages.yaml: expected driver, navigation, task and cooperation components')
     if not isinstance(catalog.get('repository_base'), str) or not catalog['repository_base'].startswith('https://'):
         raise ValueError('packages.yaml: repository_base must be an HTTPS URL')
     owners, debs, prefixes = set(), set(), set()
@@ -98,7 +98,7 @@ def load_package_catalog(path):
 CATALOG_PATH = Path(os.environ.get('INSPECTION_PACKAGING_CATALOG', ROOT / 'packaging/packages.yaml'))
 CATALOG = load_package_catalog(CATALOG_PATH)
 COMPONENT_CONFIG = CATALOG['components']
-COMPONENTS = ('driver', 'navigation', 'task')
+COMPONENTS = ('driver', 'navigation', 'task', 'cooperation')
 ALL_SOURCES = {name: repo for spec in COMPONENT_CONFIG.values() for name, repo in spec['packages'].items()}
 TASK_SOURCES = dict(COMPONENT_CONFIG['task']['packages'])
 NAVIGATION_PACKAGES = set(COMPONENT_CONFIG['navigation']['packages'])
@@ -347,6 +347,17 @@ def snapshot(source, destination):
 def release_adjustments(sources):
     # Restrict changes to release copies. Runtime data belongs to the invoking user,
     # never the read-only installed prefix or the original developer's workspace.
+    if COMPONENT == 'cooperation':
+        for relative in ('mission_execution_agent/mission_execution_agent/node.py',
+                         'fleet_leader_election/fleet_election/ros_node.py'):
+            path = sources / relative
+            original = 'Path(__file__).resolve().parent.parent / "runtime"'
+            replacement = f'Path.home() / ".ros" / "cooperation" / "{relative.split("/")[0]}"'
+            text = path.read_text()
+            if original not in text and replacement not in text:
+                raise ValueError(f'{path}: runtime default changed; review release adaptation')
+            write(path, text.replace(original, replacement))
+        return
     if COMPONENT == 'task':
         cmake = sources / 'sensor_gimbal/CMakeLists.txt'
         text = cmake.read_text()
@@ -806,7 +817,7 @@ def arguments():
     for component in COMPONENTS:
         p.add_argument(f'--{component}-version', help='component version; overrides --version')
         p.add_argument(f'--{component}-tag', help='component source tag; overrides --tag')
-    p.add_argument('--driver-deb', type=Path, help='driver build underlay for navigation-only or task-only builds')
+    p.add_argument('--driver-deb', type=Path, help='driver build underlay for non-driver component builds')
     p.add_argument('--driver-min-version', help='inclusive driver dependency lower bound; defaults to build driver version')
     p.add_argument('--driver-max-version', help='exclusive driver dependency upper bound; defaults to next major (next minor for 0.x)')
     p.add_argument('--work-dir', type=Path, help='persistent cache; defaults to ~/.cache/inspection-navigation-deb/<host architecture>')
@@ -829,20 +840,20 @@ def arguments():
         tag = getattr(args, component + '_tag') or args.tag
         if not args.inside and not args.package_only and not tag:
             p.error('--tag is required unless using --package-only (or use component-specific tags)')
-    for tag in (args.tag, args.driver_tag, args.navigation_tag, args.task_tag):
+    tags = [args.tag, *(getattr(args, component + '_tag') for component in COMPONENTS)]
+    for tag in tags:
         if tag and version_tuple(tag) is None:
             p.error('--tag must be a stable version such as v0.3.5 (or 0.3.5)')
-    if args.package_only and any((args.tag, args.driver_tag, args.navigation_tag, args.task_tag)):
+    if args.package_only and any(tags):
         p.error('--package-only uses the previous source snapshot; omit --tag')
     if args.package_only and (args.driver_min_version or args.driver_max_version):
         p.error('--package-only preserves cached driver compatibility bounds')
-    if args.driver_deb and (args.component not in ('navigation', 'task') or args.package_only):
-        p.error('--driver-deb is only for navigation or task source builds')
-    if args.component in ('navigation', 'task') and not args.package_only and not args.inside and not args.driver_deb:
+    if args.driver_deb and (args.component not in COMPONENTS[1:] or args.package_only):
+        p.error('--driver-deb is only for non-driver component source builds')
+    if args.component in COMPONENTS[1:] and not args.package_only and not args.inside and not args.driver_deb:
         p.error(f'--component {args.component} requires --driver-deb')
     if args.select and args.component != 'all':
-        allowed = DRIVER_PACKAGES if args.component == 'driver' else (
-            NAVIGATION_PACKAGES if args.component == 'navigation' else TASK_SOURCES.keys())
+        allowed = DRIVER_PACKAGES if args.component == 'driver' else COMPONENT_CONFIG[args.component]['packages'].keys()
         if set(args.select) - allowed:
             p.error('--select contains packages outside the selected component')
     for version in (args.driver_min_version, args.driver_max_version):

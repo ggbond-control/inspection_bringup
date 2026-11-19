@@ -242,17 +242,19 @@ class Packaging(unittest.TestCase):
     def test_default_all_dispatches_independent_versions_and_passes_driver_artifact(self):
         argv = ['pack', '--driver-version', '0.3.5', '--navigation-version', '0.4.2',
                 '--driver-tag', 'v0.3.5', '--navigation-tag', 'v0.4.2',
-                '--task-version', '0.2.0', '--task-tag', 'v0.2.0']
+                '--task-version', '0.2.0', '--task-tag', 'v0.2.0',
+                '--cooperation-version', '0.1.0', '--cooperation-tag', 'v0.1.0']
         calls = []
         def build(args):
             calls.append(copy_args := dict(vars(args)))
             return Path('/tmp/control-' + copy_args['component'] + '.deb')
         with patch.object(release.sys, 'argv', argv), patch.object(release, 'build_component', side_effect=build):
             release.main()
-        self.assertEqual([v['component'] for v in calls], ['driver', 'navigation', 'task'])
-        self.assertEqual([v['version'] for v in calls], ['0.3.5', '0.4.2', '0.2.0'])
+        self.assertEqual([v['component'] for v in calls], ['driver', 'navigation', 'task', 'cooperation'])
+        self.assertEqual([v['version'] for v in calls], ['0.3.5', '0.4.2', '0.2.0', '0.1.0'])
         self.assertEqual(calls[1]['driver_deb'], Path('/tmp/control-driver.deb'))
         self.assertEqual(calls[2]['driver_deb'], Path('/tmp/control-driver.deb'))
+        self.assertEqual(calls[3]['driver_deb'], Path('/tmp/control-driver.deb'))
 
     def test_task_dispatch_is_isolated_and_uses_driver_only(self):
         argv = ['pack', '--component', 'task', '--version', '0.3.11', '--tag', 'v0.3.11',
@@ -272,9 +274,32 @@ class Packaging(unittest.TestCase):
         for component in release.COMPONENTS:
             release.configure_component(component)
             records[component] = (release.recipe_id(), release.builder_image('amd64'))
-        self.assertEqual(len({v[0] for v in records.values()}), 3)
+        self.assertEqual(len({v[0] for v in records.values()}), 4)
         self.assertEqual(records['driver'][1], records['navigation'][1])
         self.assertNotEqual(records['task'][1], records['driver'][1])
+        self.assertNotIn(records['cooperation'][1], [records['driver'][1], records['task'][1]])
+
+    def test_cooperation_dispatch_selection_and_runtime_adaptations(self):
+        argv = ['pack', '--component', 'cooperation', '--version', '0.3.11', '--tag', 'v0.3.11',
+                '--driver-deb', '/tmp/driver.deb', '--select', 'swarm_protocol']
+        with patch.object(release.sys, 'argv', argv), patch.object(release, 'build_component') as build:
+            release.main()
+        self.assertEqual(build.call_args.args[0].select, ['swarm_protocol'])
+        self.assertEqual(release.PREFIX, Path('/opt/inspection/cooperation'))
+        self.assertEqual(len(release.SOURCES), 9)
+        self.assertFalse(release.NATIVE)
+        self.assertNotIn('inspection_interfaces', release.SOURCES)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for relative in ('mission_execution_agent/mission_execution_agent/node.py',
+                             'fleet_leader_election/fleet_election/ros_node.py'):
+                release.write(root / relative, 'root = Path(__file__).resolve().parent.parent / "runtime"\n')
+            release.release_adjustments(root)
+            release.release_adjustments(root)
+            for path in root.rglob('*.py'):
+                self.assertIn('Path.home() / ".ros" / "cooperation"', path.read_text())
+                self.assertNotIn('__file__', path.read_text())
+        release.configure_component('navigation')
 
     def test_catalog_is_the_source_for_package_mapping_and_component_metadata(self):
         catalog = copy.deepcopy(release.CATALOG)

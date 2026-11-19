@@ -13,6 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, required=True)
     parser.add_argument('--task-workspace', type=Path, required=True)
+    parser.add_argument('--install-prefix', type=Path,
+                        help='deb install prefix; omit for source workspace deployment')
     parser.add_argument('--config', default='')
     args = parser.parse_args()
     try:
@@ -20,7 +22,12 @@ def main():
             print('Cooperation disabled by device configuration.')
             return 1  # ExecCondition 1..254 skips; does not trigger Restart.
         check(args.workspace.resolve(), args.task_workspace.resolve())
-        if not (args.workspace / 'install/local_setup.bash').is_file():
+        if args.install_prefix:
+            if not args.install_prefix.is_absolute():
+                raise ValueError('cooperation install prefix must be absolute')
+            if not (args.install_prefix / 'local_setup.bash').is_file():
+                raise ValueError(f'missing cooperation installation: {args.install_prefix}/local_setup.bash')
+        elif not (args.workspace / 'install/local_setup.bash').is_file():
             raise ValueError(f'build cooperation_ws first: {args.workspace}/install/local_setup.bash')
     except Exception as exc:
         print(f'Cooperation startup error: {exc}', file=sys.stderr)

@@ -54,6 +54,7 @@ The table below describes the shipped catalog:
 | `control-driver` | `inspection_interfaces`, `robots_dog_msgs`, `control_input_msgs`, `gnss_driver`, `livox_ros_driver2`, `ndt_omp`, `nav_bridge`, embedded `uniubi` and `uniubi_motion_client`, GTSAM and Livox SDK | `/opt/inspection/driver` |
 | `control-navigation` | `faster_lio`, `gridmapper`, `local_planner`, `multi_map_nav`, `smac_straight_planner` | `/opt/inspection/navigation` |
 | `control-task` | `alarm_manager`, `light_manager`, `acoustic_monitor`, `gas_monitor`, `sensor_rs485`, `sensor_gimbal`, `inspection_charge_executor`, `inspection_platform_bridge`, `inspection_task_hub` | `/opt/inspection/task` |
+| `control-cooperation` | `capability_mission_planner`, `fleet_leader_election`, `mission_execution_agent`, `swarm_protocol`, `swarm_consensus`, `swarm_mission_planner`, `swarm_execution_agent`, `swarm_mqtt_transport`, `swarm_mission_coordinator` | `/opt/inspection/cooperation` |
 
 Driver explicitly enables X30, D1 Max, Cyvet, TANK and R750 bridge executables
 on both architectures. An unavailable SDK/backend stops the build instead of
@@ -64,11 +65,69 @@ packaging does not read `robot.yaml`.
 `inspection_bringup`, device-specific configuration, maps and system services
 are excluded. Generic launch/config resources and ROS package indexes remain
 available. Driver headers, static libraries and CMake exports are retained so
-navigation can compile against the exact distributed driver deb. The two
-prefixes have no shared file ownership. Task reuses the driver's interfaces;
+consumers can compile against the distributed driver deb. The installation
+prefixes have no shared file ownership. Task and cooperation reuse the driver's interfaces;
 `inspection_interfaces` and other driver packages are not duplicated. The
-optional `mission_execution_agent` and `capability_mission_planner` are excluded.
-Keep `system.modules.mission_execution_agent: false` if those packages are absent.
+cooperation packages belong exclusively to `control-cooperation`.
+Keep `system.cooperation.mode: disabled` when cooperation is not installed.
+
+## Cooperation Deployment
+
+Build cooperation alone with the same remote tag selection and incremental cache
+behavior as other components (no task/navigation source build is required):
+
+```bash
+bash scripts/package.sh --component cooperation --version 0.3.11 --tag v0.3.11 \
+  --driver-deb ~/.cache/inspection-navigation-deb/amd64/driver/dist/control-driver_0.3.11_amd64.deb -j2
+```
+
+The output is under `~/.cache/inspection-navigation-deb/<architecture>/cooperation/dist/`.
+Its independent image is `inspection-cooperation-builder:jazzy-<architecture>`,
+built from `navigation/Dockerfile.cooperation`. Install driver and cooperation
+with `sudo apt install /absolute/path/control-driver_*.deb /absolute/path/control-cooperation_*.deb`.
+Source ROS, driver, then `/opt/inspection/cooperation/local_setup.bash` for manual
+`ros2` commands. The driver compatibility dependency uses the existing version
+range mechanism. `control-task` is not a compilation dependency; TaskHub services
+are still required when executing actual inspection tasks.
+
+Configure `robot.yaml` before regenerating/installing service wrappers:
+
+```yaml
+services:
+  cooperation:
+    install_prefix: /opt/inspection/cooperation
+    setup_paths:
+      - /opt/inspection/driver/local_setup.bash
+      - /opt/inspection/task/local_setup.bash
+      - /home/cat/Workspace/task_ws/install/local_setup.bash  # inspection_bringup
+system:
+  cooperation:
+    coordination:
+      agent:
+        data_root: ~/.ros/cooperation/mission_execution_agent
+      election:
+        data_root: ~/.ros/cooperation/fleet_leader_election
+    swarm:
+      consensus:
+        data_root: ~/.ros/cooperation/swarm_consensus
+      coordinator:
+        data_root: ~/.ros/cooperation/swarm_mission_coordinator
+      transport:
+        data_root: ~/.ros/cooperation/swarm_mqtt_transport
+      agent:
+        data_root: ~/.ros/cooperation/swarm_execution_agent
+```
+
+Adjust underlay paths to the packages actually installed. The cooperation prefix
+is appended automatically, replacing the source-workspace overlay. Omit
+`install_prefix` to retain the original `cooperation_ws` startup behavior.
+Device settings still select `disabled`, `coordination`, or `swarm`; installing
+a deb does not enable a mode or start services. Explicit `data_root` values
+override defaults, including existing source-adjacent paths in `system.yaml`.
+Migrate existing runtime state before changing those paths. Release copies of
+the legacy agent/election defaults use `~/.ros/cooperation/<package>`; Swarm
+already defaults to user-writable directories. No original package source,
+runtime state, maps, device credentials or bringup code is included in this deb.
 
 ## Prerequisites
 
@@ -85,8 +144,8 @@ contacts source repositories.
 
 ## Commands
 
-Build all three components in driver, navigation, task order (`--component all`
-is the default). The generated driver deb becomes both consumers' build underlay:
+Build all four components in driver, navigation, task, cooperation order (`--component all`
+is the default). The generated driver deb becomes each consumer's build underlay:
 
 ```bash
 bash scripts/package.sh --version 0.3.5 --tag v0.3.5 -j1
@@ -109,13 +168,14 @@ bash scripts/package.sh --component navigation \
   --driver-min-version 0.3.5 --driver-max-version 0.4.0 -j2
 ```
 
-Give the three components independent versions and source tags:
+Give the four components independent versions and source tags:
 
 ```bash
 bash scripts/package.sh --component all \
   --driver-version 0.3.5 --driver-tag v0.3.5 \
   --navigation-version 0.4.2 --navigation-tag v0.4.2 \
-  --task-version 0.2.0 --task-tag v0.2.0 -j1
+  --task-version 0.2.0 --task-tag v0.2.0 \
+  --cooperation-version 0.1.0 --cooperation-tag v0.1.0 -j1
 ```
 
 Build task independently, without fetching or compiling driver/navigation:
@@ -153,13 +213,14 @@ bash scripts/package.sh --component navigation \
 
 | Option | Meaning |
 | --- | --- |
-| `--component driver\|navigation\|task\|all` | Components to build/package; default `all` |
+| `--component driver\|navigation\|task\|cooperation\|all` | Components to build/package; default `all` |
 | `--version` | Default Debian version for requested components |
 | `--tag` | Default organization source tag, e.g. `v0.3.5` |
 | `--driver-version`, `--navigation-version` | Override the corresponding Debian version |
 | `--driver-tag`, `--navigation-tag` | Override the corresponding source tag |
 | `--task-version`, `--task-tag` | Task Debian version and source tag overrides |
-| `--driver-deb` | Required for navigation-only/task-only source builds; must match host architecture |
+| `--cooperation-version`, `--cooperation-tag` | Cooperation Debian version and source tag overrides |
+| `--driver-deb` | Required for navigation/task/cooperation-only source builds; must match host architecture |
 | `--driver-min-version` | Inclusive lower bound; default build driver version |
 | `--driver-max-version` | Exclusive upper bound; default next major, or next minor for `0.x` |
 | `--work-dir` | Cache root; component subdirectories are appended automatically |
@@ -171,8 +232,8 @@ bash scripts/package.sh --component navigation \
 `--select` checks all source repositories within the chosen component. Changes
 outside its consumer closure are rejected. In `all` mode a selection confined to
 one consumer repackages the other cached components; selecting driver packages
-also rebuilds all navigation/task consumers. To avoid publishing unrelated
-components, select `--component navigation` or `--component task` with `--driver-deb`.
+also rebuilds all navigation/task/cooperation consumers. To avoid publishing unrelated
+components, select a single consumer component with `--driver-deb`.
 
 ## Versions and Dependencies
 
@@ -224,6 +285,8 @@ recorded object-environment stamp allows interrupted rebuilds to resume.
 Driver/navigation use `inspection-control-builder:jazzy-<architecture>`; task uses
 the independent `inspection-task-builder:jazzy-<architecture>` and
 `navigation/Dockerfile.task`. Component rule revisions are recorded separately;
+cooperation has its own `inspection-cooperation-builder:jazzy-<architecture>`
+and `navigation/Dockerfile.cooperation`.
 adding task does not change the driver/navigation image or delete their caches.
 When introducing these revision identifiers into an older cache, omit `--select`
 once; existing build objects remain reusable. Future changes must bump only the
@@ -261,6 +324,7 @@ source /opt/ros/jazzy/setup.bash
 source /opt/inspection/driver/local_setup.bash
 source /opt/inspection/navigation/local_setup.bash
 source /opt/inspection/task/local_setup.bash  # If control-task is installed
+source /opt/inspection/cooperation/local_setup.bash  # If control-cooperation is installed
 ros2 pkg executables nav_bridge
 ros2 pkg executables local_planner
 ```

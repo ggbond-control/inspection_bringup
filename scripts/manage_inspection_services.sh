@@ -470,10 +470,16 @@ cooperation_paths = cooperation.get("setup_paths", [path.replace("/setup.bash", 
 if not isinstance(cooperation_paths, list) or not all(isinstance(path, str) and path for path in cooperation_paths):
     raise SystemExit("cooperation.setup_paths must be a list of underlay paths")
 cooperation_paths = list(cooperation_paths)
-cooperation_paths.append(os.path.join(cooperation_workspace, "install", "local_setup.bash"))
+cooperation_prefix = cooperation.get("install_prefix", "")
+if not isinstance(cooperation_prefix, str) or (cooperation_prefix and not os.path.isabs(cooperation_prefix)):
+    raise SystemExit("cooperation.install_prefix must be an absolute path")
+cooperation_paths.append(os.path.join(cooperation_prefix, "local_setup.bash") if cooperation_prefix
+                         else os.path.join(cooperation_workspace, "install", "local_setup.bash"))
 cooperation_args = launch_args_text(cooperation.get("launch_args", {}))
 check_script = os.path.join(install_dir, "check_cooperation.py")
 check_arguments = ["--workspace", cooperation_workspace, "--task-workspace", workspace_root]
+if cooperation_prefix:
+    check_arguments += ["--install-prefix", cooperation_prefix]
 config_arg = cooperation.get("launch_args", {}).get("system_config_path", "")
 if config_arg:
     check_arguments += ["--config", str(config_arg)]

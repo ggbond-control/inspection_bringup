@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# -lt 1 || ! -f "$1" ]]; then
-  echo "Usage: bash scripts/test_navigation_deb.sh DRIVER_DEB [NAVIGATION_DEB|TASK_DEB ...]" >&2
+  echo "Usage: bash scripts/test_navigation_deb.sh DRIVER_DEB [NAVIGATION_DEB|TASK_DEB|COOPERATION_DEB ...]" >&2
   exit 2
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,7 +14,7 @@ for DEB_PATH in "$@"; do
   [[ -f "${DEB_PATH}" ]] || exit 2
   [[ "$(dpkg-deb -f "${DEB_PATH}" Architecture)" == "${HOST_ARCH}" ]] || exit 2
   case "$(dpkg-deb -f "${DEB_PATH}" Package)" in
-    control-driver|control-navigation|control-task) ;;
+    control-driver|control-navigation|control-task|control-cooperation) ;;
     *) exit 2 ;;
   esac
   MOUNTS+=(-v "$(realpath "${DEB_PATH}"):/tmp/package-${INDEX}.deb:ro")
@@ -35,7 +35,7 @@ docker run --rm --platform "linux/${HOST_ARCH}" \
       runuser -u nobody -- env HOME=/tmp/navigation-smoke-home bash -ec "
         source /opt/ros/jazzy/setup.bash
         source /opt/inspection/driver/local_setup.bash
-        for component in navigation task; do
+        for component in navigation task cooperation; do
           if [[ -f /opt/inspection/\${component}/local_setup.bash ]]; then
             source /opt/inspection/\${component}/local_setup.bash
           fi
@@ -43,7 +43,7 @@ docker run --rm --platform "linux/${HOST_ARCH}" \
         python3 /tmp/validate_navigation_deb.py
       "
     done
-    for component in task navigation; do
+    for component in cooperation task navigation; do
       if dpkg-query -W -f="\${db:Status-Status}" "control-${component}" 2>/dev/null | grep -qx installed; then
         apt-get remove -y "control-${component}"
         test -f /opt/inspection/driver/local_setup.bash
