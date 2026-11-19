@@ -994,6 +994,40 @@ def arguments():
     return args
 
 
+def driver_provenance_id(provenance):
+    # Build identity excludes release labels, archive metadata and Git ref names.
+    identity = dict(architecture=provenance.get('architecture'),
+                    build=provenance.get('build_input_sha256'),
+                    install=provenance.get('install_sha256'))
+    if not identity['build'] or not identity['install']:
+        identity.update(
+            packages={name: {key: value.get(key) for key in ('commit', 'sha256')}
+                      for name, value in provenance.get('packages', {}).items()},
+            native={name: {key: value.get(key) for key in ('commit', 'sha256')}
+                    for name, value in provenance.get('native', {}).items()},
+            environment=provenance.get('builder_environment') or provenance.get('builder_image'),
+            recipe=provenance.get('release_recipe_sha256'))
+    return cache_digest(identity)
+
+
+def migrate_driver_identity(work, provenance):
+    state = work / 'build-state.json'
+    if not state.is_file() or (work / 'build-in-progress').exists():
+        return
+    previous = json.loads(state.read_text())
+    legacy = cache_digest({key: provenance.get(key) for key in
+                           ('architecture', 'packages', 'native', 'builder_image',
+                            'release_recipe_sha256', 'packaging_recipe_sha256')})
+    if driver_build_id(previous) != legacy:
+        return
+    verified_key = previous.get('build_input_sha256') == build_input_digest(previous)
+    previous['driver']['build_id'] = driver_provenance_id(provenance)
+    if verified_key:
+        previous['build_input_sha256'] = build_input_digest(previous)
+    write(state, json.dumps(previous, indent=2))
+    print('[cache] migrated driver identity; existing build objects retained', flush=True)
+
+
 def driver_underlay(args, work, architecture):
     deb = args.driver_deb.expanduser().resolve()
     if output(['dpkg-deb', '-f', deb, 'Package']) != COMPONENT_CONFIG['driver']['deb_name']:
@@ -1013,6 +1047,9 @@ def driver_underlay(args, work, architecture):
         if subprocess.run(['dpkg', '--compare-versions', left, op, right]).returncode:
             raise ValueError(f'build driver {version} is outside [{minimum}, {maximum})')
     directory = work / 'driver-underlay'
+    cached_provenance = directory / DRIVER_PREFIX.relative_to('/') / 'share/control_release/manifest.json'
+    if cached_provenance.is_file():
+        migrate_driver_identity(work, json.loads(cached_provenance.read_text()))
     checksum = digest(deb)
     stamp = work / 'driver-underlay.sha256'
     if not stamp.exists() or stamp.read_text().strip() != checksum:
@@ -1025,10 +1062,7 @@ def driver_underlay(args, work, architecture):
         raise ValueError('driver deb does not contain its build underlay')
     provenance = json.loads((directory / DRIVER_PREFIX.relative_to('/') /
                              'share/control_release/manifest.json').read_text())
-    identity = {key: provenance.get(key) for key in
-                ('architecture', 'packages', 'native', 'builder_image',
-                 'release_recipe_sha256', 'packaging_recipe_sha256')}
-    build_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    build_id = driver_provenance_id(provenance)
     return {'version': version, 'sha256': checksum, 'build_id': build_id}, minimum, maximum
 
 

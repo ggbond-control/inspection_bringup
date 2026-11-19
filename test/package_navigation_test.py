@@ -18,6 +18,45 @@ SPEC.loader.exec_module(release)
 
 
 class Packaging(unittest.TestCase):
+    def test_driver_provenance_ignores_release_labels_but_tracks_actual_outputs(self):
+        original = dict(architecture='amd64', build_input_sha256='build', install_sha256='install',
+                        version='0.3.12', builder_image='image', requested_tag='v0.3.12',
+                        packages={'bridge': {'commit': 'abc', 'sha256': 'content', 'requested_tag': 'v0.3.12'}})
+        updated = copy.deepcopy(original)
+        updated.update(version='0.3.13', requested_tag='v0.3.13', builder_image='new-metadata')
+        updated['packages']['bridge'].update(requested_tag='v0.3.13', tag='v0.3.11')
+        self.assertEqual(release.driver_provenance_id(original), release.driver_provenance_id(updated))
+        for key in ('build_input_sha256', 'install_sha256', 'architecture'):
+            self.assertNotEqual(release.driver_provenance_id(original),
+                                release.driver_provenance_id(dict(original, **{key: 'different'})))
+        for item in (original, updated):
+            item.pop('build_input_sha256')
+            item.pop('install_sha256')
+            item['builder_environment'] = 'same-environment'
+        self.assertEqual(release.driver_provenance_id(original), release.driver_provenance_id(updated))
+        updated['packages']['bridge']['commit'] = 'new'
+        self.assertNotEqual(release.driver_provenance_id(original), release.driver_provenance_id(updated))
+
+    def test_old_driver_identity_migrates_without_invalidating_compile_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            provenance = dict(architecture='amd64', packages={'bridge': {'commit': 'abc'}},
+                              native={}, build_input_sha256='driver-build', install_sha256='driver-install')
+            old_id = release.cache_digest({key: provenance.get(key) for key in
+                                          ('architecture', 'packages', 'native', 'builder_image',
+                                           'release_recipe_sha256', 'packaging_recipe_sha256')})
+            previous = dict(architecture='amd64', packages={}, native={}, driver={'build_id': old_id})
+            previous['build_input_sha256'] = release.build_input_digest(previous)
+            release.write(root / 'build-state.json', json.dumps(previous))
+            release.migrate_driver_identity(root, provenance)
+            migrated = json.loads((root / 'build-state.json').read_text())
+            self.assertEqual(migrated['driver']['build_id'], release.driver_provenance_id(provenance))
+            self.assertEqual(migrated['build_input_sha256'], release.build_input_digest(migrated))
+            release.write(root / 'build-state.json', json.dumps(previous))
+            release.write(root / 'build-in-progress', 'incomplete')
+            release.migrate_driver_identity(root, provenance)
+            self.assertEqual(json.loads((root / 'build-state.json').read_text()), previous)
+
     def test_remote_git_retries_network_failure_then_succeeds_without_leaking_credentials(self):
         import io
         from contextlib import redirect_stderr

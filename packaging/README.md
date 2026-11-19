@@ -297,6 +297,11 @@ with an older cache establishes these fingerprints using its existing objects.
 Changing only the Debian version or runtime dependency declarations does not
 require recompilation. Source reference changes pointing to the same commit also
 reuse compilation; provenance changes may still require repackaging.
+Driver underlay identity uses its actual build and installed-output fingerprints,
+excluding requested tags, ref names and Debian archive versions. Releasing an
+identical driver under a new version therefore preserves consumer compile caches.
+Older identities are migrated from the cached underlay manifest only when they
+match the completed build record; interrupted builds are not migrated.
 
 If packaging inputs, version and installation fingerprint match, and the existing
 deb passes its saved SHA256, the existing artifact is reused without staging,
