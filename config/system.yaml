@@ -55,7 +55,18 @@ cooperation:
       data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mqtt_transport/runtime
     agent:
       data_root: /home/cat/Workspace/cooperation_ws/src/swarm_execution_agent/runtime
-  device_status_path: /home/cat/Workspace/task_ws/src/inspection_platform_bridge/platform/device_status.json
+
+# Device description shared by platform and both cooperation modes.
+# Override model defaults in models/<model>/system.yaml and actual hardware in robot.yaml.
+# Base device only: declare installed sensors/gimbals explicitly in an overlay.
+# Dictionaries merge recursively; capabilities/subDevices lists replace inherited lists.
+device_status:
+  version: '0.1'
+  Battery_RC: 22.4
+  Battery_RC_unit: Ah
+  capabilities: [device]
+  nominal_speed_mps: 1.0
+  subDevices: []
 
 mqtt:
   sn: X30-A

@@ -194,6 +194,92 @@ class Configuration(unittest.TestCase):
         self.assertEqual(value['mqtt']['sn'], 'platform-device')
         self.assertEqual(value['cooperation']['robot_id'], 'D1M-001')
 
+    def test_device_description_defaults_are_device_only_and_cyvet_matches_deployed_identity(self):
+        from device_description import device_status
+        base = cfg.read_yaml(self.root / 'system.yaml')['device_status']
+        self.assertEqual(base['capabilities'], ['device'])
+        self.assertEqual(base['subDevices'], [])
+        for model in ('x30', 'd1m', 'cyvet', 'tank', 'r750'):
+            with self.subTest(model=model):
+                self.robot(model=model, robot_id=model.upper() + '-A')
+                status = device_status(cfg.load_config('system'))
+                self.assertEqual(status['capabilities'], ['device'])
+                self.assertEqual(status['subDevices'], [])
+        self.robot(model='cyvet', robot_id='CYVET-A')
+        self.assertEqual(device_status(cfg.load_config('system')), {
+            'sn': 'CYVET-A', 'version': '0.1', 'Battery_RC': 22.4,
+            'Battery_RC_unit': 'Ah', 'capabilities': ['device'],
+            'nominal_speed_mps': 1.5, 'subDevices': []})
+        self.robot(model='cyvet', robot_id='CYVET-A', system={'device_status': {
+            'nominal_speed_mps': 0.8, 'capabilities': ['device', 'gas_sensor'],
+            'subDevices': [{'identifier': 'gas_sensor', 'name': '气体传感器'}]}})
+        overridden = device_status(cfg.load_config('system'))
+        self.assertEqual(overridden['nominal_speed_mps'], 0.8)
+        self.assertEqual(overridden['capabilities'], ['device', 'gas_sensor'])
+        self.assertEqual(overridden['subDevices'], [{'identifier': 'gas_sensor', 'name': '气体传感器'}])
+
+    def test_device_description_merges_layers_replaces_lists_and_derives_identity(self):
+        from device_description import device_status, device_status_snapshot
+        import json
+        self.write('models/d1m/system.yaml', {'device_status': {
+            'Battery_RC': 500, 'Battery_RC_unit': 'Wh', 'nominal_speed_mps': 2.0,
+            'capabilities': ['device', 'gas_sensor'],
+            'subDevices': [{'identifier': 'gas_sensor', 'name': '气体传感器'}],
+            'vendor': {'model_value': 1, 'override': 'model'}}})
+        self.robot(system={'mqtt': {'sn': 'platform-device'}, 'device_status': {
+            'capabilities': ['gimbal.vis'], 'subDevices': [],
+            'vendor': {'override': 'robot'}}})
+        config = cfg.load_config('system')
+        status = device_status(config)
+        self.assertEqual(status['version'], '0.1')
+        self.assertEqual((status['Battery_RC'], status['Battery_RC_unit']), (500, 'Wh'))
+        self.assertEqual(status['nominal_speed_mps'], 2.0)
+        self.assertEqual(status['capabilities'], ['gimbal.vis'])
+        self.assertEqual(status['subDevices'], [])
+        self.assertEqual(status['vendor'], {'model_value': 1, 'override': 'robot'})
+        self.assertEqual(status['sn'], 'platform-device')
+        self.assertEqual(config['cooperation']['robot_id'], 'D1M-001')
+        first = Path(device_status_snapshot(config))
+        self.assertEqual(json.loads(first.read_text()), status)
+        self.assertEqual(first.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(str(first), device_status_snapshot(config))
+        config['device_status']['capabilities'] = []
+        second = Path(device_status_snapshot(config))
+        self.assertNotEqual(first, second)
+        self.assertEqual(json.loads(first.read_text()), status)  # Old launch keeps its own snapshot.
+        self.assertEqual(json.loads(second.read_text())['capabilities'], [])
+        self.assertNotIn('sn', config['device_status'])
+
+    def test_device_description_validates_even_without_cooperation(self):
+        invalid = [None, [], {'capabilities': 'gas'}, {'capabilities': [' gas']},
+                   {'nominal_speed_mps': False}, {'nominal_speed_mps': float('inf')},
+                   {'Battery_RC': 0}, {'Battery_RC_unit': 'watts'},
+                   {'Battery_RC': True}, {'sn': 'duplicate'},
+                   {'subDevices': {}}, {'subDevices': [None]},
+                   {'subDevices': [{'identifier': 'gimbal', 'supportStream': 'false'}]},
+                   {'subDevices': [{'identifier': 'gimbal', 'subDevices': {}}]},
+                   {'subDevices': [{'identifier': 'a'}, {'identifier': 'a'}]}]
+        for value in invalid:
+            with self.subTest(value=value):
+                self.robot(system={'cooperation': {'mode': 'disabled'}, 'device_status': value})
+                with self.assertRaises(ValueError):
+                    cfg.load_config('system')
+
+    def test_explicit_system_and_supervisor_snapshot_preserve_description(self):
+        from device_description import device_status, device_status_snapshot
+        import json
+        standalone = self.write('custom.yaml', {'mqtt': {'sn': 'STANDALONE'}, 'device_status': {
+            'capabilities': [], 'subDevices': [], 'nominal_speed_mps': 0.5,
+            'Battery_RC': None, 'Battery_RC_unit': None}})
+        config = cfg.load_config('system', str(standalone))
+        snapshot = cfg.write_snapshot(config, self.temp.name)
+        reloaded = cfg.load_config('system', snapshot)
+        self.assertEqual(device_status(reloaded), device_status(config))
+        self.assertEqual(device_status(reloaded)['sn'], 'STANDALONE')
+        self.assertNotIn('Battery_RC', device_status(reloaded))
+        path = device_status_snapshot(reloaded)
+        self.assertEqual(json.loads(Path(path).read_text()), device_status(reloaded))
+
     def test_false_zero_empty_list_and_empty_string_are_preserved(self):
         self.robot(system={'modules': {'gas': False}, 'mqtt': {'port': 0, 'password': ''},
                            'cooperation': {'swarm': {'coordinator': {'media_roots': []}}}})
@@ -204,15 +290,13 @@ class Configuration(unittest.TestCase):
         self.assertEqual(value['cooperation']['swarm']['coordinator']['media_roots'], [])
 
     def test_swarm_parameters_share_identity_mqtt_and_device_capabilities(self):
-        import json
         from cooperation import swarm_configuration
-        status = self.root / 'status.json'
-        status.write_text(json.dumps({'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 2.0}))
-        self.robot(system={'mqtt': {'host': 'broker.invalid', 'port': 1884, 'password': 'test'},
+        self.robot(system={'device_status': {'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 2.0},
+                           'mqtt': {'host': 'broker.invalid', 'port': 1884, 'password': 'test'},
                            'cooperation': {'mode': 'swarm', 'robot_id': 'SHOULD-NOT-OVERRIDE',
                                            'swarm': {'footprint_radius': 0.4}}})
         config = cfg.load_config('system')
-        projected = swarm_configuration(config, status)
+        projected = swarm_configuration(config)
         self.assertEqual(projected['robot_id'], 'D1M-001')
         self.assertEqual(projected['transport']['mqtt_host'], 'broker.invalid')
         self.assertEqual(projected['transport']['mqtt_port'], 1884)
@@ -224,42 +308,37 @@ class Configuration(unittest.TestCase):
         self.assertEqual(projected['planner']['footprint_radius'], 0.4)
         config['cooperation']['swarm']['planner'] = {'free_thresh': 0.2}
         with self.assertRaises(ValueError):
-            swarm_configuration(config, status)
+            swarm_configuration(config)
 
     def test_swarm_invalid_device_metadata_refuses_startup(self):
-        import json
         from cooperation import swarm_configuration
         self.robot(system={'cooperation': {'mode': 'swarm'}})
         config = cfg.load_config('system')
-        status = self.root / 'bad.json'
         for value in [{'capabilities': 'device'}, {'nominal_speed_mps': 0},
                       {'nominal_speed_mps': True}, {'capabilities': [' gas']}]:
-            status.write_text(json.dumps(value))
+            config['device_status'] = value
             with self.assertRaises(ValueError):
-                swarm_configuration(config, status)
+                swarm_configuration(config)
 
     def test_swarm_mode_alone_uses_stable_topics_and_existing_tls_configuration(self):
-        import json
         from cooperation import swarm_configuration
-        status = self.root / 'status.json'
-        status.write_text(json.dumps({'capabilities': ['device']}))
         self.robot(system={'mqtt': {'host': 'remote-broker.invalid'},
                            'cooperation': {'mode': 'swarm'}})
         config = cfg.load_config('system')
         self.assertIn('data_root', config['cooperation']['swarm']['agent'])
-        projected = swarm_configuration(config, status)
+        projected = swarm_configuration(config)
         self.assertEqual(projected['cluster_id'], 'inspection-swarm')
         self.assertEqual(projected['transport']['mqtt_prefix'], 'fh/swarm/peer')
         self.assertEqual(projected['transport']['platform_prefix'], 'fh/swarm/dispatch')
         self.assertNotIn('allow_insecure_remote', projected['transport'])
         self.assertFalse(projected['transport']['mqtt_tls'])
         config['mqtt'].update(tls=True, ca='/test/ca.pem')
-        tls = swarm_configuration(config, status)['transport']
+        tls = swarm_configuration(config)['transport']
         self.assertTrue(tls['mqtt_tls'])
         self.assertEqual(tls['mqtt_ca'], '/test/ca.pem')
         config['cooperation']['swarm'] = {'cluster_id': 'isolated-test',
             'mqtt_prefix': 'test/swarm/peer', 'platform_prefix': 'test/swarm/dispatch'}
-        isolated = swarm_configuration(config, status)
+        isolated = swarm_configuration(config)
         self.assertEqual(isolated['cluster_id'], 'isolated-test')
         self.assertEqual(isolated['transport']['mqtt_prefix'], 'test/swarm/peer')
         self.assertEqual(isolated['transport']['platform_prefix'], 'test/swarm/dispatch')
@@ -417,6 +496,8 @@ class Configuration(unittest.TestCase):
         expected = cfg.read_yaml(ROOT / 'store/d1m_zenoh/system_d1m.yaml')
         expected['mqtt']['sn'] = 'D1M-002'
         expected['cooperation']['robot_id'] = 'D1M-002'
+        expected['cooperation'].pop('device_status_path', None)
+        expected['device_status'] = cfg.read_yaml(self.root / 'system.yaml')['device_status']
         expected['task_hub']['obstacle_snapshot_enabled'] = False
         expected['task_hub']['obstacle_photo_enabled'] = False
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'

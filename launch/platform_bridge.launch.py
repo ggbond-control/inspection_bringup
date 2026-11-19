@@ -10,6 +10,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
 from bringup_config import load_config as load_bringup_config
+from device_description import device_status_snapshot
 
 
 def load_system_config(path):
@@ -269,6 +270,7 @@ def launch_setup(context):
     )
 
     platform_params = {
+        "device_status_config_path": device_status_snapshot(config),
         "navigation_to_pose_directory": str(config_value(
             config, "mqtt", "navigation_to_pose_directory", "")),
         "sn": override_or_config(context, "sn", config, "mqtt", "sn", "x30"),

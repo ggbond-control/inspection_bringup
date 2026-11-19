@@ -60,6 +60,60 @@ robot_id: CYVET-A
 Cyvet 定位调用超时按部署值设为 60 秒；若初始化超过该时间，调用方可能先超时，
 导航启动不会因此自动取消。
 
+### 设备描述与三层继承
+
+设备描述统一放在 system 配置的 `device_status` 中，读取顺序与其他 system 配置相同：
+
+| 层级 | 文件／字段 | 内容 |
+| --- | --- | --- |
+| 公共 | `config/system.yaml` 的 `device_status` | 基础设备：`capabilities: [device]`、`subDevices: []`，不声明挂载设备 |
+| 型号 | `config/models/<model>/system.yaml` 的 `device_status` | 同型号共有的电池规格、能力及子设备 |
+| 单机 | `config/robot.yaml` 的 `system.device_status` | 实际安装差异、速度等本机覆盖 |
+
+例如只有可见光／红外云台的设备，在现有 `robot.yaml` 的 `system` 下增加：
+
+```yaml
+system:
+  device_status:
+    nominal_speed_mps: 1.0
+    capabilities: [device, visible_camera, thermal_camera]
+    subDevices:
+      - identifier: gimbal
+        name: 云台
+        supportStream: false
+        subDevices:
+          - {identifier: vis, name: 可见光摄像头, supportStream: true}
+          - {identifier: ir, name: 红外摄像头, supportStream: true}
+```
+
+字典递归合并；`capabilities` 和每层 `subDevices` 都是**整表替换**，不是按数组位置或
+identifier 合并。移除传感器时应同时修改这两份描述。`modules` 决定启动哪些驱动，
+不会自动推测实际硬件能力，仍需按实际配置，避免将暂时关闭的模块误认为拆除了硬件。
+公共默认不声明云台或传感器；有挂载设备的型号／单机必须显式配置其能力和子设备。
+能力列表需要保留 `device`，表示具备基础任务点执行能力；不要仅填写新增的传感器能力。
+Cyvet 型号默认速度为 1.5 m/s，单机仍可覆盖；其他型号沿用公共速度 1.0 m/s。
+半分布式仍按平台任务 `requirements` 与心跳 `capabilities` 的原始编码精确匹配，不从
+`subDevices` 或模块开关推导能力，也不将 `visible_camera` 自动改为 `gimbal.vis`。
+迁移已有设备时保留原能力编码及速度；填写不同编码属于实际配置变更，会影响可执行任务范围。
+
+`sn` 不再重复填写，自动采用 `robot_id` 派生的 `mqtt.sn`；显式覆盖 `system.mqtt.sn`
+仍可使用独立的平台身份，协同身份保持顶层 `robot_id`。
+`Battery_RC` 与 `Battery_RC_unit` 必须成对配置，容量为有限正数，单位为 `Ah` 或 `Wh`；
+未知时将两者同时设为 `null`。速度必须为有限正数，能力为空时使用 `capabilities: []`。
+版本号如需覆盖请使用字符串，例如 `version: "0.2"`；自定义 JSON 兼容字段继续保留。
+
+迁移现有设备时，将原 `device_status.json` 除 `sn` 外的内容放入 `system.device_status`，
+可省略与型号／公共默认值相同的字段；删除旧 `cooperation.device_status_path` 覆盖。
+若 `robot.yaml` 已有 `system`，请合并其中字段，不要追加第二个同名 `system`。
+本次已删除 Bridge 包中的原 JSON，不再维护第二份设备文件。
+
+完整 system、单独 platform bridge、tmux 及协同独立入口均使用同一份合并结果。
+Bringup 为现有文件接口自动生成只读用途的 JSON 快照，位于
+`/tmp/inspection-parameters-<uid>/<内容摘要>.json`，权限为 0600；它是运行产物，
+不需要编辑、提交或同步。半分布式 Agent 和 Bridge 读取该快照，Swarm 直接投影能力与速度，
+TaskHub 报告容量也使用同一配置。修改后重启对应服务，运行中不自动热更新。
+显式 `system_config_path` 仍按独立完整配置处理，请在该文件直接填写 `device_status`。
+
 ### 协同模式
 
 在同一个 `robot.yaml` 中按需增加：
