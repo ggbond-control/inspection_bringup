@@ -59,6 +59,8 @@ class SharedPlannerConfiguration(unittest.TestCase):
                 self.assertNotIn(key, raw.get(node, {}).get('ros__parameters', {}))
                 self.assertNotIn(key, actual[node]['ros__parameters'])
                 self.assertEqual(self.effective(actual, node)[key], expected)
+        self.assertIs(self.effective(actual, 'localPlanner')['local_recovery.enabled'], True)
+        self.assertEqual(self.effective(actual, 'localPlanner')['local_recovery.distance_m'], 0.25)
         for node in ('localPlanner', 'pathFollower'):
             self.assertEqual(self.effective(actual, node)['offroad']['maxSpeed'], 2.2)
             self.assertEqual(self.effective(actual, node)['flat']['maxYawRate'], .8)

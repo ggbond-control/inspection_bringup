@@ -44,6 +44,8 @@ localPlanner:
     adjacentRange: 4.0  # 局部候选路径与障碍评估范围（m）
     dirWeight: 0.35  # 候选路径朝向代价权重
     defPathScale: 1.5  # 默认候选路径尺度
+    local_recovery.enabled: false  # 仅脱离当前地图上明确标记的电子围栏
+    local_recovery.distance_m: 0.25  # 退出围栏膨胀层的最大允许位移（m）
     motionBlockNoPathTimeout: 8.0  # 持续没有局部路径时判定阻塞的时长（s）
     correspondencesFile: "correspondences_d1m.txt"  # 地形体素到候选路径对应关系文件名
     scoreAdvantage: 1.2  # 与全局路径一致候选的评分优势系数
