@@ -33,6 +33,7 @@ localPlanner:
     obstacleTraversityThre: 0.7  # 障碍可通行性阈值，低于此值视为障碍
     differential:
       rolling_turn_weight: 0.3
+      straight_reference: true
     terminalApproachEn: true
     terminalApproachDistance: 0.6
     terminalApproachClearance: 0.02
