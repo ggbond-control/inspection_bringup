@@ -113,6 +113,8 @@ robot_id: D1M-A
 #         ros__parameters:
 #           global_replanning_mode: event_driven  # 默认 periodic；重启导航后生效
 #           global_blockage_replan: true  # 默认 false，支持 periodic 和 event_driven
+#           global_blockage_clear_mode: 1  # 1 保留至观测畅通；2 定时；3 成功重规划后清除
+#           global_blockage_clear_sec: 60.0  # 仅模式 2 生效，从封堵入图开始计时
 #           global_blockage_confirm_sec: 20.0  # 路线持续封堵且局部无路的确认时间（秒）
 #           event_replan_max_replans: 2
 #           event_replan_server_timeout_ms: 1000  # 事件行为树的请求应答超时（毫秒）

@@ -109,6 +109,8 @@ multi_map_nav_node:
     global_replanning_mode: periodic
     global_blockage_replan: false  # Opt-in for either global replanning mode
     global_blockage_confirm_sec: 20.0  # Seconds with the current route blocked and no local bypass
+    global_blockage_clear_mode: 1  # 1: observed free; 2: timed; 3: successful replan
+    global_blockage_clear_sec: 60.0  # Mode 2 only; seconds since costmap insertion
     event_replan_max_replans: 2  # Per segment; excludes its first plan
     event_replan_cooldown: 2.0  # Seconds between accepted plan and retry
     event_replan_server_timeout_ms: 1000  # Action acknowledgement timeout for the event behavior tree

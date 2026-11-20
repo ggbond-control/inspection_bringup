@@ -187,11 +187,14 @@ class Configuration(unittest.TestCase):
                     policy = params['multi_map_nav_node']['ros__parameters']
                     self.assertIs(policy['global_blockage_replan'], False)
                     self.assertEqual(policy['global_blockage_confirm_sec'], 20.0)
+                    self.assertEqual(policy['global_blockage_clear_mode'], 1)
+                    self.assertEqual(policy['global_blockage_clear_sec'], 60.0)
 
         self.robot(model='d1m')
         config = cfg.load_config('navigation')
         expected = cfg.read_yaml(config['global_planner']['config'])
-        overrides = {'global_blockage_replan': True, 'global_blockage_confirm_sec': 12.5}
+        overrides = {'global_blockage_replan': True, 'global_blockage_confirm_sec': 12.5,
+                     'global_blockage_clear_mode': 2, 'global_blockage_clear_sec': 45.0}
         self.robot(model='d1m', navigation={'global_planner': {'parameters': {
             'multi_map_nav_node': {'ros__parameters': overrides}}}})
         config = cfg.load_config('navigation')
