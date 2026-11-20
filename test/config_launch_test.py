@@ -404,16 +404,13 @@ class LaunchConfiguration(unittest.TestCase):
         self.assertIn({'params_file': str(custom)}, arguments)
 
     def test_cooperation_modes_select_exactly_one_stack(self):
-        import json
         from launch.actions import GroupAction
-        status = self.root / 'device_status.json'
-        status.write_text(json.dumps({'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 1.2}))
         old = {'mission_execution_agent', 'fleet_leader_election', 'capability_mission_planner'}
         new = {'swarm_consensus', 'swarm_execution_agent', 'swarm_mqtt_transport',
                'swarm_mission_coordinator', 'swarm_mission_planner'}
         for mode, expected in [('disabled', set()), ('coordination', old), ('swarm', new)]:
             with self.subTest(mode=mode):
-                self.robot['system']['cooperation'] = {'mode': mode, 'device_status_path': str(status)}
+                self.robot['system']['cooperation'] = {'mode': mode}
                 self.write_robot()
                 context = context_for(system)
                 with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
@@ -434,11 +431,67 @@ class LaunchConfiguration(unittest.TestCase):
                 params = evaluate_parameters(context, normalize_parameters(bridge['parameters']))[0]
                 self.assertEqual(params['enable_mission_execution_agent'], mode == 'coordination')
 
+    def test_all_launch_entries_share_merged_device_description(self):
+        import json
+        from device_description import device_status
+        from launch_ros.actions import Node
+        from swarm_mission_coordinator import launching
+
+        self.robot['system']['device_status'] = {
+            'capabilities': ['gimbal.vis'], 'nominal_speed_mps': 1.7,
+            'Battery_RC': 30.5, 'Battery_RC_unit': 'Ah',
+            'subDevices': [{'identifier': 'gimbal', 'subDevices': [{'identifier': 'vis'}]}]}
+        snapshots = set()
+
+        def parameters(factory, context):
+            return {call.kwargs['executable']: evaluate_parameters(
+                context, normalize_parameters(call.kwargs['parameters']))[0]
+                for call in factory.call_args_list if 'parameters' in call.kwargs}
+
+        for mode in ('disabled', 'coordination', 'swarm'):
+            with self.subTest(mode=mode):
+                self.robot['system']['cooperation'] = {'mode': mode}
+                self.write_robot()
+                expected = device_status(cfg.load_config('system'))
+                context = context_for(system)
+                with patch.object(system, 'get_package_share_directory', return_value=str(self.root)), \
+                        patch.object(system, 'Node', wraps=Node) as factory:
+                    system.launch_setup(context)
+                values = parameters(factory, context)
+                path = values['platform_mqtt_bridge_node']['device_status_config_path']
+                snapshots.add(path)
+                self.assertEqual(json.loads(Path(path).read_text()), expected)
+                self.assertEqual(values['task_hub_node']['inspection_report_device_status_path'], path)
+
+                context = context_for(platform)
+                with patch.object(platform, 'Node', wraps=Node) as factory:
+                    platform.launch_setup(context)
+                values = parameters(factory, context)
+                self.assertEqual(values['platform_mqtt_bridge_node']['device_status_config_path'], path)
+
+                context = context_for(cooperation)
+                with patch('launch_ros.actions.Node', wraps=Node) as old_factory, \
+                        patch.object(launching, 'Node', wraps=Node) as new_factory:
+                    cooperation.launch_setup(context)
+                if mode == 'coordination':
+                    values = parameters(old_factory, context)
+                    agent = values['mission_execution_agent_node']
+                    self.assertEqual(agent['device_status_path'], path)
+                    self.assertEqual(agent['robot_id'], 'D1M-TEST')
+                elif mode == 'swarm':
+                    agent = parameters(new_factory, context)['swarm_execution_agent_node']
+                    self.assertEqual(list(agent['capabilities']), ['device', 'gimbal.vis'])
+                    self.assertEqual(agent['nominal_speed'], 1.7)
+                else:
+                    self.assertFalse(old_factory.called or new_factory.called)
+        self.assertEqual(len(snapshots), 1)
+
     def test_removed_cooperation_switches_and_unknown_modes_are_rejected(self):
         for change in ({'modules': {'mission_execution_agent': False}},
                        {'modules': {'fleet_leader_election': True}},
                        {'mission_execution_agent': {}}, {'fleet_leader_election': {}},
                        {'cooperation': {'mode': 'legacy'}},
+                       {'cooperation': {'device_status_path': '/old/device_status.json'}},
                        {'cooperation': {'mode': ['swarm']}},
                        {'cooperation': {'mode': 'swarm', 'swarm': {'agent': None}}},
                        {'cooperation': {'coordination': {'election': []}}},
@@ -636,14 +689,11 @@ class LaunchConfiguration(unittest.TestCase):
             self.assertLessEqual(supplied, declared)
 
     def test_tmux_launch_entries_keep_modules_and_cooperation_separate(self):
-        import json
         import shlex
         import subprocess
         from launch.actions import GroupAction, IncludeLaunchDescription, OpaqueFunction
         from launch_ros.actions import Node
 
-        status = self.root / 'status.json'
-        status.write_text(json.dumps({'capabilities': ['device'], 'nominal_speed_mps': 1.0}))
         old = {'mission_execution_agent', 'fleet_leader_election', 'capability_mission_planner'}
         new = {'swarm_consensus', 'swarm_execution_agent', 'swarm_mqtt_transport',
                'swarm_mission_coordinator', 'swarm_mission_planner'}
@@ -658,7 +708,7 @@ class LaunchConfiguration(unittest.TestCase):
         for mode, expected in [('disabled', set()), ('coordination', old), ('swarm', new)]:
             with self.subTest(mode=mode):
                 self.robot['system'] = {'modules': {'sensors': True, 'sensor_gimbal': True},
-                                       'cooperation': {'mode': mode, 'device_status_path': str(status)}}
+                                       'cooperation': {'mode': mode}}
                 self.write_robot()
                 output = subprocess.run(
                     ['bash', str(ROOT / 'scripts/start_inspection_tmux.sh'), '--dry-run'],

@@ -13,6 +13,7 @@ import tempfile
 import yaml
 
 from cooperation import validate as validate_cooperation
+from device_description import device_status
 
 
 FILENAMES = {"system": "system.yaml", "navigation": "navigate.yaml", "services": "services.yaml"}
@@ -260,6 +261,7 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                 check_exists=(module != "services"), config_dir=root)
     if module == "system":
         validate_cooperation(config)
+        device_status(config)
     if module == 'navigation':
         for section, values in config.items():
             for key in ('parameters', 'ntrip_parameters'):

@@ -1,7 +1,5 @@
 """One configuration-only selector for mutually exclusive cooperation stacks."""
-import json
-import math
-from pathlib import Path
+from device_description import device_status, device_status_snapshot
 
 MODES = {'disabled', 'coordination', 'swarm'}
 REMOVED = {'mission_execution_agent', 'fleet_leader_election'}
@@ -20,6 +18,8 @@ def validate(config):
         raise ValueError('cooperation.mode must be disabled, coordination or swarm')
     if 'config_path' in settings:
         raise ValueError('cooperation.config_path was removed; configure swarm inline')
+    if 'device_status_path' in settings:
+        raise ValueError('cooperation.device_status_path was removed; configure system.device_status in robot.yaml')
     if mode != 'disabled' and not settings.get('robot_id'):
         raise ValueError('cooperation.robot_id is required; set robot.yaml robot_id')
     for key in ('coordination', 'swarm'):
@@ -36,7 +36,7 @@ def validate(config):
     return mode
 
 
-def swarm_configuration(config, device_status_path):
+def swarm_configuration(config):
     """Project merged Bringup settings into node parameters, without a second YAML."""
     # Optional dependency: single-device and coordination modes do not import swarm.
     from swarm_protocol.topics import (
@@ -50,14 +50,9 @@ def swarm_configuration(config, device_status_path):
     robot = settings.get('robot_id', '')
     if not isinstance(robot, str) or not robot:
         raise ValueError('robot_id is required for swarm')
-    status = json.loads(Path(device_status_path).expanduser().read_text())
-    capabilities = status.get('capabilities', [])
-    if not isinstance(capabilities, list) or any(
-            not isinstance(x, str) or not x.strip() or x != x.strip() for x in capabilities):
-        raise ValueError('device_status capabilities must be a string array')
-    speed = status.get('nominal_speed_mps', 1.0)
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) or speed <= 0:
-        raise ValueError('device_status nominal_speed_mps must be positive and finite')
+    status = device_status(config)
+    capabilities = status['capabilities']
+    speed = status['nominal_speed_mps']
     result = {
         'robot_id': robot,
         'cluster_id': swarm.get('cluster_id', DEFAULT_CLUSTER_ID),
@@ -97,7 +92,7 @@ def _value(config, section, key, fallback):
     return fallback if value is None or value == "" else value
 
 
-def launch_actions(config, default_device_status_path=None):
+def launch_actions(config):
     """Build only the configured cooperation stack, shared by both launch entries."""
     # Configuration CLI helpers also import this module without a ROS environment.
     from ament_index_python.packages import get_package_share_directory
@@ -110,13 +105,6 @@ def launch_actions(config, default_device_status_path=None):
         f"Cooperation mode={cooperation_mode}; "
         f"robot={config.get('cooperation', {}).get('robot_id', 'unset')}"
     ))]
-    if default_device_status_path is None:
-        default_device_status_path = config.get("cooperation", {}).get("device_status_path")
-    if cooperation_mode != "disabled" and not default_device_status_path:
-        default_device_status_path = str(
-            Path(get_package_share_directory("inspection_platform_bridge")) /
-            "platform" / "device_status.json"
-        )
     required = {
         'coordination': ('fleet_leader_election', 'capability_mission_planner', 'mission_execution_agent'),
         'swarm': ('swarm_protocol', 'swarm_consensus', 'swarm_mission_coordinator',
@@ -158,9 +146,7 @@ def launch_actions(config, default_device_status_path=None):
             output="screen",
             parameters=[{
                 "robot_id": str(config["cooperation"]["robot_id"]),
-                "device_status_path": str(_value(
-                    config, "cooperation", "device_status_path", default_device_status_path
-                )),
+                "device_status_path": device_status_snapshot(config),
                 "heartbeat_topic": str(_value(
                     coordination, "agent", "heartbeat_topic", "/mission_execution/heartbeat"
                 )),
@@ -237,6 +223,5 @@ def launch_actions(config, default_device_status_path=None):
     if cooperation_mode == "swarm":
         # Import only for this mode; coordination/disabled do not require swarm packages.
         from swarm_mission_coordinator.launching import device_nodes
-        status_path = config.get("cooperation", {}).get("device_status_path", default_device_status_path)
-        actions.extend(device_nodes(swarm_configuration(config, status_path)))
+        actions.extend(device_nodes(swarm_configuration(config)))
     return actions

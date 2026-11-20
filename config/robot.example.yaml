@@ -9,10 +9,25 @@ model: d1m
 robot_id: D1M-A
 
 # Dictionaries merge recursively; lists replace the ENTIRE inherited list.
-# mqtt.sn and cooperation.robot_id automatically use robot_id.
+# mqtt.sn, device status SN and cooperation.robot_id automatically use robot_id.
 # system:
 #   cooperation:
 #     mode: disabled  # disabled | coordination | swarm
+#   # Device metadata replaces inspection_platform_bridge/platform/device_status.json.
+#   # Inherit shared -> model defaults; only override hardware differences here.
+#   # Both lists below replace their inherited lists in full (not individual elements).
+#   device_status:
+#     Battery_RC: 22.4            # Example only: use this device's actual rating.
+#     Battery_RC_unit: Ah        # Ah | Wh; set both battery fields null if unknown.
+#     nominal_speed_mps: 1.0
+#     capabilities: [device, visible_camera, thermal_camera]  # Example: gimbal-only device.
+#     subDevices:
+#       - identifier: gimbal
+#         name: 云台
+#         supportStream: false
+#         subDevices:
+#           - {identifier: vis, name: 可见光摄像头, supportStream: true}
+#           - {identifier: ir, name: 红外摄像头, supportStream: true}
 #   task_hub:
 #     obstacle_snapshot_enabled: false  # 障碍事件与日志总开关，默认关闭
 #     obstacle_photo_enabled: false     # 遇障拍照，需同时开启总开关，默认关闭

@@ -1,5 +1,3 @@
-import json
-import math
 import os
 import sys
 
@@ -20,22 +18,12 @@ from launch_ros.substitutions import FindPackageShare
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
 from bringup_config import file_path, load_config as load_bringup_config
+from device_description import device_status_snapshot
 from cooperation import launch_actions as cooperation_actions, validate as validate_cooperation
 
 
 def load_system_config(path):
     return load_bringup_config("system", path)
-
-
-def load_battery_rated_capacity(path):
-    try:
-        with open(path, "r", encoding="utf-8") as config_file:
-            capacity = float(json.load(config_file)["Battery_RC"])
-        if not math.isfinite(capacity) or capacity <= 0.0:
-            return 0.0
-        return capacity
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return 0.0
 
 
 def config_value(config, section, key, fallback):
@@ -537,12 +525,7 @@ def launch_setup(context, *, include_cooperation=True):
         "config",
         "routes.yaml",
     )
-    default_device_status_path = os.path.join(
-        get_package_share_directory("inspection_platform_bridge"),
-        "platform",
-        "device_status.json",
-    )
-    battery_rated_capacity = load_battery_rated_capacity(default_device_status_path)
+    effective_device_status_path = device_status_snapshot(config)
 
     enable_task_hub = as_bool_text(override_or_config(
         context, "enable_task_hub", config, "modules", "task_hub", True
@@ -861,10 +844,7 @@ def launch_setup(context, *, include_cooperation=True):
             config_value(config, "task_hub", "inspection_report_name", "常规巡检")
         ),
         "inspection_report_device_sn": str(config_value(config, "mqtt", "sn", "unknown")),
-        "inspection_report_battery_capacity_ah": ParameterValue(
-            battery_rated_capacity,
-            value_type=float,
-        ),
+        "inspection_report_device_status_path": effective_device_status_path,
         "inspection_report_copy_local_media": ParameterValue(
             config_value(config, "task_hub", "inspection_report_copy_local_media", True),
             value_type=bool,
@@ -959,7 +939,7 @@ def launch_setup(context, *, include_cooperation=True):
         "platform_current_bid_topic": str(config_value(
             config, "task_hub", "platform_current_bid_topic", "/platform/current_bid"
         )),
-        "device_status_config_path": default_device_status_path,
+        "device_status_config_path": effective_device_status_path,
         "map_root_directory": str(
             config_value(config, "mqtt", "map_root_directory", "/home/cat/Workspace/Maps")
         ),
@@ -1245,5 +1225,5 @@ def launch_setup(context, *, include_cooperation=True):
     actions.append(algorithm_mqtt_bridge)
     actions.append(algorithm_http_bridge)
     if include_cooperation:
-        actions.extend(cooperation_actions(config, default_device_status_path))
+        actions.extend(cooperation_actions(config))
     return actions
