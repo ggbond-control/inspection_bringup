@@ -187,6 +187,7 @@ class Configuration(unittest.TestCase):
                     policy = params['multi_map_nav_node']['ros__parameters']
                     self.assertIs(policy['global_blockage_replan'], False)
                     self.assertEqual(policy['global_blockage_confirm_sec'], 20.0)
+                    self.assertEqual(policy['global_blockage_max_wait_sec'], 60.0)
                     self.assertEqual(policy['global_blockage_clear_mode'], 1)
                     self.assertEqual(policy['global_blockage_clear_sec'], 60.0)
 
