@@ -34,12 +34,35 @@ navigation:
 
 新模式正常只在新目标/新导航段规划，持续局部阻塞或明显偏离路径时有限重规划。
 同处 `event_replan_*` 参数控制每段重试次数、冷却、规划超时、持续恢复超时和偏离判定。
-`event_replan_server_timeout_ms` 默认 1000 毫秒，仅控制事件模式规划/跟随 action 的
-请求应答等待；必须为正数且小于整体规划期限 `event_replan_planning_timeout`
-（默认 10 秒）换算后的毫秒数，可在上述 robot.yaml 参数层覆盖。
-默认仍为周期模式，所有型号继承；启动文件按模式加载事件 BT 和专用进展检测器，
-局部规划器由上层逐段协商，无需另配模式。启用前同时部署新版 multi_map_nav 与
-local_planner，修改参数后重启导航。全局地图不增加实时障碍层，stop 策略也不改为绕障。
+`event_replan_server_timeout_ms` 默认 1000 毫秒，控制事件行为树中规划和跟随 action 的
+请求应答等待。该值必须为正数且小于 `event_replan_planning_timeout` 换算后的毫秒数，
+整体规划期限默认 10 秒。
+
+持续封堵重规划默认关闭。可在同一 `ros__parameters` 下设
+`global_blockage_replan: true`，并用 `global_blockage_confirm_sec` 设置路线持续封堵且局部
+无路的确认时间（默认 20.0 秒，须为有限正数）。开关适用于 `periodic` 和
+`event_driven`。开启后，子 launch 加载事件行为树、专用进展检测器和全局代价地图的
+`TerrainObstacleLayer`。局部规划器按导航段接收参数并上报确认的封堵。
+
+`global_blockage_max_wait_sec` 默认 60.0 秒，须大于 `global_blockage_confirm_sec`。
+它是封堵确认阶段的独立总等待上限，防止观测变化或路径闪烁造成无限等待；
+代表障碍点变化不再重置确认计时。超时仍未处理则失败并交给任务层。
+此参数与模式2入图后的 `global_blockage_clear_sec` 是两个不同阶段。
+
+同处配置 `global_blockage_clear_mode`（默认 1）：1 保留至连续三次观测畅通；
+2 从每批封堵实际入图起计时，达到 `global_blockage_clear_sec`（默认 60.0 秒）后清除，
+若这批封堵的首次重规划未结束则暂缓；3 在当前任务航点导航成功且局部到达交接完成后清除。
+算出路径、局部预瞄点到达、失败、超时、取消和普通周期规划均不触发模式3清除。
+三种模式都支持畅通观测提前清除，换图和定位重置时清除旧记录。
+清除只撤销对应临时封堵，保留其他重叠封堵和静态地图障碍。
+封堵重规划接受后保持绕行路线至当前任务航点结束；新封堵仍可触发替换。
+净移动0.25m只结束持续恢复计时，不恢复普通周期换路。已删除障碍远侧的几何判断。
+需同时部署新版 `multi_map_nav` 与 `local_planner`。
+参数在重启导航后生效；`global_blockage_replan: false` 时不加载该策略。
+
+在机器狗端的 `nav` 模式使用时，需配套部署支持该功能的 `multi_map_nav` 和
+`local_planner`，由 terrain 模块提供地形数据。修改 `robot.yaml` 后重启
+`navigation` 服务以重新生成参数快照。
 
 local_planner 使用 `param_default_local_planner.yaml` 和各型号的
 `param_<model>_local_planner.yaml`。公共参数以 X30 部署值为基准，

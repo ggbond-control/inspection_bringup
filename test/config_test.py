@@ -131,11 +131,11 @@ class Configuration(unittest.TestCase):
                 expected = cfg.read_yaml(ROOT / 'test/fixtures/multi_map_nav' / f'{profile}.yaml')
                 expected['multi_map_nav_node']['ros__parameters']['normal_xy_tolerance'] = 0.25
                 expected['multi_map_nav_node']['ros__parameters']['normal_yaw_tolerance'] = 0.25
-                event_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
+                replan_defaults = cfg.read_yaml(self.root / 'navigation' / 'param_default_multi_map_nav.yaml')[
                     'multi_map_nav_node']['ros__parameters']
                 expected['multi_map_nav_node']['ros__parameters'].update({
-                    key: value for key, value in event_defaults.items()
-                    if key == 'global_replanning_mode' or key.startswith('event_replan_')})
+                    key: value for key, value in replan_defaults.items()
+                    if key == 'global_replanning_mode' or key.startswith(('event_replan_', 'global_blockage_'))})
                 self.assertEqual(actual, expected)
                 model_data = cfg.read_yaml(self.root / 'models' / model / 'navigation' /
                                            f'param_{model}_multi_map_nav.yaml')
@@ -177,6 +177,33 @@ class Configuration(unittest.TestCase):
             self.assertEqual(event['planner_server'], params['planner_server'])
             self.assertEqual(event['global_costmap'], params['global_costmap'])
 
+    def test_global_blockage_defaults_and_robot_overrides(self):
+        for model_dir in sorted((self.root / 'models').iterdir()):
+            if model_dir.is_dir():
+                with self.subTest(model=model_dir.name):
+                    self.robot(model=model_dir.name)
+                    config = cfg.load_config('navigation')
+                    params = cfg.read_yaml(config['global_planner']['config'])
+                    policy = params['multi_map_nav_node']['ros__parameters']
+                    self.assertIs(policy['global_blockage_replan'], False)
+                    self.assertEqual(policy['global_blockage_confirm_sec'], 20.0)
+                    self.assertEqual(policy['global_blockage_max_wait_sec'], 60.0)
+                    self.assertEqual(policy['global_blockage_clear_mode'], 1)
+                    self.assertEqual(policy['global_blockage_clear_sec'], 60.0)
+
+        self.robot(model='d1m')
+        config = cfg.load_config('navigation')
+        expected = cfg.read_yaml(config['global_planner']['config'])
+        overrides = {'global_blockage_replan': True, 'global_blockage_confirm_sec': 12.5,
+                     'global_blockage_clear_mode': 2, 'global_blockage_clear_sec': 45.0}
+        self.robot(model='d1m', navigation={'global_planner': {'parameters': {
+            'multi_map_nav_node': {'ros__parameters': overrides}}}})
+        config = cfg.load_config('navigation')
+        actual = cfg.read_yaml(config['global_planner']['config'])
+        expected['multi_map_nav_node']['ros__parameters'].update(overrides)
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual['multi_map_nav_node']['ros__parameters']['global_replanning_mode'], 'periodic')
+
     def test_defaults_model_robot_merge_and_identity(self):
         self.write('models/d1m/system.yaml', {'mqtt': {'port': 2345}, 'modules': {'gas': False}})
         self.robot(system={'mqtt': {'host': 'unit-test.invalid'}})
@@ -199,7 +226,7 @@ class Configuration(unittest.TestCase):
         base = cfg.read_yaml(self.root / 'system.yaml')['device_status']
         self.assertEqual(base['capabilities'], ['device'])
         self.assertEqual(base['subDevices'], [])
-        for model in ('x30', 'd1m', 'cyvet', 'tank', 'r750'):
+        for model in ('x30', 'cyvet', 'tank', 'r750'):
             with self.subTest(model=model):
                 self.robot(model=model, robot_id=model.upper() + '-A')
                 status = device_status(cfg.load_config('system'))
@@ -497,7 +524,9 @@ class Configuration(unittest.TestCase):
         expected['mqtt']['sn'] = 'D1M-002'
         expected['cooperation']['robot_id'] = 'D1M-002'
         expected['cooperation'].pop('device_status_path', None)
-        expected['device_status'] = cfg.read_yaml(self.root / 'system.yaml')['device_status']
+        expected['device_status'] = cfg.merge(
+            cfg.read_yaml(self.root / 'system.yaml')['device_status'],
+            cfg.read_yaml(self.root / 'models/d1m/system.yaml')['device_status'])
         expected['task_hub']['obstacle_snapshot_enabled'] = False
         expected['task_hub']['obstacle_photo_enabled'] = False
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
