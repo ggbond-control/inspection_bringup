@@ -9,6 +9,18 @@ charge:
   charge_command_timeout_sec: 180.0
 algorithm:
   transport: http
+device_status:
+  Battery_RC: 1009.8
+  Battery_RC_unit: Wh
+  capabilities: [device, gimbal.vis, gimbal.ir]
+  nominal_speed_mps: 2.0
+  subDevices:
+    - identifier: gimbal
+      name: 云台
+      supportStream: false
+      subDevices:
+        - {identifier: vis, name: 可见光摄像头, supportStream: true}
+        - {identifier: ir, name: 红外摄像头, supportStream: true}
 mqtt:
   topic_vendor_prefix: guquan
 live_stream:

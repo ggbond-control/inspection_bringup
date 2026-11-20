@@ -226,7 +226,7 @@ class Configuration(unittest.TestCase):
         base = cfg.read_yaml(self.root / 'system.yaml')['device_status']
         self.assertEqual(base['capabilities'], ['device'])
         self.assertEqual(base['subDevices'], [])
-        for model in ('x30', 'd1m', 'cyvet', 'tank', 'r750'):
+        for model in ('x30', 'cyvet', 'tank', 'r750'):
             with self.subTest(model=model):
                 self.robot(model=model, robot_id=model.upper() + '-A')
                 status = device_status(cfg.load_config('system'))
@@ -524,7 +524,9 @@ class Configuration(unittest.TestCase):
         expected['mqtt']['sn'] = 'D1M-002'
         expected['cooperation']['robot_id'] = 'D1M-002'
         expected['cooperation'].pop('device_status_path', None)
-        expected['device_status'] = cfg.read_yaml(self.root / 'system.yaml')['device_status']
+        expected['device_status'] = cfg.merge(
+            cfg.read_yaml(self.root / 'system.yaml')['device_status'],
+            cfg.read_yaml(self.root / 'models/d1m/system.yaml')['device_status'])
         expected['task_hub']['obstacle_snapshot_enabled'] = False
         expected['task_hub']['obstacle_photo_enabled'] = False
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
