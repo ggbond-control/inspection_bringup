@@ -461,6 +461,16 @@ configuration files, compared with previous requests or used to trigger a restar
 If SLAM remains running or is not started, the initial pose is not applied.
 Omitting it uses the existing configuration layers.
 
+MQTT `task.prepare` requests that include a map also set the request-only boolean
+`slam.require_healthy`. For a running stack, the supervisor reuses fresh
+`LIDAR_OK` or `RTK_DEGRADED` localization. Continuous reports of positioning
+loss for two seconds trigger one full restart for that request. If health is
+missing, stale, or temporarily unavailable, the supervisor waits up to three
+seconds and returns a failure if it cannot confirm usable localization or
+sustained loss. After starting SLAM for the request, the supervisor waits up to
+three seconds for a fresh `LIDAR_OK` report from the new instance before accepting
+the task.
+
 To force a complete navigation stack restart, add a boolean service parameter:
 
 ```yaml

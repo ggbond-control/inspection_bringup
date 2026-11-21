@@ -14,14 +14,18 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bringup_config import apply_module_switches, load_config, parameter_snapshot, read_parameter_file, resolve_files
+from localization_health import LocalizationHealth
 from process_shutdown import stop_processes
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticArray
 from rcl_interfaces.msg import ParameterType, SetParametersResult
 from rcl_interfaces.srv import SetParameters
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 
 
@@ -46,6 +50,7 @@ NAV_EXTENSION_MODULES = (
 SUPPORTED_MODULES = MANUAL_MODULES + NAV_EXTENSION_MODULES
 REQUEST_INITIAL_POSE = "_request_initial_pose"
 REQUEST_RESTART = "_request_restart"
+REQUEST_HEALTHY = "_request_healthy_localization"
 
 
 def normalize_initial_pose(value):
@@ -160,6 +165,11 @@ class NavigationSupervisor(Node):
         self.in_progress = False
         self.busy_reason = ""
         self.shutdown_event = shutdown_event or threading.Event()
+        self.localization_health = LocalizationHealth(self.get_clock(), self.shutdown_event)
+        self.health_subscription = self.create_subscription(
+            DiagnosticArray, "/localization_health", self.localization_health.observe,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE),
+        )
         self.worker_lock = threading.Lock()
         self.helpers = {}
         self.request_lock = threading.Lock()
@@ -203,6 +213,16 @@ class NavigationSupervisor(Node):
                 self.normalize_map_config(runtime_config, provided_paths)
 
                 transition = self.select_transition(runtime_config, target_state, provided_paths)
+                if runtime_config.get(REQUEST_HEALTHY):
+                    if "slam" not in self.mode_sequence(runtime_config, target_state, manual_profile):
+                        raise ValueError("task preparation requires localization, but SLAM is disabled")
+                    if transition in ("noop", "refresh_control", "switch_mode"):
+                        health, reason = self.localization_health.wait()
+                        if health == "lost":
+                            self.get_logger().warn(f"restarting navigation after sustained localization loss: {reason}")
+                            transition = "full_restart"
+                        elif health != "usable":
+                            raise ValueError(f"localization unavailable: {reason}")
                 self.get_logger().info(
                     f"navigation request: current={self.current_state} target={target_state} transition={transition}"
                 )
@@ -229,11 +249,12 @@ class NavigationSupervisor(Node):
         results = []
         for parameter in request.parameters:
             try:
-                if parameter.name == "restart":
+                if parameter.name in ("restart", "slam.require_healthy"):
                     if parameter.value.type != ParameterType.PARAMETER_BOOL:
-                        raise ValueError("restart must be a boolean")
-                    config[REQUEST_RESTART] = parameter.value.bool_value
-                    results.append(self.result(True, "accepted restart"))
+                        raise ValueError(f"{parameter.name} must be a boolean")
+                    key = REQUEST_RESTART if parameter.name == "restart" else REQUEST_HEALTHY
+                    config[key] = parameter.value.bool_value
+                    results.append(self.result(True, f"accepted {parameter.name}"))
                     continue
                 if parameter.name == "slam.initial_pose":
                     config[REQUEST_INITIAL_POSE] = normalize_initial_pose(
@@ -524,6 +545,7 @@ class NavigationSupervisor(Node):
             self.active_config = None
 
         base_sequence = self.layer_sequence(config, target_state, manual_profile, "base")
+        health_start = self.localization_health.before_start() if config.get(REQUEST_HEALTHY) else None
         success, reason = self.start_layer("base", config, base_sequence)
         if not success:
             self.stop_worker("base")
@@ -539,6 +561,12 @@ class NavigationSupervisor(Node):
                 self.stop_worker("base")
                 return False, f"navigation startup failed: {reason}"
 
+        if health_start is not None:
+            health, reason = self.localization_health.wait(start=health_start)
+            if health != "usable":
+                self.stop_all_workers()
+                return False, f"new SLAM instance did not confirm LiDAR localization: {reason}"
+
         self.commit_success(config, target_state, manual_profile)
         if manual_profile == MANUAL_BRIDGE_ONLY:
             return True, "manual bridge-only started; localization skipped because no slam.prior_dir is available"
@@ -548,6 +576,7 @@ class NavigationSupervisor(Node):
         self.active_config = copy.deepcopy(config)
         self.active_config.pop(REQUEST_INITIAL_POSE, None)
         self.active_config.pop(REQUEST_RESTART, None)
+        self.active_config.pop(REQUEST_HEALTHY, None)
         self.current_state = state
         self.manual_profile = manual_profile if state == MANUAL else MANUAL_LOCALIZED
         if self.manual_profile == MANUAL_BRIDGE_ONLY:
@@ -600,6 +629,7 @@ class NavigationSupervisor(Node):
     def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
         runtime_config.pop(REQUEST_RESTART, None)
+        runtime_config.pop(REQUEST_HEALTHY, None)
         initial_pose = runtime_config.pop(REQUEST_INITIAL_POSE, None)
         if initial_pose is not None and "slam" in sequence:
             parameters = read_parameter_file(runtime_config["slam"]["config"])
@@ -684,6 +714,8 @@ class NavigationSupervisor(Node):
         return False, output or f"charge precheck failed with exit code {completed.returncode}"
 
     def start_layer(self, layer, config, sequence):
+        if layer == "base" and "slam" in sequence:
+            self.set_parameters([Parameter("use_sim_time", value=as_bool(get_by_path(config, "slam.use_sim_time")))])
         run_id = uuid.uuid4().hex
         worker_state_dir = os.path.join(self.state_dir, run_id, layer)
         resolved_config_path = os.path.join(worker_state_dir, "resolved.yaml")

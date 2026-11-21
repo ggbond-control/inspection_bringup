@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -17,6 +18,7 @@ os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'LOCALHOST'
 os.environ['RMW_IMPLEMENTATION'] = 'rmw_fastrtps_cpp'
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rcl_interfaces.srv import SetParameters
 from rcl_interfaces.msg import Parameter, ParameterValue
 from rclpy.executors import MultiThreadedExecutor
@@ -210,6 +212,113 @@ class StartupOrdering(unittest.TestCase):
         self.assertFalse(result[0])
         node.start_extensions.assert_not_called()
         node.commit_success.assert_not_called()
+
+
+class LocalizationRecovery(unittest.TestCase):
+    def test_same_map_reuses_healthy_slam_and_requires_a_new_instance_after_restart(self):
+        rclpy.init()
+        self.addCleanup(rclpy.shutdown)
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        config = {
+            'mode': 'nav',
+            'bringup': {
+                'actions': {'stand': {'type': 'trigger_service', 'service': '/unused'}},
+                'modes': {'nav': {'sequence': ['slam']}},
+            },
+            'slam': {'prior_dir': directory},
+            'global_planner': {'initial_map': 'map_000', 'multi_map_dir': directory},
+        }
+        self.enterContext(patch.object(supervisor, 'load_yaml', return_value=config))
+        self.enterContext(patch.object(supervisor, 'resolve_files', side_effect=lambda config, *_: config))
+        self.enterContext(patch('localization_health.LOSS_CONFIRMATION', 0.2))
+        self.enterContext(patch('localization_health.WAIT_TIMEOUT', 0.6))
+        service = '/test_localization/start'
+        nav = supervisor.NavigationSupervisor('unused', service, directory, 0.0)
+        self.addCleanup(nav.destroy_node)
+        nav.monitor_timer.cancel()
+        nav.current_state, nav.active_config = 'nav', config
+        nav.refresh_state = Mock()
+        nav.stop_all_workers = Mock()
+        node = rclpy.create_node('localization_recovery_mock')
+        self.addCleanup(node.destroy_node)
+        publisher = node.create_publisher(DiagnosticArray, '/localization_health', 1)
+        client = node.create_client(SetParameters, service)
+        status = ('old', 2, 'rtk_takeover', '')
+        sequence = 0
+
+        def publish():
+            nonlocal sequence
+            sequence += 1
+            source, mode, reason, watchdog = status
+            msg = DiagnosticArray(status=[DiagnosticStatus(
+                name='localization/navigation_health',
+                values=[KeyValue(key=key, value=value) for key, value in {
+                    'schema_version': '1', 'mode': str(mode), 'sequence': str(sequence),
+                    'state_id': '1', 'source_instance': source, 'reason': reason,
+                    'watchdog_reasons': watchdog,
+                }.items()],
+            )])
+            msg.header.stamp = node.get_clock().now().to_msg()
+            publisher.publish(msg)
+
+        def start_layer(*_):
+            nonlocal status
+            status = ('new', 1, 'lidar_ok', '')
+            return True, 'initialized'
+
+        nav.start_layer = Mock(side_effect=start_layer)
+        node.create_timer(0.03, publish)
+        executor = MultiThreadedExecutor(num_threads=2)
+        self.addCleanup(executor.shutdown)
+        executor.add_node(nav)
+        executor.add_node(node)
+        self.assertTrue(client.wait_for_service(timeout_sec=3))
+
+        def await_health(reason):
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                executor.spin_once(timeout_sec=0.03)
+                if nav.localization_health.sample and nav.localization_health.sample.reason == reason:
+                    return
+            self.fail(f'no localization health received for {reason}')
+
+        def request(*, restart=False):
+            params = [
+                Parameter(name='slam.prior_dir', value=ParameterValue(type=4, string_value=directory)),
+                Parameter(name='global_planner.initial_map', value=ParameterValue(type=4, string_value='map_000')),
+                Parameter(name='slam.require_healthy', value=ParameterValue(type=1, bool_value=True)),
+            ]
+            if restart:
+                params.append(Parameter(name='restart', value=ParameterValue(type=1, bool_value=True)))
+            future = client.call_async(SetParameters.Request(parameters=params))
+            executor.spin_until_future_complete(future, timeout_sec=3)
+            self.assertTrue(future.done())
+            return future.result().results[-1]
+
+        await_health('rtk_takeover')
+        self.assertTrue(request().successful)
+        nav.start_layer.assert_not_called()
+
+        status = ('old', 3, 'processing_timeout', 'processing_timeout')
+        await_health('processing_timeout')
+        result = request()
+        self.assertFalse(result.successful)
+        self.assertIn('processing_timeout', result.reason)
+        nav.start_layer.assert_not_called()
+
+        status = ('old', 3, 'position_correction_exceeded', '')
+        await_health('position_correction_exceeded')
+        self.assertTrue(request().successful)
+        nav.start_layer.assert_called_once()
+        self.assertEqual(nav.localization_health.sample.source, 'new')
+
+        # The running instance keeps publishing LIDAR_OK, but the worker just
+        # started did not produce a health sample of its own.
+        nav.start_layer.side_effect = None
+        nav.start_layer.return_value = (True, 'initialized')
+        result = request(restart=True)
+        self.assertFalse(result.successful)
+        self.assertIn('waiting for a new SLAM instance', result.reason)
 
 
 class ChargePrecheck(unittest.TestCase):
