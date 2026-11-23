@@ -73,7 +73,7 @@ def migrate(args):
     # roots (including old ~/.ros/swarm data) need a separate relocation.
     data_moves = []
     sources = []
-    swarm_base = args.swarm_data or Path(settings.get('swarm', {}).get('data_root', '~/.ros/swarm')).expanduser()
+    swarm_base = args.swarm_data or Path('~/.ros/swarm').expanduser()
     for package, (stack, section) in DATA_PACKAGES.items():
         source_repo = task / 'src' / package
         destination = workspace / 'src' / package / 'runtime'
@@ -91,10 +91,6 @@ def migrate(args):
         if not candidates:
             continue
         source = next(iter(candidates))
-        if package == 'swarm_mission_coordinator':
-            for job_path in source.glob('reports/*/job.json'):
-                if json.loads(job_path.read_text()).get('status') not in ('succeeded', 'failed'):
-                    raise ValueError(f'finish pending report upload before relocating its files: {job_path}')
         if source == destination.resolve():
             continue
         if destination.exists() or destination.is_symlink():
@@ -113,11 +109,17 @@ def migrate(args):
     config_path = robot_path if robot_path.exists() else config_root / 'system.yaml'
     document = read_yaml(config_path)
     owner = document.setdefault('system', {}) if config_path == robot_path else document
-    # Keep existing data_root names and leave common/model files untouched.
     for package, (stack, section) in DATA_PACKAGES.items():
+        if stack != 'coordination':
+            continue
         desired = str(workspace / 'src' / package / 'runtime')
         if settings.get(stack, {}).get(section, {}).get('data_root') != desired:
             owner.setdefault('cooperation', {}).setdefault(stack, {}).setdefault(section, {})['data_root'] = desired
+    swarm_owner = owner.setdefault('cooperation', {}).setdefault('swarm', {})
+    swarm_owner['data_root'] = str(workspace / 'src/swarm_mission_coordinator/runtime')
+    for _, (stack, section) in DATA_PACKAGES.items():
+        if stack == 'swarm' and isinstance(swarm_owner.get(section), dict):
+            swarm_owner[section].pop('data_root', None)
     services = load_config('services', config_dir=config_root, resolve=False)
     if services.get('cooperation', {}).get('workspace_root') != str(workspace):
         service_owner = document.setdefault('services', {}) if config_path == robot_path else None
@@ -174,7 +176,7 @@ def migrate(args):
     temporary.write_text(config_content)
     temporary.replace(config_path)
     print(f'Migration saved. Backup and rollback journal: {backup}')
-    print('Rebuild task_ws, then cooperation_ws; reinstall services before starting.')
+    print('Rebuild task_ws, then cooperation_ws. Migrate any legacy Swarm runtime with swarm_migrate_runtime before reinstalling services.')
 
 
 def main():

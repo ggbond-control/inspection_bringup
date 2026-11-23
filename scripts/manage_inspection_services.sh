@@ -317,7 +317,7 @@ source {quoted_path}
     return "\n".join(setup_lines)
 
 
-def wrapper_content(kind, launch_file, args, paths=None, prelude=""):
+def wrapper_content(kind, launch_file, args, paths=None, prelude="", before_launch=""):
     environment_lines = []
     for key, value in environment.items():
         if not key:
@@ -342,6 +342,7 @@ export ROS_LOG_DIR={shlex.quote(ros_log_dir)}
 export RCUTILS_CONSOLE_OUTPUT_FORMAT='[{{time}}] [{{severity}}] [{{name}}]: {{message}}'
 export RCUTILS_COLORIZED_OUTPUT=0
 export RCUTILS_LOGGING_BUFFERED_STREAM=0
+{before_launch}
 
 cd {shlex.quote(workspace_root)}
 exec ros2 launch inspection_bringup {shlex.quote(launch_file)} {args}
@@ -485,7 +486,10 @@ write_executable(
     os.path.join(output_dir, "wrappers", "run_inspection_cooperation.sh"),
     wrapper_content("cooperation", "cooperation.launch.py", cooperation_args,
                     paths=cooperation_paths,
-                    prelude="unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH\nexport INSPECTION_CONFIG_DIR=" + shlex.quote(str(environment.get("INSPECTION_CONFIG_DIR", os.environ["INSPECTION_CONFIG_DIR"]))) + "\npython3 " + shlex.quote(check_script) + " " + check_args),
+                    prelude="unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH\nexport INSPECTION_CONFIG_DIR=" + shlex.quote(str(environment.get("INSPECTION_CONFIG_DIR", os.environ["INSPECTION_CONFIG_DIR"]))) + "\npython3 " + shlex.quote(check_script) + " " + check_args,
+                    before_launch="SWARM_LOG_DIR=$(python3 " + shlex.quote(check_script) + " " + check_args
+                    + " --swarm-log-dir)\nif [[ -n \"$SWARM_LOG_DIR\" ]]; then\n"
+                    + "  mkdir -p \"$SWARM_LOG_DIR\"\n  export ROS_LOG_DIR=\"$SWARM_LOG_DIR\"\nfi"),
 )
 
 write_executable(

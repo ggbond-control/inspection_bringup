@@ -47,14 +47,7 @@ cooperation:
       quorum_timeout_seconds: 0.75
       recovery_observation_seconds: 0.5
   swarm:
-    consensus:
-      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_consensus/runtime
-    coordinator:
-      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mission_coordinator/runtime
-    transport:
-      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mqtt_transport/runtime
-    agent:
-      data_root: /home/cat/Workspace/cooperation_ws/src/swarm_execution_agent/runtime
+    data_root: /home/cat/Workspace/cooperation_ws/src/swarm_mission_coordinator/runtime
 
 # Device description shared by platform and both cooperation modes.
 # Override model defaults in models/<model>/system.yaml and actual hardware in robot.yaml.

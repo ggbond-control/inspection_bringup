@@ -71,12 +71,16 @@ class CooperationWorkspace(unittest.TestCase):
         result = subprocess.run(args, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 255)
 
-    def test_data_roots_remain_in_each_package(self):
+    def test_swarm_has_one_data_root_and_coordination_has_package_roots(self):
         config = cfg.load_config('system', config_dir=self.config, resolve=False)
         for package, (stack, section) in workspace.DATA_PACKAGES.items():
-            path = config['cooperation'][stack][section]['data_root']
-            self.assertTrue(path.endswith('/cooperation_ws/src/' + package + '/runtime'))
-        self.assertNotIn('runtime_root', config['cooperation'])
+            if stack == 'coordination':
+                path = config['cooperation'][stack][section]['data_root']
+                self.assertTrue(path.endswith('/cooperation_ws/src/' + package + '/runtime'))
+            else:
+                self.assertNotIn('data_root', config['cooperation']['swarm'].get(section, {}))
+        self.assertTrue(config['cooperation']['swarm']['data_root'].endswith(
+            '/cooperation_ws/src/swarm_mission_coordinator/runtime'))
 
     def repo(self, name):
         path = self.task / 'src' / name
@@ -181,15 +185,7 @@ class CooperationWorkspace(unittest.TestCase):
         self.assertEqual((repo / 'local.txt').read_text(), 'preserve me')
         self.assertFalse((self.coop / 'build').exists())
 
-    def test_pending_upload_and_missing_explicit_source_are_not_silently_migrated(self):
-        old = self.root / 'old-swarm/TEST-A/coordinator/reports/round1'
-        old.mkdir(parents=True)
-        job = old / 'job.json'
-        job.write_text(json.dumps({'status': 'pending', 'path': str(old / 'report.html')}))
-        result = self.command('migrate', '--robot-id', 'TEST-A', '--swarm-data', str(self.root / 'old-swarm'))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('pending report upload', result.stderr)
-        self.assertTrue(job.exists())
+    def test_missing_explicit_source_is_not_silently_migrated(self):
         result = self.command('migrate', '--robot-id', 'TEST-A', '--agent-data', str(self.root / 'missing'))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('directory does not exist', result.stderr)
@@ -222,18 +218,34 @@ class CooperationWorkspace(unittest.TestCase):
         from launch import LaunchContext
         from launch_ros.actions import Node
         from launch_ros.utilities import evaluate_parameters
-        root = str(self.coop / 'src')
-        config = {'robot_id': 'TEST-A', **{section: {'data_root': str(self.coop / 'src' / package / 'runtime')} for package, (stack, section) in workspace.DATA_PACKAGES.items() if stack == 'swarm'}}
+        root = self.coop / 'src/swarm_mission_coordinator/runtime'
+        config = {'robot_id': 'TEST-A', 'data_root': str(root)}
         actions = device_nodes(config)
         nodes = [a for a in actions[0].get_sub_entities() if isinstance(a, Node)]
         self.assertEqual(len(nodes), 5)
         for node in nodes:
             params = evaluate_parameters(LaunchContext(), node._Node__parameters)[0]
-            if node.node_package != 'swarm_mission_planner':
-                self.assertTrue(params['data_root'].startswith(root + '/'))
-                self.assertTrue(params['data_root'].endswith(node.node_package + '/runtime'))
+            sections = {package: section for package, (stack, section) in workspace.DATA_PACKAGES.items()
+                        if stack == 'swarm'}
+            if node.node_package in sections:
+                self.assertEqual(params['data_root'], str(root / sections[node.node_package]))
             if node.node_package == 'swarm_mission_coordinator':
-                self.assertEqual(params['agent_data_root'], str(self.coop / 'src/swarm_execution_agent/runtime'))
+                self.assertEqual(params['agent_data_root'], str(root / 'agent'))
+                self.assertEqual(params['report_root'], str(root.parent / 'reports'))
+
+    def test_swarm_start_checks_unmigrated_state(self):
+        from cooperation import check_swarm_runtime
+
+        runtime = self.coop / 'src/swarm_mission_coordinator/runtime'
+        old = self.coop / 'src/swarm_consensus/runtime'
+        old.mkdir(parents=True)
+        (old / 'raft.json').write_text('{}')
+        settings = {'robot_id': 'TEST-A', 'swarm': {'data_root': str(runtime)}}
+        with self.assertRaisesRegex(ValueError, 'swarm_migrate_runtime'):
+            check_swarm_runtime(settings, self.coop)
+        runtime.mkdir(parents=True)
+        (runtime / 'migration.json').write_text('{}')
+        check_swarm_runtime(settings, self.coop)
 
     def test_service_units_ordering_and_separate_overlay(self):
         result = subprocess.run(['bash', str(ROOT / 'scripts/manage_inspection_services.sh'), 'render'],
