@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import os
+from pathlib import Path
 import sys
 import time
 
@@ -23,6 +24,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+from launch_ros.utilities.to_parameters_list import is_node_name_matched
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
 from bringup_config import (
@@ -56,6 +58,42 @@ def optional_module_arguments(context, config, section, use_launch_overrides):
         if value:
             arguments[child_name] = value
     return arguments
+
+
+def slam_rtk_enabled(context, slam_arguments):
+    """Read the same parameter file and node selectors as the SLAM child launch."""
+    path = Path(slam_arguments.get("config", "mid360.yaml"))
+    if not path.is_absolute():
+        path = Path(FindPackageShare("faster_lio").perform(context)) / "config" / path
+
+    def node_parameters(mapping, namespace=()):
+        for name, value in mapping.items():
+            if name == "ros__parameters":
+                if is_node_name_matched("/" + "/".join(namespace), "/laser_mapping"):
+                    yield value
+            elif isinstance(value, dict):
+                yield from node_parameters(value, (*namespace, name.strip("/")))
+
+    # rcl/rclcpp apply matching entries in file order, including wildcards.
+    # Keep that order when nested and dotted parameter spellings are mixed.
+    enabled = False  # faster_lio's declared default.
+    for parameters in node_parameters(load_yaml_file(path)):
+        for name, value in parameters.items():
+            if name == "rtk" and isinstance(value, dict) and "enable" in value:
+                value = value["enable"]
+            elif name != "rtk.enable":
+                continue
+            if not isinstance(value, bool):
+                raise ValueError(f"{path}: laser_mapping rtk.enable must be a boolean")
+            enabled = value
+    return enabled
+
+
+def gnss_readiness_nodes(config, ntrip_enabled):
+    """Keep custom checks, but derive managed nodes from what will actually start."""
+    nodes = readiness_list(config, "gnss", "nodes", [])
+    nodes = [node for node in nodes if node.lstrip("/") not in ("gnss_device", "ntrip_client")]
+    return ["/gnss_device", *(["/ntrip_client"] if ntrip_enabled else []), *nodes]
 
 
 def apply_launch_overrides(context, config):
@@ -945,6 +983,8 @@ def load_failure_reason(state_dir, run_id, section):
 
 
 def build_navigation_actions(context, config, state_dir=None, run_id=None, use_launch_overrides=True):
+    # Readiness is derived per worker; preserve the requested settings in snapshots.
+    config = copy.deepcopy(config)
     sequence = apply_module_switches(config_sequence(config), config.get("launch_module_switches", {}))
     delay = override_or_config_typed(
         context,
@@ -988,12 +1028,13 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
     livox_enabled = sequence_module_enabled(
         context, "enable_livox", sequence, "livox", use_launch_overrides
     )
+    slam_arguments = optional_module_arguments(context, config, "slam", use_launch_overrides)
     slam_launch = include_package_launch(
         "faster_lio",
         "slam.launch.py",
         "true",
         {
-            **optional_module_arguments(context, config, "slam", use_launch_overrides),
+            **slam_arguments,
             "relocal": as_bool_text(
                 override_or_config_bool(
                     context, "slam_relocal", config, "slam", "relocal", True, use_launch_overrides
@@ -1163,17 +1204,30 @@ def build_navigation_actions(context, config, state_dir=None, run_id=None, use_l
         context, "enable_global_planner", sequence, "global_planner", use_launch_overrides
     )
 
+    gnss_enabled = sequence_module_enabled(
+        context, "enable_gnss", sequence, "gnss", use_launch_overrides
+    )
+    gnss_device = str(config.get("gnss", {}).get("device", "g90"))
+    ntrip_requested = as_bool(config.get("gnss", {}).get("ntrip", False))
+    ntrip_enabled = (
+        gnss_enabled and gnss_device == "g90" and ntrip_requested and
+        slam_rtk_enabled(context, slam_arguments)
+    )
+    if gnss_enabled:
+        print(f"[navigation] GNSS receiver enabled; local NTRIP account client "
+              f"{'enabled' if ntrip_enabled else 'disabled'} "
+              "(requires rtk.enable=true, gnss.ntrip=true and device=g90)")
+    if module_readiness_type(config, "gnss") == "nodes":
+        config.setdefault("gnss", {}).setdefault("readiness", {})["nodes"] = \
+            gnss_readiness_nodes(config, ntrip_enabled)
     gnss_launch = include_package_launch(
         "gnss_driver", "driver.launch.py", "true",
         launch_arguments={
             **optional_module_arguments(context, config, "gnss", use_launch_overrides),
-            "device": str(config.get("gnss", {}).get("device", "g90")),
-            "ntrip": as_bool_text(as_bool(config.get("gnss", {}).get("ntrip", False))),
+            "device": gnss_device,
+            "ntrip": as_bool_text(ntrip_enabled),
             "export_polyline": as_bool_text(as_bool(config.get("gnss", {}).get("export_polyline", False))),
         },
-    )
-    gnss_enabled = sequence_module_enabled(
-        context, "enable_gnss", sequence, "gnss", use_launch_overrides
     )
 
     def detail_path(section):

@@ -65,7 +65,20 @@ command still works:
 ros2 launch gnss_driver driver.launch.py device:=g90 ntrip:=true
 ```
 
-GNSS readiness checks only `/gnss_device` and `/ntrip_client` node discovery.
+Local NTRIP starts only when the GNSS module is enabled, `device: g90`,
+`gnss.ntrip: true` and the effective SLAM parameter `rtk.enable: true`.
+The SLAM parameter is read from the final parameter file, including model/robot
+layers and `slam_config` overrides; an omitted `rtk.enable` defaults to false.
+Saved credentials alone never start the client. Setting `rtk.enable: false`
+disables SLAM RTK and local NTRIP login, while the receiver still follows the
+existing GNSS module startup configuration. Setting only `gnss.ntrip: false`
+keeps receiver data available to SLAM without local account login.
+This linkage applies to inspection_bringup; standalone gnss_driver commands
+retain their existing behavior. Restart the affected bringup service after edits.
+
+GNSS readiness checks `/gnss_device` and automatically includes `/ntrip_client`
+only when the local client starts. No manual `readiness.nodes` change is needed;
+additional custom node checks are retained.
 Missing satellite fixes, disconnected serial ports or unavailable CORS networks
 do not block navigation while the nodes reconnect. It does not wait for RTK fixed
 status. Faster_lio consumes `/rtk_pvh_g90` and handles observation quality.

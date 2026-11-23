@@ -1,4 +1,5 @@
 """Inspect real launch actions and supervisor configuration without executing nodes."""
+import copy
 import importlib.util
 import os
 from pathlib import Path
@@ -213,6 +214,134 @@ class LaunchConfiguration(unittest.TestCase):
             config = cfg.load_config('navigation')
             for mode in ('manual', 'nav', 'add'):
                 self.assertNotIn('gnss', node.mode_sequence(config, mode))
+
+    def capture_gnss_launch(self, config, **overrides):
+        """Build real launch/readiness actions without starting hardware processes."""
+        captured = {}
+
+        def include(package, filename, enabled, launch_arguments=None):
+            captured[package] = launch_arguments or {}
+            return DeclareLaunchArgument('mock_' + package, default_value='')
+
+        context = context_for(navigation, **overrides)
+        with patch.object(navigation, 'include_package_launch', side_effect=include), \
+                patch.object(navigation, 'wait_for_nodes_action',
+                             wraps=navigation.wait_for_nodes_action) as wait:
+            actions = navigation.build_navigation_actions(context, config)
+        ready = next(call for call in wait.call_args_list if call.args[0] == 'gnss')
+        return captured['gnss_driver'], ready.args[1], actions
+
+    def test_rtk_ntrip_switches_derive_launch_and_readiness_together(self):
+        for rtk in (False, True):
+            for ntrip in (False, True):
+                with self.subTest(rtk=rtk, ntrip=ntrip):
+                    self.robot['navigation'] = {
+                        'slam': {'parameters': {'laser_mapping': {'ros__parameters': {
+                            'rtk': {'enable': rtk}}}}},
+                        'gnss': {'ntrip': ntrip, 'ntrip_parameters': {
+                            'ntrip_client': {'ros__parameters': {
+                                'username': 'test-user', 'password': 'test-password'}}}},
+                    }
+                    self.write_robot()
+                    config = cfg.load_config('navigation')
+                    config['bringup']['sequence'] = ['gnss']
+                    original = copy.deepcopy(config)
+                    arguments, nodes, actions = self.capture_gnss_launch(config)
+                    expected = rtk and ntrip
+                    self.assertEqual(arguments['ntrip'], str(expected).lower())
+                    self.assertEqual(nodes, ['/gnss_device'] + (['/ntrip_client'] if expected else []))
+                    self.assertTrue(actions)  # Receiver still starts with either switch off.
+                    self.assertEqual(config, original)  # Do not overwrite requested snapshot settings.
+
+    def test_gnss_module_and_device_also_gate_ntrip(self):
+        config = cfg.load_config('navigation')
+        config['bringup']['sequence'] = ['gnss']
+        for device in ('g60', 'd1m'):
+            with self.subTest(device=device):
+                config['gnss']['device'] = device
+                arguments, nodes, _ = self.capture_gnss_launch(config)
+                self.assertEqual(arguments['ntrip'], 'false')
+                self.assertEqual(nodes, ['/gnss_device'])
+        config['gnss']['device'] = 'g90'
+        arguments, nodes, actions = self.capture_gnss_launch(config, enable_gnss='false')
+        self.assertEqual(arguments['ntrip'], 'false')
+        self.assertNotIn('/ntrip_client', nodes)
+        self.assertEqual(actions, [])
+
+    def test_ntrip_readiness_preserves_custom_nodes_and_adds_active_client(self):
+        config = cfg.load_config('navigation')
+        config['bringup']['sequence'] = ['gnss']
+        config['gnss']['readiness']['nodes'] = ['gnss_device', 'ntrip_client', '/custom_monitor']
+        for ntrip in (False, True):
+            with self.subTest(ntrip=ntrip):
+                config['gnss']['ntrip'] = ntrip
+                _, nodes, _ = self.capture_gnss_launch(config)
+                self.assertEqual(nodes, ['/gnss_device'] + (['/ntrip_client'] if ntrip else []) +
+                                 ['/custom_monitor'])
+        config['gnss']['readiness']['nodes'] = ['/gnss_device']
+        _, nodes, _ = self.capture_gnss_launch(config)
+        self.assertEqual(nodes, ['/gnss_device', '/ntrip_client'])
+
+    def test_ntrip_follows_cli_slam_file_in_immediate_and_supervisor_workers(self):
+        custom = Path(self.temp.name) / 'custom slam.yaml'
+        custom.write_text('laser_mapping:\n  ros__parameters:\n    rtk.enable: false\n')
+        context = context_for(navigation, slam_config=str(custom))
+        config = navigation.apply_launch_overrides(context, cfg.load_config('navigation'))
+        config['bringup']['sequence'] = ['gnss']
+        arguments, nodes, _ = self.capture_gnss_launch(config)
+        self.assertEqual(arguments['ntrip'], 'false')
+        self.assertEqual(nodes, ['/gnss_device'])
+        supervisor_node = object.__new__(supervisor.NavigationSupervisor)
+        worker = supervisor_node.layer_config(config, ('gnss',))
+        snapshot = Path(self.temp.name) / 'worker.yaml'
+        snapshot.write_text(yaml.safe_dump(worker))
+        reloaded = cfg.load_config('navigation', str(snapshot))
+        arguments, nodes, _ = self.capture_gnss_launch(reloaded)
+        self.assertEqual(arguments['ntrip'], 'false')
+        self.assertEqual(nodes, ['/gnss_device'])
+
+    def test_rtk_parameter_selection_uses_slam_node_and_declared_default(self):
+        import rclpy
+        from rclpy.context import Context
+        from rclpy.node import Node
+
+        ros_context = Context()
+        rclpy.init(context=ros_context, domain_id=227)
+        self.addCleanup(ros_context.shutdown)
+        custom = Path(self.temp.name) / 'slam.yaml'
+        cases = [
+            ({}, False),
+            ({'other_node': {'ros__parameters': {'rtk': {'enable': True}}}}, False),
+            ({'/laser_mapping': {'ros__parameters': {'rtk.enable': True}}}, True),
+            ({'/**': {'ros__parameters': {'rtk.enable': True}},
+              'laser_mapping': {'ros__parameters': {'rtk': {'enable': False}}}}, False),
+            ({'laser_mapping': {'ros__parameters': {'rtk': {'enable': True}}},
+              '/**': {'ros__parameters': {'rtk.enable': False}}}, False),
+            ({'laser_mapping': {'ros__parameters': {'rtk.enable': True}},
+              '/**': {'ros__parameters': {'rtk.enable': False}}}, False),
+            ({'/**/laser_mapping': {'ros__parameters': {'rtk.enable': True}}}, True),
+            ({'/other_namespace': {'laser_mapping': {'ros__parameters': {
+                'rtk.enable': True}}}}, False),
+        ]
+        for parameters, expected in cases:
+            with self.subTest(parameters=parameters):
+                custom.write_text(yaml.safe_dump(parameters, sort_keys=False))
+                self.assertIs(navigation.slam_rtk_enabled(context_for(navigation),
+                                                        {'config': str(custom)}), expected)
+                if parameters:
+                    # Independent oracle: the actual ROS parser used by nodes.
+                    node = Node('laser_mapping', context=ros_context,
+                                cli_args=['--ros-args', '--params-file', str(custom)],
+                                use_global_arguments=False, enable_rosout=False,
+                                start_parameter_services=False)
+                    try:
+                        self.assertIs(node.declare_parameter('rtk.enable', False).value, expected)
+                    finally:
+                        node.destroy_node()
+        for invalid in ('invalid', '"true"', '1'):
+            custom.write_text(f'laser_mapping:\n  ros__parameters:\n    rtk.enable: {invalid}\n')
+            with self.assertRaisesRegex(ValueError, 'rtk.enable must be a boolean'):
+                navigation.slam_rtk_enabled(context_for(navigation), {'config': str(custom)})
 
     def test_tank_geometry_and_differential_profile_layers(self):
         profiles = {}

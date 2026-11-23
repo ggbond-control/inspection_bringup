@@ -46,6 +46,8 @@ robot_id: D1M-A
 # navigation:
 #   # D1M G90 receiver and NTRIP overrides; keep credentials on this device.
 #   gnss:
+#     ntrip: true  # Allows local account login only when SLAM rtk.enable is also true.
+#     # Readiness follows the actual NTRIP startup automatically; no nodes override needed.
 #     parameters:
 #       gnss_device:
 #         ros__parameters:
@@ -62,6 +64,8 @@ robot_id: D1M-A
 #     parameters:
 #       laser_mapping:
 #         ros__parameters:
+#           rtk:
+#             enable: false  # Disables SLAM RTK and local NTRIP login, even with saved credentials.
 #           initial_alignment:
 #             # Initial localization guess, not the LiDAR mounting extrinsics.
 #             position: [1.0, 2.0, 0.0]  # [x, y, z], meters; replace with actual values

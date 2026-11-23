@@ -104,7 +104,7 @@ gnss:
   export_polyline: false
   readiness:
     type: nodes
-    nodes: [/gnss_device, /ntrip_client]
+    nodes: [/gnss_device]  # Bringup automatically adds /ntrip_client only when it starts.
     timeout_seconds: 10.0
 
 terrain:
