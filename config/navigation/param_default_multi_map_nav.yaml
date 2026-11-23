@@ -44,7 +44,14 @@ local_costmap:
 planner_server:
   ros__parameters:
     expected_planner_frequency: 2.0
-    planner_plugins: ["GridBased"]
+    planner_plugins: ["GridBased", "ReverseGridBased"]
+    ReverseGridBased:
+      plugin: "smac_straight_planner::SmacStraightPlanner"
+      tolerance: 0.1
+      allow_unknown: false
+      straightening:
+        reverse: true
+        min_clearance: 0.02
     GridBased:
       plugin: "nav2_smac_planner::SmacPlanner2D"
       tolerance: 0.1
