@@ -6,6 +6,8 @@ BRINGUP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEFAULT_REPOS_FILE="${BRINGUP_DIR}/config/inspection_deps.repos"
 WORKSPACE_ROOT="$(cd "${BRINGUP_DIR}/../.." && pwd)"
 TARGET_PACKAGE="inspection_bringup"
+TARGET_PACKAGE_SET=0
+SELECT_PACKAGES=()
 FETCH_ONLY=0
 BUILD_ONLY=0
 RUN_ROSDEP=0
@@ -25,6 +27,8 @@ Usage: build_inspection.sh [options] [target_package]
 
 Options:
   -j N, -jN, --jobs N   Build jobs per package (positive integer, default: 1).
+  --select PKG [...]    Incrementally build only these ROS packages (--packages-select),
+                        reusing installed dependencies and skipping repository fetching.
   --fetch-only          Clone missing repositories and exit.
   --build-only          Skip repository cloning.
   --rosdep             Run rosdep install before building.
@@ -41,7 +45,8 @@ Options:
   -h, --help           Show this help.
 
 Build behavior:
-  Uses only: colcon build --packages-up-to <target> --symlink-install
+  Uses: colcon build --packages-up-to <target> --symlink-install
+  With --select: uses colcon build --packages-select <pkg...> --symlink-install
   It never runs a bare global colcon build.
   Builds all CMake packages in Release mode, one package at a time.
   Uses -j1 by default; -j/--jobs overrides the BUILD_JOBS environment variable.
@@ -77,6 +82,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --jobs=*)
       BUILD_JOBS="${1#--jobs=}"
+      shift
+      ;;
+    --select)
+      shift
+      if [[ $# -eq 0 || "$1" == -* ]]; then
+        echo "error: --select requires at least one ROS package name" >&2
+        exit 2
+      fi
+      while [[ $# -gt 0 && "$1" != -* ]]; do
+        SELECT_PACKAGES+=("$1")
+        shift
+      done
+      ;;
+    --select=*)
+      pkg="${1#--select=}"
+      if [[ -z "${pkg}" ]]; then
+        echo "error: --select requires at least one ROS package name" >&2
+        exit 2
+      fi
+      SELECT_PACKAGES+=("${pkg}")
       shift
       ;;
     --fetch-only)
@@ -156,6 +181,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       TARGET_PACKAGE="$1"
+      TARGET_PACKAGE_SET=1
       shift
       ;;
   esac
@@ -186,6 +212,35 @@ fi
 if [[ -z "${CHECKOUT_REMOTE}" || "${CHECKOUT_REMOTE}" == -* ]]; then
   echo "error: invalid --remote" >&2
   exit 2
+fi
+
+if [[ ${#SELECT_PACKAGES[@]} -gt 0 ]]; then
+  if [[ "${TARGET_PACKAGE_SET}" -eq 1 ]]; then
+    echo "error: --select cannot be combined with a positional target_package" >&2
+    exit 2
+  fi
+  if [[ "${FETCH_ONLY}" -eq 1 || "${UPDATE_CURRENT_BRANCH}" -eq 1 || "${UPDATE_ONLY}" -eq 1 || "${CHECK_UPDATES}" -eq 1 || -n "${CHECKOUT}" ]]; then
+    echo "error: --select cannot fetch or update repositories" >&2
+    exit 2
+  fi
+  deduped_select=()
+  for pkg in "${SELECT_PACKAGES[@]}"; do
+    if [[ ! "${pkg}" =~ ^[a-zA-Z0-9_]+$ ]]; then
+      echo "error: --select expects ROS package names, not repository paths: '${pkg}'" >&2
+      exit 2
+    fi
+    already_selected=0
+    for existing in "${deduped_select[@]}"; do
+      if [[ "${existing}" == "${pkg}" ]]; then
+        already_selected=1
+        break
+      fi
+    done
+    if [[ "${already_selected}" -eq 0 ]]; then
+      deduped_select+=("${pkg}")
+    fi
+  done
+  SELECT_PACKAGES=("${deduped_select[@]}")
 fi
 
 if [[ ! -f "${REPOS_FILE}" ]]; then
@@ -363,7 +418,7 @@ source_if_exists() {
   fi
 }
 
-if [[ "${BUILD_ONLY}" -eq 0 && -z "${CHECKOUT}" ]]; then
+if [[ "${BUILD_ONLY}" -eq 0 && -z "${CHECKOUT}" && ${#SELECT_PACKAGES[@]} -eq 0 ]]; then
   fetch_missing_repositories
 fi
 
@@ -398,12 +453,18 @@ if [[ "${RUN_ROSDEP}" -eq 1 ]]; then
   rosdep install --from-paths "${WORKSPACE_ROOT}/src" --ignore-src -r -y
 fi
 
-echo "[build] target package: ${TARGET_PACKAGE}"
+if [[ ${#SELECT_PACKAGES[@]} -gt 0 ]]; then
+  COLCON_SELECT_ARGS=(--packages-select "${SELECT_PACKAGES[@]}")
+  echo "[build] selected packages: ${SELECT_PACKAGES[*]}"
+else
+  COLCON_SELECT_ARGS=(--packages-up-to "${TARGET_PACKAGE}")
+  echo "[build] target package: ${TARGET_PACKAGE}"
+fi
 echo "[build] mode: Release; packages: sequential; jobs per package: ${BUILD_JOBS}"
 cd "${WORKSPACE_ROOT}"
 # MAKEFLAGS prevents colcon from adding its own CPU-count-based -j option.
 if ! MAKEFLAGS="-j${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" colcon build \
-    --packages-up-to "${TARGET_PACKAGE}" \
+    "${COLCON_SELECT_ARGS[@]}" \
     --symlink-install \
     --executor sequential \
     --cmake-force-configure \
@@ -432,4 +493,8 @@ EOF
   exit 1
 fi
 
-echo "[done] built packages up to ${TARGET_PACKAGE}"
+if [[ ${#SELECT_PACKAGES[@]} -gt 0 ]]; then
+  echo "[done] built selected packages: ${SELECT_PACKAGES[*]}"
+else
+  echo "[done] built packages up to ${TARGET_PACKAGE}"
+fi

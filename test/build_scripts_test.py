@@ -404,6 +404,38 @@ elif name == 'ros2':
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertEqual(commands, [])
 
+    def test_inspection_select_builds_only_requested_packages_and_skips_fetch(self):
+        (self.bringup / 'config/inspection_deps.repos').write_text(json.dumps({
+            'repositories': {
+                'src/missing_repo': {'type': 'git', 'url': 'https://example.invalid/missing.git'},
+            }
+        }))
+        result = subprocess.run(
+            ['bash', str(self.bringup / 'scripts' / SCRIPTS[0]),
+             '--no-branch-check', '--select', 'inspection_task_hub', 'alarm_manager',
+             '--select=inspection_task_hub'],
+            env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [json.loads(line) for line in self.log.read_text().splitlines()]
+        builds = [c for c in commands if c['name'] == 'colcon' and 'build' in c['args']]
+        self.assertEqual(len(builds), 1)
+        args = builds[0]['args']
+        self.assertNotIn('--packages-up-to', args)
+        start = args.index('--packages-select') + 1
+        end = args.index('--symlink-install')
+        self.assertEqual(args[start:end], ['inspection_task_hub', 'alarm_manager'])
+
+    def test_inspection_select_rejects_invalid_and_conflicting_options(self):
+        for options in [['--select'], ['--select='], ['--select', '../inspection_task_hub'],
+                        ['--select', 'inspection_task_hub', '--fetch-only'],
+                        ['--select', 'inspection_task_hub', '--update-only'],
+                        ['--select', 'inspection_task_hub', '--checkout', 'main'],
+                        ['inspection_bringup', '--select', 'inspection_task_hub']]:
+            with self.subTest(options=options):
+                result, commands = self.run_build(SCRIPTS[0], options)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(commands, [])
+
     def test_default_entry_builds_interfaces_first_without_path_options(self):
         installed_libraries(self.root / 'driver_ws/third_party/install')
         source = self.root / 'task_ws/src/inspection_interfaces'
