@@ -11,5 +11,5 @@ laser_mapping:
       horizon_offset: [-0.33, 0.0, 0.0]
     preprocess:
       # Input frame: body center 0.105 m behind LiDAR;
-      self_box_half_size: [0.38, 0.18, 0.3]  # 过滤盒半尺寸 [x, y, z]，开启后会滤除盒内点
+      self_box_half_size: [0.42, 0.2, 0.3]  # 过滤盒半尺寸 [x, y, z]，开启后会滤除盒内点
       self_box_offset: [-0.33, 0.0, 0.0]    # 过滤盒中心在输入点云坐标系中的位置 [x, y, z]，单位米

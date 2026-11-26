@@ -17,10 +17,10 @@
       maxSpeed: 1.6  # 模型允许的最大前向速度（m/s）
       maxSpeedY: 1.0  # 模型允许的最大横向速度（m/s）
       maxYawRate: 1.5  # 模型允许的最大偏航角速度（rad/s）
-      maxAccelX: 1.5  # 模型前向最大加速度（m/s2）
-      maxAccelY: 1.5  # 模型横向最大加速度（m/s2）
+      maxAccelX: 1.0  # 模型前向最大加速度（m/s2）
+      maxAccelY: 1.0  # 模型横向最大加速度（m/s2）
       maxAccelYawRate: 1.5  # 模型偏航最大角加速度（rad/s2）
-      maxDecelX: 6.0  # 模型前向最大减速度（m/s2）
+      maxDecelX: 4.0  # 模型前向最大减速度（m/s2）
       maxDecelY: 3.0  # 模型横向最大减速度（m/s2）
       maxDecelYawRate: 3.5  # 模型偏航最大角减速度（rad/s2）
 
