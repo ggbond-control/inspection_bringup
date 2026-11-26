@@ -95,8 +95,11 @@ Cyvet 的传感器偏移、运动模型、车体尺寸、路径对应文件及�
 
 安全停车参数也在公共默认文件中维护：local_planner 文件包含
 localPlanner 的 terrainTimeout/localizationHealthTimeout 和原名节点
-cmd_vel_guard 的六项参数；faster_lio 文件包含 navigation_health 的四项参数。
-沿用型号层和 robot.yaml 的 parameters 覆盖，默认值保持节点原有值。
+cmd_vel_guard 的六项参数；faster_lio 文件包含 navigation_health 的超时、RTK质量、
+三维位置速度上限（20m/s）及独立的 lidar 健康检查参数。
+lidar 健康门限默认与本文件重定位的匹配质量门限一致（400/200点、0.15比例、
+0.25m残差、0.5m/5度修正、连续恢复5帧），但不读取或联动 rtk 参数。
+沿用型号层和 robot.yaml 的 parameters 覆盖。
 local_planner 子 launch 将合并文件同时传给三个节点；门控包内
 navigation_safety.yaml 仅提供后备默认值。编辑单机参数后重启相关导航进程。
 不同模块的超时仍各自生效，配置示例及含义见 CONFIGURATION.md 的“安全停车参数”。

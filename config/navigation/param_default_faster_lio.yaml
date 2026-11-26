@@ -37,6 +37,15 @@ laser_mapping:
       rtk_max_age: 0.3                         # RTK 兜底时已接受的位置/航向观测最大年龄（s），相对雷达帧时间
       max_position_sigma: 1.0                  # RTK 兜底允许的位置标准差上限（m）
       max_attitude_sigma_deg: 10.0             # RTK 兜底允许的姿态标准差上限（deg）
+      max_position_speed_mps: 20.0             # 最终位置三维帧间速度上限（m/s），严格超过即报告不可用
+      lidar:                                  # 独立健康上报门限，不控制 RTK 或定位算法
+        min_points: 400                       # 降采样点数下限
+        min_effective_points: 200             # 有效匹配点数下限
+        min_inlier_ratio: 0.15                # 有效匹配比例下限
+        max_residual_rms: 0.25                # 点面残差 RMS 上限（m）
+        max_position_correction: 0.5          # 单帧 LiDAR 位置修正上限（m）
+        max_rotation_correction_deg: 5.0      # 单帧 LiDAR 旋转修正上限（deg）
+        recovery_frames: 5                    # 质量失败后恢复健康所需的连续合格帧数
 
     # RTK fallback：只在 LiDAR LOST/RECOVERING 时辅助 EKF，TRACKING 时不参与融合。
     rtk:

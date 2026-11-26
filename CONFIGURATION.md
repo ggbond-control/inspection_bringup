@@ -362,8 +362,14 @@ slowdownDisThre=1.0、curvatureDecelGain=1.25 均按实机值配置。
 `frequency`、`health_timeout`、`data_timeout`、`command_timeout`、
 `rtk_max_speed`、`rtk_max_yaw_rate`。原有里程计检查参数仍在 `/**` 段维护。
 `param_default_faster_lio.yaml` 包含 `laser_mapping.ros__parameters.navigation_health`
-下的 `data_timeout`、`rtk_max_age`、`max_position_sigma`、`max_attitude_sigma_deg`。
-默认值与接入前节点实际采用的默认值一致，不调整停车、恢复或定位算法。
+下的 `data_timeout`、`rtk_max_age`、`max_position_sigma`、`max_attitude_sigma_deg`，
+以及 `max_position_speed_mps` 和独立的 `lidar` 质量上报配置。
+`lidar` 默认采用当前重定位配置的质量门限：`min_points: 400`、
+`min_effective_points: 200`、`min_inlier_ratio: 0.15`、`max_residual_rms: 0.25`（m）、
+`max_position_correction: 0.5`（m）、`max_rotation_correction_deg: 5.0`、`recovery_frames: 5`。
+这些配置仅控制健康报告；原有 `rtk.lidar_recovery` 仍独立控制算法，不相互回退或覆盖。
+最终位置的三维帧间速度严格超过 `max_position_speed_mps`（默认20m/s）时，即使RTK满足接管条件，
+也报告不可用；不修改滤波、融合或里程计输出。普通LiDAR质量失败仍允许可靠RTK报告降级接管。
 
 local_planner 子 launch 的 `config` 同时传给规划器、跟随器和门控。
 门控先读取包内 `navigation_safety.yaml`，再读取 `config`，后者覆盖前者；
@@ -388,6 +394,15 @@ navigation:
         ros__parameters:
           navigation_health:
             data_timeout: 0.3
+            max_position_speed_mps: 20.0
+            lidar:
+              min_points: 400
+              min_effective_points: 200
+              min_inlier_ratio: 0.15
+              max_residual_rms: 0.25
+              max_position_correction: 0.5
+              max_rotation_correction_deg: 5.0
+              recovery_frames: 5
 ```
 
 这些超时检查的对象不同，仍分别配置：规划器 `terrainTimeout` 约束地形；
