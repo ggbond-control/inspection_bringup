@@ -30,6 +30,13 @@ PLANNER_SAFETY_DEFAULTS = {'terrainTimeout': 0.3, 'localizationHealthTimeout': 0
 HEALTH_DEFAULTS = {
     'data_timeout': 0.3, 'rtk_max_age': 0.3,
     'max_position_sigma': 1.0, 'max_attitude_sigma_deg': 10.0,
+    'max_position_speed_mps': 20.0,
+    'lidar': {
+        'min_points': 400, 'min_effective_points': 200,
+        'min_inlier_ratio': 0.15, 'max_residual_rms': 0.25,
+        'max_position_correction': 0.5, 'max_rotation_correction_deg': 5.0,
+        'recovery_frames': 5,
+    },
 }
 
 
@@ -477,6 +484,46 @@ class Configuration(unittest.TestCase):
                     self.assertEqual(planner['localPlanner']['ros__parameters'][key], expected)
                 health = cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']['navigation_health']
                 self.assertEqual(health, HEALTH_DEFAULTS)
+
+    def test_navigation_health_defaults_for_all_models(self):
+        for model in ('d1m', 'x30', 'cyvet'):
+            with self.subTest(model=model):
+                self.robot(model=model)
+                value = cfg.load_config('navigation')
+                params = cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']
+                self.assertEqual(params['navigation_health'], HEALTH_DEFAULTS)
+
+    def test_navigation_health_defaults_match_relocalization_baseline(self):
+        params = cfg.read_yaml(ROOT / 'config/navigation/param_default_faster_lio.yaml')['laser_mapping']['ros__parameters']
+        health = params['navigation_health']
+        recovery = params['rtk']['lidar_recovery']
+        self.assertEqual(health, HEALTH_DEFAULTS)
+        self.assertEqual(health['lidar'], {
+            'min_points': recovery['min_downsampled_points'],
+            'min_effective_points': recovery['min_effective_points'],
+            'min_inlier_ratio': recovery['min_inlier_ratio'],
+            'max_residual_rms': recovery['max_residual_rms'],
+            'max_position_correction': recovery['tracking']['max_position_correction'],
+            'max_rotation_correction_deg': recovery['tracking']['max_rotation_correction_deg'],
+            'recovery_frames': recovery['recovery']['required_consecutive_frames'],
+        })
+
+    def test_navigation_health_parameters_are_independent_of_rtk(self):
+        health_override = {'max_position_speed_mps': 15.0,
+                           'lidar': {'min_inlier_ratio': 0.12, 'recovery_frames': 7}}
+        rtk_override = {'min_downsampled_points': 900, 'min_inlier_ratio': 0.4,
+                        'recovery': {'required_consecutive_frames': 9}}
+        self.robot(navigation={'slam': {'parameters': {'laser_mapping': {'ros__parameters': {
+            'navigation_health': health_override, 'rtk': {'lidar_recovery': rtk_override}}}}}})
+        value = cfg.load_config('navigation')
+        params = cfg.read_yaml(value['slam']['config'])['laser_mapping']['ros__parameters']
+        self.assertEqual(params['navigation_health'], cfg.merge(HEALTH_DEFAULTS, health_override))
+        self.assertEqual(params['rtk']['lidar_recovery']['min_downsampled_points'], 900)
+        self.assertEqual(params['rtk']['lidar_recovery']['min_inlier_ratio'], 0.4)
+        self.assertEqual(params['rtk']['lidar_recovery']['recovery']['required_consecutive_frames'], 9)
+        snapshot = cfg.write_snapshot(value, self.temp.name)
+        restored = cfg.load_config('navigation', snapshot)
+        self.assertEqual(cfg.read_yaml(restored['slam']['config']), cfg.read_yaml(value['slam']['config']))
 
     def test_safety_parameters_layer_model_robot_and_snapshot(self):
         model_file = 'models/d1m/navigation/param_d1m_local_planner.yaml'

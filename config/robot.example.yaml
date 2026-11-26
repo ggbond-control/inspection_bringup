@@ -72,6 +72,15 @@ robot_id: D1M-A
 #             yaw: 90.0                 # Heading in DEGREES, not radians
 #           navigation_health:
 #             data_timeout: 0.3  # 雷达数据/处理结果超时（s）；独立于地形超时
+#             max_position_speed_mps: 20.0  # 三维位置速度严格超过此值时报不可用（m/s）
+#             lidar:  # 仅健康上报使用，与下方/其他位置的 rtk 参数独立
+#               min_points: 400
+#               min_effective_points: 200
+#               min_inlier_ratio: 0.15
+#               max_residual_rms: 0.25  # m
+#               max_position_correction: 0.5  # m
+#               max_rotation_correction_deg: 5.0
+#               recovery_frames: 5
 #   # Cyvet only (set model: cyvet above). D1M does not start a Livox driver.
 #   # Cyvet inherits MID360s by default. Select this complete file for MID360:
 #   livox:
