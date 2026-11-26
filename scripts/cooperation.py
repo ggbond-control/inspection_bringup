@@ -1,8 +1,48 @@
 """One configuration-only selector for mutually exclusive cooperation stacks."""
+from pathlib import Path
+
 from device_description import device_status, device_status_snapshot
 
 MODES = {'disabled', 'coordination', 'swarm'}
 REMOVED = {'mission_execution_agent', 'fleet_leader_election'}
+SWARM_RUNTIME_FILES = {
+    'consensus': ('raft.json',),
+    'coordinator': ('history/*.json', 'reports/*/*.html', 'reports/*/job.json',
+                    'private_request.json', 'private_commands.json', 'audit/**/*.jsonl'),
+    'agent': ('execution.json', 'outbox.json', 'route_archive/*.json'),
+    'transport': ('audit/**/*.jsonl',),
+}
+
+
+def swarm_runtime_root(settings):
+    old_base = Path.home() / '.ros/swarm' / settings['robot_id']
+    configured = settings.get('swarm', {}).get('data_root')
+    return Path(configured).expanduser() if configured else old_base / 'runtime'
+
+
+def check_swarm_runtime(settings, workspace=None):
+    root = swarm_runtime_root(settings).resolve()
+    if (root / 'migration.json').is_file():
+        return
+    workspace = workspace or Path.home() / 'Workspace/cooperation_ws'
+    packages = {'coordinator': 'swarm_mission_coordinator', 'agent': 'swarm_execution_agent',
+                'consensus': 'swarm_consensus', 'transport': 'swarm_mqtt_transport'}
+    swarm = settings.get('swarm', {})
+    previous = []
+    for section, patterns in SWARM_RUNTIME_FILES.items():
+        candidates = [workspace / 'src' / packages[section] / 'runtime',
+                      Path.home() / '.ros/swarm' / settings['robot_id'] / section]
+        if section == 'coordinator':
+            candidates.append(root)
+        override = swarm.get(section, {}).get('data_root')
+        if override:
+            candidates.append(Path(override).expanduser())
+        for candidate in sorted({p.resolve() for p in candidates} - {root / section}):
+            if any(any(candidate.glob(pattern)) for pattern in patterns):
+                previous.append(f'--{section} {candidate}')
+    if previous:
+        raise ValueError('检测到旧 Swarm 运行数据，请先用 swarm_migrate_runtime 迁移到 '
+                         + str(root) + '。候选源目录为 ' + '，'.join(previous))
 
 
 def validate(config):
@@ -56,7 +96,7 @@ def swarm_configuration(config):
     result = {
         'robot_id': robot,
         'cluster_id': swarm.get('cluster_id', DEFAULT_CLUSTER_ID),
-        'data_root': swarm.get('data_root', '~/.ros/swarm'),
+        'data_root': swarm.get('data_root'),
         'transport': {
             'mqtt_host': mqtt.get('host', '127.0.0.1'),
             'mqtt_port': mqtt.get('port', 1883),
@@ -76,8 +116,6 @@ def swarm_configuration(config):
         'coordinator': dict(swarm.get('coordinator', {})),
         'planner': dict(swarm.get('planner', {})),
     }
-    if 'data_root' in swarm.get('transport', {}):
-        result['transport']['data_root'] = swarm['transport']['data_root']
     # These affect the map fingerprint and must never differ between preflight/planning.
     for key, default in [('footprint_radius', 0.3), ('free_thresh', 0.05)]:
         if any(key in result[part] for part in ('coordinator', 'planner')):
@@ -223,5 +261,6 @@ def launch_actions(config):
     if cooperation_mode == "swarm":
         # Import only for this mode; coordination/disabled do not require swarm packages.
         from swarm_mission_coordinator.launching import device_nodes
+        check_swarm_runtime(config['cooperation'])
         actions.extend(device_nodes(swarm_configuration(config)))
     return actions

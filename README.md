@@ -326,23 +326,18 @@ src/inspection_bringup/scripts/manage_inspection_services.sh restart system
 
 The migration preserves `.git`, local edits, Agent history and persistent election
 term/votes. It refuses conflicting destinations, ambiguous runtime copies, merged
-install layouts and detected running services/nodes. Finish pending swarm report
-uploads before relocation, because their queued file paths belong to the old
-data root. Use `--config-root` or the
+install layouts and detected running services/nodes. Use `--config-root` or the
 explicit `--agent-data`, `--election-data`, `--swarm-data` source options for a
 nonstandard existing deployment; `--swarm-data` is the base before robot_id.
 
-Data remains in each ROS package's `runtime` directory, for example
+Coordination mode stores data in each ROS package's `runtime` directory, for example
 `cooperation_ws/src/mission_execution_agent/runtime` and
-`cooperation_ws/src/fleet_leader_election/runtime`. The four swarm nodes with
-persistent data also use their own package `runtime` directories; the protocol
-library and stateless planner need no empty runtime directory. Configuration keeps
-the original `data_root` names. Source-adjacent data moves with its repository;
+`cooperation_ws/src/fleet_leader_election/runtime`. Swarm mode uses the single
+`system.cooperation.swarm.data_root` directory, defaulting to
+`cooperation_ws/src/swarm_mission_coordinator/runtime`, and a sibling `reports`
+directory. Source-adjacent data moves with its repository.
 external/custom roots and the old `~/.ros/swarm/<robot_id>/<section>` data are
-relocated only when present. The migration updates device overrides when needed,
-archives stale task_ws build/install artifacts, and leaves historical file contents
-unchanged. `build_inspection.sh` and the original system/modules launch interfaces
-retain their original implementation; the new builder is independent. No active task is resumed by the migration.
+relocated only when present.
 
 Before moving anything, the tool saves repositories, config and runtime under
 `Workspace/cooperation-backups/<timestamp>/` (private directory). `operations.json`
