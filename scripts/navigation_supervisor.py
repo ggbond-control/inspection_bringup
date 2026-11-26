@@ -50,7 +50,6 @@ NAV_EXTENSION_MODULES = (
 SUPPORTED_MODULES = MANUAL_MODULES + NAV_EXTENSION_MODULES
 REQUEST_INITIAL_POSE = "_request_initial_pose"
 REQUEST_RESTART = "_request_restart"
-REQUEST_HEALTHY = "_request_healthy_localization"
 
 
 def normalize_initial_pose(value):
@@ -213,9 +212,7 @@ class NavigationSupervisor(Node):
                 self.normalize_map_config(runtime_config, provided_paths)
 
                 transition = self.select_transition(runtime_config, target_state, provided_paths)
-                if runtime_config.get(REQUEST_HEALTHY):
-                    if "slam" not in self.mode_sequence(runtime_config, target_state, manual_profile):
-                        raise ValueError("task preparation requires localization, but SLAM is disabled")
+                if "slam" in self.mode_sequence(runtime_config, target_state, manual_profile):
                     if transition in ("noop", "refresh_control", "switch_mode"):
                         health, reason = self.localization_health.wait()
                         if health == "lost":
@@ -249,11 +246,10 @@ class NavigationSupervisor(Node):
         results = []
         for parameter in request.parameters:
             try:
-                if parameter.name in ("restart", "slam.require_healthy"):
+                if parameter.name == "restart":
                     if parameter.value.type != ParameterType.PARAMETER_BOOL:
                         raise ValueError(f"{parameter.name} must be a boolean")
-                    key = REQUEST_RESTART if parameter.name == "restart" else REQUEST_HEALTHY
-                    config[key] = parameter.value.bool_value
+                    config[REQUEST_RESTART] = parameter.value.bool_value
                     results.append(self.result(True, f"accepted {parameter.name}"))
                     continue
                 if parameter.name == "slam.initial_pose":
@@ -545,7 +541,7 @@ class NavigationSupervisor(Node):
             self.active_config = None
 
         base_sequence = self.layer_sequence(config, target_state, manual_profile, "base")
-        health_start = self.localization_health.before_start() if config.get(REQUEST_HEALTHY) else None
+        health_start = self.localization_health.before_start() if "slam" in base_sequence else None
         success, reason = self.start_layer("base", config, base_sequence)
         if not success:
             self.stop_worker("base")
@@ -576,7 +572,6 @@ class NavigationSupervisor(Node):
         self.active_config = copy.deepcopy(config)
         self.active_config.pop(REQUEST_INITIAL_POSE, None)
         self.active_config.pop(REQUEST_RESTART, None)
-        self.active_config.pop(REQUEST_HEALTHY, None)
         self.current_state = state
         self.manual_profile = manual_profile if state == MANUAL else MANUAL_LOCALIZED
         if self.manual_profile == MANUAL_BRIDGE_ONLY:
@@ -629,7 +624,6 @@ class NavigationSupervisor(Node):
     def layer_config(self, config, sequence):
         runtime_config = copy.deepcopy(config)
         runtime_config.pop(REQUEST_RESTART, None)
-        runtime_config.pop(REQUEST_HEALTHY, None)
         initial_pose = runtime_config.pop(REQUEST_INITIAL_POSE, None)
         if initial_pose is not None and "slam" in sequence:
             parameters = read_parameter_file(runtime_config["slam"]["config"])

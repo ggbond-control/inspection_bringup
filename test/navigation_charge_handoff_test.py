@@ -140,6 +140,7 @@ class StartupOrdering(unittest.TestCase):
             stop_all_workers=Mock(side_effect=lambda: order.append('stopped')),
             layer_sequence=Mock(side_effect=[('nav_bridge', 'slam'), ()]),
             start_layer=Mock(side_effect=lambda *_: (order.append('started') or True, 'ready')),
+            localization_health=Mock(wait=Mock(return_value=('usable', 'lidar_ok'))),
             commit_success=Mock(), stop_worker=Mock())
         self.assertTrue(supervisor.NavigationSupervisor.execute_transition(node, {}, 'nav', 'full_restart', None)[0])
         self.assertEqual(order, ['stopped', 'started'])
@@ -169,6 +170,7 @@ class StartupOrdering(unittest.TestCase):
                     refresh_state=Mock(), result=supervisor.NavigationSupervisor.result,
                     resolve_request=Mock(return_value=({supervisor.REQUEST_RESTART: True}, set(), [])),
                     target_state=Mock(return_value='nav'), validate_mode_sequences=Mock(),
+                    mode_sequence=Mock(return_value=('slam',)),
                     validate_map_requirements=Mock(return_value='localized'),
                     normalize_map_config=Mock(), select_transition=Mock(return_value='full_restart'),
                     current_state='nav', get_logger=Mock(return_value=Mock()),
@@ -193,6 +195,7 @@ class StartupOrdering(unittest.TestCase):
     def test_failed_base_handoff_does_not_start_navigation_extensions(self):
         node = SimpleNamespace(
             layer_sequence=Mock(return_value=('nav_bridge', 'acquire_control', 'livox', 'slam')),
+            localization_health=Mock(),
             start_layer=Mock(return_value=(False, 'undock failed')),
             stop_worker=Mock(), start_extensions=Mock(), commit_success=Mock())
         result = supervisor.NavigationSupervisor.execute_transition(node, {}, 'nav', 'full_start', None)
@@ -215,6 +218,47 @@ class StartupOrdering(unittest.TestCase):
 
 
 class LocalizationRecovery(unittest.TestCase):
+    def test_startup_checks_health_only_when_starting_slam(self):
+        for sequence, health, expected in (
+                (('nav_bridge',), 'unconfirmed', True),
+                (('slam',), 'usable', True),
+                (('slam',), 'unconfirmed', False)):
+            with self.subTest(sequence=sequence, health=health):
+                node = SimpleNamespace(
+                    layer_sequence=Mock(side_effect=[sequence, ()]),
+                    localization_health=Mock(wait=Mock(return_value=(health, 'health status'))),
+                    start_layer=Mock(return_value=(True, 'started')),
+                    stop_all_workers=Mock(), commit_success=Mock())
+                result = supervisor.NavigationSupervisor.execute_transition(
+                    node, {}, 'manual', 'full_start', supervisor.MANUAL_BRIDGE_ONLY)
+                self.assertEqual(result[0], expected)
+                if 'slam' in sequence:
+                    node.localization_health.wait.assert_called_once_with(
+                        start=node.localization_health.before_start.return_value)
+                else:
+                    node.localization_health.before_start.assert_not_called()
+                    node.localization_health.wait.assert_not_called()
+                self.assertEqual(node.commit_success.called, expected)
+                self.assertEqual(node.stop_all_workers.called, not expected)
+
+    def test_bridge_only_request_skips_health_check(self):
+        node = SimpleNamespace(
+            shutdown_event=threading.Event(), request_lock=threading.Lock(),
+            state_lock=threading.Lock(), in_progress=False, busy_reason='',
+            refresh_state=Mock(), result=supervisor.NavigationSupervisor.result,
+            resolve_request=Mock(return_value=({}, set(), [])),
+            target_state=Mock(return_value='manual'), validate_mode_sequences=Mock(),
+            validate_map_requirements=Mock(return_value=supervisor.MANUAL_BRIDGE_ONLY),
+            normalize_map_config=Mock(), select_transition=Mock(return_value='noop'),
+            mode_sequence=Mock(return_value=('nav_bridge',)), localization_health=Mock(),
+            current_state='manual', get_logger=Mock(return_value=Mock()),
+            execute_transition=Mock(return_value=(True, 'unchanged')))
+        response = supervisor.NavigationSupervisor.on_start_request(
+            node, SetParameters.Request(), SetParameters.Response())
+        self.assertTrue(response.results[-1].successful)
+        node.localization_health.wait.assert_not_called()
+        node.execute_transition.assert_called_once()
+
     def test_same_map_reuses_healthy_slam_and_requires_a_new_instance_after_restart(self):
         rclpy.init()
         self.addCleanup(rclpy.shutdown)
@@ -286,7 +330,6 @@ class LocalizationRecovery(unittest.TestCase):
             params = [
                 Parameter(name='slam.prior_dir', value=ParameterValue(type=4, string_value=directory)),
                 Parameter(name='global_planner.initial_map', value=ParameterValue(type=4, string_value='map_000')),
-                Parameter(name='slam.require_healthy', value=ParameterValue(type=1, bool_value=True)),
             ]
             if restart:
                 params.append(Parameter(name='restart', value=ParameterValue(type=1, bool_value=True)))
