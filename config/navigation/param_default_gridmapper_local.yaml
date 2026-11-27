@@ -12,6 +12,11 @@ gridmapper_node:
     resolution: 0.1             # Map resolution (meters)
     mapper_mode: "local"         # Mapper mode (local/global)
     slow_frame_threshold_ms: 100.0  # Warn when one mapping frame exceeds this time; <=0 disables
+    local_mode: normal                   # normal/window/close; can be switched at runtime
+    temporal_window_duration: 0.5        # Retain scans from the last 0.5 s in window mode
+    temporal_window_slope_threshold: 90.0  # Window-only slope threshold (degrees)
+    temporal_window_step_threshold: 0.45   # Window-only step height threshold (meters)
+    temporal_window_max_points: 500000   # Evict oldest frames when this point limit is exceeded
 
     # ==============================
     # 2. Point Cloud Preprocessing
