@@ -1,2 +1,16 @@
 # Only shared X30 differences belong here; individual identity is robot.yaml.
-{}
+device_status:
+  Battery_RC: 22.4
+  Battery_RC_unit: Ah
+  capabilities: [device, visible_camera, thermal_camera, gas_sensor, acoustic_sensor]
+  nominal_speed_mps: 1.0
+  subDevices:
+    - identifier: gimbal
+      name: 云台
+      supportStream: false
+      subDevices:
+        - {identifier: vis, name: 可见光摄像头, supportStream: true}
+        - {identifier: ir, name: 红外摄像头, supportStream: true}
+    - {identifier: gas_sensor, name: 气体传感器}
+    - {identifier: acoustic_sensor, name: 声学传感器}
+
