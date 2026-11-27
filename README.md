@@ -456,6 +456,14 @@ running; `restart system` restarts cooperation too. A disabled mode is skipped b
 or a missing enabled stack produces a startup failure without stopping system's
 other modules. Cooperation does not need independent boot enablement.
 
+The management script implements `restart system` as stop, a 3-second pause,
+then start. System startup waits up to 30 seconds for TaskHub's `/start_route`
+interface and a read-only `/get_status` response before reporting success;
+startup fails on timeout or process exit. This check is skipped when TaskHub is
+disabled. It confirms TaskHub readiness, not every optional module. Reinstall
+with `manage_inspection_services.sh install system` after updating these files
+to apply the wrapper, readiness helper and unit changes on the endpoint.
+
 Change coordination/swarm mode only with the fleet idle, then `restart system`,
 so Platform Bridge and cooperation use the same mode. Service wrappers share the
 configured ROS domain/RMW, with cooperation adding its independent overlay.

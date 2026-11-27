@@ -9,6 +9,8 @@ User=@USER@
 WorkingDirectory=@WORKSPACE_ROOT@
 Environment=HOME=@HOME_DIR@
 ExecStart=@INSTALL_DIR@/run_inspection_system.sh
+ExecStartPost=@INSTALL_DIR@/run_inspection_system.sh --wait-ready
+TimeoutStartSec=40
 Restart=@RESTART@
 RestartSec=@RESTART_SEC@
 KillMode=mixed

@@ -230,6 +230,64 @@ while True:time.sleep(.1)
         self.assertEqual(process.wait(timeout=5), 0)
 
 
+class SystemReadiness(unittest.TestCase):
+    def run_waiter(self, timeout=1.0, enabled=True):
+        config = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+        config.write('modules:\n  task_hub: ' + str(enabled).lower() + '\n')
+        config.close()
+        self.addCleanup(Path(config.name).unlink)
+        process = subprocess.Popen([sys.executable, str(ROOT / 'scripts/wait_for_system_ready.py'),
+            '--config', config.name, '--timeout', str(timeout)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+        self.addCleanup(cleanup)
+        return process
+
+    def task_hub(self):
+        from inspection_interfaces.srv import GetStatus, StartRoute
+        rclpy.init()
+        self.addCleanup(rclpy.try_shutdown)
+        node = rclpy.create_node('task_hub_node')
+        self.addCleanup(node.destroy_node)
+        node.create_service(StartRoute, '/start_route', lambda request, response: response)
+        node.create_service(GetStatus, '/get_status', lambda request, response: response)
+        return node
+
+    def test_waits_for_actual_response_then_succeeds(self):
+        node = self.task_hub()
+        process = self.run_waiter(timeout=5)
+        time.sleep(.6)
+        self.assertIsNone(process.poll(), 'Service discovery alone must not pass readiness')
+        deadline = time.monotonic() + 7
+        while process.poll() is None and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=.05)
+        output, _ = process.communicate(timeout=2)
+        self.assertEqual(process.returncode, 0, output)
+        self.assertIn('TaskHub responding', output)
+
+    def test_unresponsive_node_times_out(self):
+        self.task_hub()  # Services exist, but no executor handles requests.
+        process = self.run_waiter()
+        output, _ = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 1, output)
+        self.assertIn('timed out', output)
+
+    def test_missing_node_times_out(self):
+        process = self.run_waiter()
+        output, _ = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 1, output)
+        self.assertIn('timed out', output)
+
+    def test_disabled_task_hub_skips_check(self):
+        process = self.run_waiter(enabled=False)
+        output, _ = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, output)
+        self.assertIn('skipping', output)
+
+
 class NodeReadiness(unittest.TestCase):
     def health_wait(self, status_level, ready_delay=0.0, timeout=None):
         """Exercise the actual health waiter over ROS, without robot processes."""

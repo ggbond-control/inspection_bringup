@@ -324,6 +324,33 @@ class CooperationWorkspace(unittest.TestCase):
         self.assertFalse(list(unit_dir.glob('*.service')))
         self.assertFalse(list(install.glob('run_*.sh')))
 
+    def test_system_restart_waits_and_stops_on_errors(self):
+        # Exercise the management script without touching host services or sudo.
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        calls = self.root / 'calls.jsonl'
+        (bin_dir / 'systemctl').write_text(
+            '#!/usr/bin/python3\nimport json,os,sys,time\n'
+            f'with open({str(calls)!r}, "a") as f: f.write(json.dumps([sys.argv[1:],time.monotonic()])+"\\n")\n'
+            'sys.exit(7 if sys.argv[1] == os.environ.get("FAIL_ACTION") else 0)\n')
+        (bin_dir / 'sudo').write_text('#!/bin/bash\nif [[ "$1" == -n ]]; then exit 0; fi\nexec "$@"\n')
+        for command in bin_dir.iterdir():
+            command.chmod(0o755)
+        env = dict(self.env, PATH=str(bin_dir) + ':' + os.environ['PATH'])
+        for failure, expected in (('', ['stop', 'start']), ('stop', ['stop']),
+                                  ('start', ['stop', 'start'])):
+            with self.subTest(failure=failure):
+                calls.write_text('')
+                result = subprocess.run(['bash', str(ROOT / 'scripts/manage_inspection_services.sh'),
+                    'restart', 'system'], env=dict(env, FAIL_ACTION=failure),
+                    capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 7 if failure else 0, result.stdout + result.stderr)
+                recorded = [json.loads(row) for row in calls.read_text().splitlines()]
+                self.assertEqual([args for args, _ in recorded],
+                                 [[action, 'inspection-system.service'] for action in expected])
+                if len(recorded) == 2:
+                    self.assertGreaterEqual(recorded[1][1] - recorded[0][1], 3.0)
+
     def test_build_selects_nine_packages_in_new_root_with_clean_underlay(self):
         # Actual ROS underlay and minimal installed interfaces; fake colcon only.
         prefix = self.task / 'install/inspection_interfaces'

@@ -174,6 +174,13 @@ service_for_target() {
 run_service_action() {
   local action="$1"
   local service="$2"
+  if [[ "${action}" == "restart" && "${service}" == "${SYSTEM_SERVICE}" ]]; then
+    run_service_action stop "${service}" || return $?
+    echo "[service] waiting 3s before starting ${service} ..."
+    sleep 3
+    run_service_action start "${service}"
+    return $?
+  fi
   local started="${SECONDS}"
   local result=0
   echo "[service] ${action} ${service} ..."
@@ -510,8 +517,15 @@ write_executable(
         "inspection_system",
         "inspection_modules.launch.py",
         launch_args_text(inspection_system.get("launch_args", {})),
+        before_launch='if [[ "${1:-}" == "--wait-ready" ]]; then\n  exec python3 '
+        + shlex.quote(os.path.join(install_dir, "wait_for_system_ready.py"))
+        + ' --config ' + shlex.quote(str(inspection_system.get("launch_args", {}).get("system_config_path", "")))
+        + ' --task-hub-enabled ' + shlex.quote(str(inspection_system.get("launch_args", {}).get("enable_task_hub", "")))
+        + '\nfi',
     ),
 )
+write_executable(os.path.join(output_dir, "wrappers", "wait_for_system_ready.py"),
+                 open(os.path.join(template_dir, "..", "scripts", "wait_for_system_ready.py"), encoding="utf-8").read())
 
 replacements = {
     "@USER@": user,
@@ -601,6 +615,7 @@ install_services() {
         ;;
       system)
         sudo_run install -m 0755 "${tmp_dir}/wrappers/run_inspection_system.sh" "${INSTALL_DIR}/run_inspection_system.sh"
+        sudo_run install -m 0755 "${tmp_dir}/wrappers/wait_for_system_ready.py" "${INSTALL_DIR}/wait_for_system_ready.py"
         sudo_run install -m 0644 "${tmp_dir}/systemd/${SYSTEM_SERVICE}" "${SYSTEMD_DIR}/${SYSTEM_SERVICE}"
         ;;
     esac
@@ -637,7 +652,7 @@ uninstall_services() {
         ;;
       system)
         sudo_run systemctl disable --now "${SYSTEM_SERVICE}" >/dev/null 2>&1 || true
-        sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${INSTALL_DIR}/run_inspection_system.sh"
+        sudo_run rm -f "${SYSTEMD_DIR}/${SYSTEM_SERVICE}" "${INSTALL_DIR}/run_inspection_system.sh" "${INSTALL_DIR}/wait_for_system_ready.py"
         ;;
     esac
   done
