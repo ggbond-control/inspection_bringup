@@ -24,17 +24,14 @@ class TankBuildProfile(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         all_backends = ('X30', 'D1_MAX', 'CYVET', 'TANK', 'R750')
-        chassis = {'tank': 'TANK', 'r750': 'R750', 'cyvet': 'CYVET'}
-        cases = (('tank', True), ('r750', True), ('d1m', False), ('x30', False), ('cyvet', True))
+        chassis = {'tank': 'TANK', 'r750': 'R750', 'x30': 'X30', 'cyvet': 'CYVET'}
+        cases = (('tank', True), ('r750', True), ('d1m', False), ('x30', True), ('cyvet', True))
         for model, enabled in cases:
             with self.subTest(model=model), patch.object(sys, 'argv', ['build_navigation.sh', '--model', model, '--plan']), \
                     patch.dict(os.environ, {'INSPECTION_CONFIG_DIR': str(BRINGUP_DIR / 'config')}):
                 build = module.Build(module.arguments())
                 options = build.config['package_cmake_args'].get('nav_bridge', [])
-                if model == 'x30':
-                    self.assertEqual(options, [])
-                else:
-                    self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if model == 'tank' else 'OFF'), options)
+                self.assertIn('-DNAV_BRIDGE_BUILD_TANK=' + ('ON' if model == 'tank' else 'OFF'), options)
                 if enabled:
                     for backend in all_backends:
                         self.assertIn(f'-DNAV_BRIDGE_BUILD_{backend}=' +

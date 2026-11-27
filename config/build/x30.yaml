@@ -1,0 +1,8 @@
+# Build the X30 chassis backend in driver_ws.
+package_cmake_args:
+  nav_bridge:
+    - -DNAV_BRIDGE_BUILD_X30=ON
+    - -DNAV_BRIDGE_BUILD_D1_MAX=OFF
+    - -DNAV_BRIDGE_BUILD_CYVET=OFF
+    - -DNAV_BRIDGE_BUILD_TANK=OFF
+    - -DNAV_BRIDGE_BUILD_R750=OFF
