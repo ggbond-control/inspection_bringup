@@ -104,6 +104,15 @@ class Configuration(unittest.TestCase):
             with self.subTest(module=module):
                 raw = cfg.read_yaml(self.root / filename)
                 resolved = cfg.load_config(module)
+                if module == 'system':
+                    device = raw['sensor_gimbal'].pop('device')
+                    streams = raw['live_stream'].pop('streams')
+                    device_path = resolved['sensor_gimbal']['device_config_file']
+                    streams_path = resolved['live_stream']['config_path']
+                    self.assertEqual(cfg.read_yaml(device_path), {'/**': {'ros__parameters': device}})
+                    self.assertEqual(cfg.read_yaml(streams_path), {'streams': streams})
+                    raw['sensor_gimbal']['device_config_file'] = device_path
+                    raw['live_stream']['config_path'] = streams_path
                 if module == 'navigation':
                     for section, field, profile in [
                         ('slam', 'config', 'param_default_faster_lio.yaml'),
@@ -116,6 +125,62 @@ class Configuration(unittest.TestCase):
                     self.assertEqual(resolved['nav_bridge']['config'], '')
                     self.assertEqual(resolved['livox']['config'], '')
                 self.assertEqual(resolved, raw)
+
+    def test_sensor_configs_merge_and_freeze_with_private_snapshots(self):
+        self.write('models/d1m/system.yaml', {'sensor_gimbal': {'device': {
+            'device_ip': '192.0.2.1', 'device_port': 9000}}})
+        streams = [{'identifier': 'gimbal/vis', 'rtsp_url': 'rtsp://192.0.2.2/visible',
+                    'enabled': False}]
+        self.robot(system={'sensor_gimbal': {'device': {'device_ip': '192.0.2.2',
+                                                        'password': 'local-secret'}},
+                           'live_stream': {'streams': streams}})
+        config = cfg.load_config('system')
+        device_path = Path(config['sensor_gimbal']['device_config_file'])
+        streams_path = Path(config['live_stream']['config_path'])
+        device = cfg.read_yaml(device_path)['/**']['ros__parameters']
+        self.assertEqual(device['device_ip'], '192.0.2.2')
+        self.assertEqual(device['device_port'], 9000)
+        self.assertEqual(device['password'], 'local-secret')
+        self.assertEqual(device['hk_isapi_port'], 80)
+        self.assertEqual(cfg.read_yaml(streams_path), {'streams': streams})
+        for path in (device_path, streams_path):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        snapshot = cfg.write_snapshot(config, self.temp.name)
+        self.robot(system={'sensor_gimbal': {'device': {'device_ip': '192.0.2.3'}},
+                           'live_stream': {'streams': []}})
+        self.assertEqual(cfg.load_config('system', snapshot), config)
+        changed = cfg.load_config('system')
+        self.assertEqual(cfg.read_yaml(changed['live_stream']['config_path']), {'streams': []})
+        self.assertNotEqual(changed['sensor_gimbal']['device_config_file'], str(device_path))
+
+    def test_sensor_explicit_files_override_inherited_inline_defaults(self):
+        device = self.write('external-device.yaml', {'/**': {'ros__parameters': {'device_ip': 'external'}}})
+        streams = self.write('external-streams.yaml', {'streams': []})
+        self.robot(system={'sensor_gimbal': {'device_config_file': str(device)},
+                           'live_stream': {'config_path': str(streams)}})
+        config = cfg.load_config('system')
+        self.assertEqual(config['sensor_gimbal']['device_config_file'], str(device))
+        self.assertEqual(config['live_stream']['config_path'], str(streams))
+        self.assertNotIn('device', config['sensor_gimbal'])
+        self.assertNotIn('streams', config['live_stream'])
+
+    def test_legacy_sensor_config_still_uses_module_defaults(self):
+        path = self.write('legacy.yaml', {'sensor_gimbal': {'enable_gimbal': True},
+                                          'live_stream': {'config_path': ''}})
+        self.assertEqual(cfg.load_config('system', str(path)), cfg.read_yaml(path))
+
+    def test_invalid_sensor_inline_config_fails_before_launch(self):
+        for override, message in [
+                ({'sensor_gimbal': {'device': None}}, 'sensor_gimbal.device'),
+                ({'sensor_gimbal': {'device': {'device_port': True}}}, 'device_port'),
+                ({'live_stream': {'streams': None}}, 'live_stream.streams'),
+                ({'live_stream': {'streams': [{'identifier': 'vis'}]}}, 'rtsp_url'),
+                ({'live_stream': {'streams': [{'identifier': 'vis', 'rtsp_url': 'rtsp://a',
+                                               'enabled': 'false'}]}}, 'enabled')]:
+            with self.subTest(override=override):
+                self.robot(system=override)
+                with self.assertRaisesRegex(ValueError, message):
+                    cfg.load_config('system')
 
     def test_arrival_profiles_are_explicit_and_relaxed_for_every_model(self):
         for model in ('x30', 'd1m', 'cyvet', 'tank'):
@@ -579,7 +644,10 @@ class Configuration(unittest.TestCase):
         expected['task_hub']['route_start_prepare_service_name'] = '/nav_bridge_node/ready'
         expected['task_hub']['trigger_service_timeout_seconds'] = 30.0
         expected['charge']['charge_command_timeout_sec'] = 180.0
-        self.assertEqual(cfg.load_config('system'), expected)
+        actual = cfg.load_config('system')
+        expected['sensor_gimbal']['device_config_file'] = actual['sensor_gimbal']['device_config_file']
+        expected['live_stream']['config_path'] = actual['live_stream']['config_path']
+        self.assertEqual(actual, expected)
 
     def test_d1m_navigation_matches_stored_sequences_and_inherits_defaults(self):
         self.robot()
@@ -675,7 +743,8 @@ class Configuration(unittest.TestCase):
     def test_explicit_file_bypasses_robot_even_if_it_is_the_default_path(self):
         self.robot(model='does-not-exist')
         path = self.root / 'system.yaml'
-        self.assertEqual(cfg.load_config('system', str(path)), cfg.read_yaml(path))
+        expected = cfg.resolve_files(cfg.read_yaml(path), 'system', path, config_dir=self.root, model='')
+        self.assertEqual(cfg.load_config('system', str(path)), expected)
 
     def test_missing_explicit_file_fails(self):
         with self.assertRaises(FileNotFoundError):

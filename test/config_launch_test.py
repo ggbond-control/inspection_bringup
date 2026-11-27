@@ -644,6 +644,42 @@ class LaunchConfiguration(unittest.TestCase):
         gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
         self.assertEqual(gimbal['gimbal_params_file'], self.package_file('sensor_gimbal', 'stub_params.yaml'))
 
+    def test_managed_device_and_streams_reach_launch_consumers(self):
+        self.robot['system']['sensor_gimbal'] = {'device': {'device_ip': '192.0.2.10'}}
+        streams = [{'identifier': 'gimbal/vis', 'rtsp_url': 'rtsp://192.0.2.10/live', 'enabled': True}]
+        self.robot['system']['live_stream'] = {'streams': streams}
+        self.write_robot()
+        config = cfg.load_config('system')
+        for module, kwargs in ((system, {}), (system, {'include_cooperation': False}), (platform, {})):
+            context = context_for(module, enable_sensor_gimbal='true')
+            with patch.object(system, 'get_package_share_directory',
+                              side_effect=lambda name: str(self.prefix / 'share' / name)), \
+                    patch.object(module, 'Node', wraps=module.Node) as factory:
+                actions = module.launch_setup(context, **kwargs)
+            bridge = next(call.kwargs for call in factory.call_args_list
+                          if call.kwargs.get('executable') == 'platform_mqtt_bridge_node')
+            params = evaluate_parameters(context, normalize_parameters(bridge['parameters']))[0]
+            path = params['live_stream_config_path']
+            self.assertEqual(path, config['live_stream']['config_path'])
+            self.assertEqual(cfg.read_yaml(path), {'streams': streams})
+            if module == system:
+                arguments = [dict(action.launch_arguments) for action in actions
+                             if hasattr(action, 'launch_arguments')]
+                gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
+                self.assertEqual(gimbal['device_config_file'], config['sensor_gimbal']['device_config_file'])
+
+    def test_device_cli_file_overrides_managed_connection(self):
+        path = Path(self.package_file('sensor_gimbal', 'device.yaml'))
+        path.write_text('/**:\n  ros__parameters:\n    device_ip: 192.0.2.99\n')
+        context = context_for(system, enable_sensor_gimbal='true', device_config_file='./device.yaml')
+        with patch.object(system, 'get_package_share_directory',
+                          side_effect=lambda name: str(self.prefix / 'share' / name)):
+            actions = system.launch_setup(context)
+        arguments = [dict(action.launch_arguments) for action in actions
+                     if hasattr(action, 'launch_arguments')]
+        gimbal = next(value for value in arguments if 'gimbal_params_file' in value)
+        self.assertEqual(gimbal['device_config_file'], str(path))
+
     def test_gimbal_pose_parameters_are_separate_and_support_config_and_cli(self):
         self.robot['system']['task_hub'] = {
             'gimbal_odometry_topic': '/horizon_custom',
@@ -877,6 +913,10 @@ class LaunchConfiguration(unittest.TestCase):
                     elif window in ('sensor_gimbal', 'charge'):
                         self.assertFalse(packages)
                         self.assertEqual(len(includes), 1)
+                        if window == 'sensor_gimbal':
+                            arguments = dict(includes[0].launch_arguments)
+                            self.assertEqual(arguments['device_config_file'],
+                                             cfg.load_config('system')['sensor_gimbal']['device_config_file'])
                     elif window in ('alarm', 'light', 'gas', 'sensor_rs485', 'acoustic'):
                         self.assertFalse(packages)
                         self.assertEqual(len(includes), 1)

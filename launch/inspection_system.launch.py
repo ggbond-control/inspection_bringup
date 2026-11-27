@@ -481,6 +481,11 @@ def generate_launch_description(*, include_cooperation=True):
             description="Timeout in seconds for stand/lie trigger calls.",
         ),
         DeclareLaunchArgument(
+            "device_config_file",
+            default_value="",
+            description="Shared gimbal, thermal and smoke device connection parameter file.",
+        ),
+        DeclareLaunchArgument(
             "gimbal_params_file",
             default_value="",
             description="Gimbal stub parameter file.",
@@ -1140,7 +1145,14 @@ def launch_setup(context, *, include_cooperation=True):
     )
 
     sensor_gimbal_params_file = ""
+    device_config_file = ""
     if as_bool(enable_sensor_gimbal):
+        device_config_file = override_or_config(
+            context, "device_config_file", config, "sensor_gimbal", "device_config_file", ""
+        )
+        if device_config_file:
+            device_config_file = file_path(
+                device_config_file, "sensor_gimbal", "config", "device_config_file")
         sensor_gimbal_params_file = file_path(
             override_or_config(
                 context,
@@ -1165,6 +1177,7 @@ def launch_setup(context, *, include_cooperation=True):
             "sensor_gimbal.launch.py",
             None,
             {
+                **({"device_config_file": device_config_file} if device_config_file else {}),
                 "gimbal_params_file": sensor_gimbal_params_file,
                 "enable_gimbal": as_bool_text(override_or_config_bool(
                     context, "sensor_gimbal_enable_gimbal", config,

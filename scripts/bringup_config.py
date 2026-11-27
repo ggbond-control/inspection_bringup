@@ -21,6 +21,7 @@ FILENAMES = {"system": "system.yaml", "navigation": "navigate.yaml", "services":
 FILE_FIELDS = {
     "system": {
         ("gimbal", "params_file"): ("sensor_gimbal", "config"),
+        ("sensor_gimbal", "device_config_file"): ("sensor_gimbal", "config"),
         ("live_stream", "config_path"): ("inspection_platform_bridge", "config"),
         ("gas", "params_file"): ("gas_monitor", "config"),
         ("sensor_rs485", "params_file"): ("sensor_rs485", "config"),
@@ -260,6 +261,7 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                 value, package, directory, f"{origin}: {'.'.join(parts)}",
                 check_exists=(module != "services"), config_dir=root)
     if module == "system":
+        resolve_sensor_configs(config, origin)
         validate_cooperation(config)
         device_status(config)
     if module == 'navigation':
@@ -270,6 +272,50 @@ def resolve_files(config, module, origin, config_dir=None, model=None):
                         raise ValueError(f'{origin}: {section}.{key} has no managed parameter file')
                     values.pop(key)
     return config
+
+
+def resolve_sensor_configs(config, origin):
+    """Project merged inline settings onto the modules' existing file interfaces.
+
+    Explicit files win. Consume inline settings so resolved snapshots can be
+    loaded again without regenerating files or consulting package defaults.
+    """
+    sensor = config.get('sensor_gimbal', {})
+    has_device = 'device' in sensor
+    device = sensor.pop('device', None)
+    if has_device and not sensor.get('device_config_file'):
+        if not isinstance(device, dict):
+            raise ValueError(f'{origin}: sensor_gimbal.device must be a mapping')
+        for field in ('device_ip', 'username', 'password'):
+            if not isinstance(device.get(field), str) or not device[field].strip():
+                raise ValueError(f'{origin}: sensor_gimbal.device.{field} must be a nonempty string')
+        for field in ('device_port', 'hk_isapi_port'):
+            value = device.get(field)
+            if type(value) is not int or not 1 <= value <= 65535:
+                raise ValueError(f'{origin}: sensor_gimbal.device.{field} must be an integer port (1..65535)')
+        sensor['device_config_file'] = parameter_snapshot(
+            {'/**': {'ros__parameters': device}}, '.yaml')
+
+    live = config.get('live_stream', {})
+    has_streams = 'streams' in live
+    streams = live.pop('streams', None)
+    if has_streams and not live.get('config_path'):
+        if not isinstance(streams, list):
+            raise ValueError(f'{origin}: live_stream.streams must be a list')
+        identifiers = set()
+        for index, stream in enumerate(streams):
+            label = f'{origin}: live_stream.streams[{index}]'
+            if not isinstance(stream, dict):
+                raise ValueError(f'{label} must be a mapping')
+            for field in ('identifier', 'rtsp_url'):
+                if not isinstance(stream.get(field), str) or not stream[field].strip():
+                    raise ValueError(f'{label}.{field} must be a nonempty string')
+            if stream['identifier'] in identifiers:
+                raise ValueError(f'{label}.identifier must be unique')
+            identifiers.add(stream['identifier'])
+            if 'enabled' in stream and not isinstance(stream['enabled'], bool):
+                raise ValueError(f'{label}.enabled must be a boolean')
+        live['config_path'] = parameter_snapshot({'streams': streams}, '.yaml')
 
 
 def load_config(module, path="", config_dir=None, *, resolve=True):

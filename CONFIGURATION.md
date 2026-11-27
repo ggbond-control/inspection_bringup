@@ -114,6 +114,33 @@ Bringup 为现有文件接口自动生成只读用途的 JSON 快照，位于
 TaskHub 报告容量也使用同一配置。修改后重启对应服务，运行中不自动热更新。
 显式 `system_config_path` 仍按独立完整配置处理，请在该文件直接填写 `device_status`。
 
+### 云台连接与视频流
+
+云台、热成像和烟雾共用的设备连接，以及平台视频流列表，由 bringup 统一管理：
+
+- 公共默认：`config/system.yaml` 的 `sensor_gimbal.device` 和 `live_stream.streams`。
+- 机型差异：`config/models/<model>/system.yaml` 的同名字段。
+- 端侧单机参数：`config/robot.yaml` 的 `system.sensor_gimbal.device` 和
+  `system.live_stream.streams`，填写示例见 `robot.example.yaml`。
+
+设备连接字典逐项合并；视频流列表整表替换，`streams: []` 表示不配置视频流。
+启动时自动生成权限为 0600 的 YAML 快照，通过 `device_config_file` 和
+`live_stream_config_path` 传给模块。完整 system、业务模块、独立 platform bridge
+及 tmux 使用同一配置加载逻辑；修改后重启对应服务，无需编辑生成文件。
+
+需要完整外部文件时，可设置 `system.sensor_gimbal.device_config_file` 或
+`system.live_stream.config_path`；非空路径优先于对应内联配置，不与内联内容合并。
+云台还支持临时 launch 参数 `device_config_file:=...`，优先于 YAML 中的路径。
+旧的独立 system YAML 未填写内联字段和路径时，仍使用模块原有默认文件。
+
+端侧升级前保存原 `sensor_gimbal/config/device.yaml` 和
+`inspection_platform_bridge/config/live_streams.yaml` 的有效内容，将设备参数与完整
+`streams` 列表填入本机 `robot.yaml`。若已有 `system`，合并字段，不要重复创建该键。
+公共默认保留开发机原模块配置（两份配置的摄像头 IP 不同），不能代替现场参数；
+端侧必须确认设备连接 IP 和各流 URL。设备账号密码保留在 Git 忽略的 `robot.yaml`，
+不以开发机文件覆盖端侧单机配置。更新、构建并重启 system 后验证连接及两路推流；
+若服务使用显式 `system_config_path`，应修改该独立文件或移除入口覆盖以使用三层配置。
+
 ### 协同模式
 
 在同一个 `robot.yaml` 中按需增加：
@@ -631,7 +658,8 @@ realpath config/calibration/d1m.yaml
 地图目录等数据路径使用原有语义，
 建议写绝对路径；它们不属于本节的子模块配置文件入口。
 
-system 中的 `gimbal.params_file`、`live_stream.config_path`、`gas.params_file`、
+system 中的 `sensor_gimbal.device_config_file` 相对 `sensor_gimbal/config/`，
+默认文件名为 `device.yaml`。system 中的 `gimbal.params_file`、`live_stream.config_path`、`gas.params_file`、
 `sensor_rs485.params_file` 分别相对 `sensor_gimbal/config/`、
 `inspection_platform_bridge/config/`、`gas_monitor/config/`、`sensor_rs485/config/`。
 已有文件分别有 `stub_params.yaml`、`live_streams.yaml`、`gas_params_default.yaml`、

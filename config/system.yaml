@@ -138,7 +138,17 @@ algorithm_mqtt:
   result_drain_timeout_sec: 30.0
 
 live_stream:
+  # Explicit config_path overrides the managed streams below.
   config_path: ""
+  streams:
+    - identifier: gimbal/vis
+      name: 可见光摄像头
+      rtsp_url: rtsp://admin:FHZNfhzn@192.168.2.64:554/Streaming/Channels/102
+      enabled: true
+    - identifier: gimbal/ir
+      name: 红外摄像头
+      rtsp_url: rtsp://admin:FHZNfhzn@192.168.2.64:554/Streaming/Channels/201
+      enabled: true
   algorithm_visible_stream_url_topic: "/platform/live_stream/gimbal_vis/url"
   # disabled | always | task_scoped. always keeps streams active without a task.
   push_policy: always
@@ -251,6 +261,16 @@ gimbal:
   use_http_isapi_absolute_ptz: true
 
 sensor_gimbal:
+  # Shared device connection for gimbal, thermal and smoke; override per robot.
+  # Explicit device_config_file overrides device. Empty uses managed settings.
+  device_config_file: ""
+  device:
+    device_ip: 192.168.168.64
+    device_port: 8000
+    hk_isapi_port: 80
+    username: admin
+    password: FHZNfhzn
+    login_mode: 0
   enable_gimbal: true
   enable_thermal: true
   enable_smoke: true
